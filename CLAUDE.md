@@ -4,9 +4,15 @@ Guidance for Claude Code working in this repository.
 
 ## Current state
 
-**This repo is spec-only.** The single file is `SPEC.md`. There is no code, no `pyproject.toml`,
-no `Makefile`, no git repository, no CI. Every command and path below is **planned**, not working,
-until the milestone that creates it lands.
+**Milestone 1 is done; milestones 2–9 are not.** See `PROGRESS.md` for what landed, the
+decisions taken, and the open questions. Working today: `aisvc/spec`, `aisvc/capacity`,
+`aisvc/cloudstack`, `aisvc/inventory`, `aisvc/reconciler` (diff only, nothing executes),
+`aisvc/cli` (`validate` and `plan`, both read-only).
+
+Everything else in the layout below is **planned**, not written: there is no `java-plugin/`,
+`ui/`, `terraform/`, `deploy/`, `gateway-hooks/`, and no `db/`, `api/`, `hf/`, `registry/`,
+`profiles/`, `gateway/`, `provision/` or `k8s/` module yet. `make test-java`, `test-ui`,
+`test-tf` and `record` deliberately exit 1 with the milestone that will fill them in.
 
 Before claiming a command works, run it. Before referencing a module, confirm the file exists.
 
@@ -53,9 +59,11 @@ test/integration/plugins/ai-services/           # Marvin tests
 examples/platform.yaml
 ```
 
-## Planned commands
+## Commands
 
 ```
+make install        # editable install into .venv
+make check          # lint + types + unit + contract: run this before every commit
 make test-unit      # pytest, no GPU, no network
 make test-contract  # schemathesis + recorded CloudStack responses
 make test-int       # docker compose: CloudStack simulator, kind, MinIO, Postgres, LiteLLM, mocks
@@ -66,8 +74,21 @@ make test-gpu       # GPU lab only, not in CI
 make record         # refresh recorded fixtures against a lab zone — only deliberately
 ```
 
-Operator CLI (Typer): `aisvc plan`, `aisvc apply`, `aisvc status`, `aisvc drain <host>`,
-`aisvc mirror <repo>`, `aisvc effective <deployment>`.
+Operator CLI (Typer). Working now:
+
+```
+aisvc validate --spec examples/platform.yaml --licenses licenses.yaml
+aisvc plan --spec examples/platform.yaml --no-observe
+```
+
+`--observe` (the default) needs `CLOUDSTACK_API_URL`, `CLOUDSTACK_API_KEY` and
+`CLOUDSTACK_SECRET_KEY`. Planned: `apply` (m2), `status`, `drain <host>` (m7),
+`mirror <repo>` (m3), `effective <deployment>` (m3).
+
+**Units and conventions worth knowing before you touch sizing:** memory is GiB throughout
+(`gpu_mem_gb: 80` means 80 GiB); parameter counts are decimal billions; a model's optional
+`architecture` block (`params_b`, `num_layers`, `num_kv_heads`, `head_dim`) is what capacity
+sizes from, and milestone 3 fills it in at mirror time.
 
 ## Conventions
 
@@ -130,7 +151,7 @@ through CloudMonkey and Terraform.
 Build one per session, each ending with green tests and a `PROGRESS.md` update. Each depends on
 the previous. 1–8 are v1 GA; 9 is v2.
 
-1. Foundation — scaffold, CI, `spec` models and validation, CloudStack client, `inventory`, `capacity`, `aisvc plan`
+1. ~~Foundation~~ — **done**, see `PROGRESS.md`
 2. Provisioning — `provision`, cloud-init, Packer golden template, `aisvc apply` for node pools
 3. Serving and sourcing — `registry`, `hf`, `k8s` rendering, `gateway`, serving + generation profiles
 4. Engine API — FastAPI, async jobs, caller-context filtering, mTLS, contract tests
