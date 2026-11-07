@@ -1,0 +1,15 @@
+{
+  "count": 5,
+  "host": [
+    {"id": "host-1", "name": "gpu-h100-01", "zoneid": "z-1", "zonename": "East-1",
+     "hosttags": "h100-sxm", "type": "Routing", "state": "Up", "resourcestate": "Enabled"},
+    {"id": "host-2", "name": "gpu-h100-02", "zoneid": "z-1", "zonename": "East-1",
+     "hosttags": "h100-sxm", "type": "Routing", "state": "Up", "resourcestate": "Enabled"},
+    {"id": "host-3", "name": "gpu-h100-03", "zoneid": "z-1", "zonename": "East-1",
+     "hosttags": "h100-sxm", "type": "Routing", "state": "Up", "resourcestate": "Maintenance"},
+    {"id": "host-4", "name": "gpu-l40s-01", "zoneid": "z-1", "zonename": "East-1",
+     "hosttags": "l40s", "type": "Routing", "state": "Up", "resourcestate": "Enabled"},
+    {"id": "host-5", "name": "cpu-general-01", "zoneid": "z-1", "zonename": "East-1",
+     "hosttags": "", "type": "Routing", "state": "Up", "resourcestate": "Enabled"}
+  ]
+}

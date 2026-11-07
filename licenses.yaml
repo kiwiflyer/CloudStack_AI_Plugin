@@ -1,0 +1,16 @@
+# License allow-list (SPEC.md section 3).
+# Every model's `license` must appear here. Enforced at mirror time and at
+# deploy time. Root admins edit this file; changes are reviewed in Git.
+allowed:
+  - apache-2.0
+  - bsd-3-clause
+  - cc-by-4.0
+  - cc-by-sa-4.0
+  - gemma
+  - llama3
+  - llama3.1
+  - llama3.2
+  - llama3.3
+  - mit
+  - openrail
+  - qwen

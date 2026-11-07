@@ -1,0 +1,7 @@
+{
+  "count": 2,
+  "serviceoffering": [
+    {"id": "so-1", "name": "GPU-H100-8x", "displaytext": "8x H100 80GB passthrough"},
+    {"id": "so-2", "name": "GPU-L40S-1x", "displaytext": "1x L40S 48GB passthrough"}
+  ]
+}

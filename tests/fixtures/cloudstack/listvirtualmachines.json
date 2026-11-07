@@ -1,0 +1,9 @@
+{
+  "count": 2,
+  "virtualmachine": [
+    {"id": "vm-1", "name": "aisvc-h100-node-1", "hostid": "host-1", "zoneid": "z-1",
+     "serviceofferingname": "GPU-H100-8x", "state": "Running"},
+    {"id": "vm-2", "name": "unrelated-workload", "hostid": "host-4", "zoneid": "z-1",
+     "serviceofferingname": "Medium-Instance", "state": "Running"}
+  ]
+}
