@@ -436,6 +436,7 @@ Stated plainly so you know what you are walking into:
 
 | For | Read |
 | --- | --- |
+| Why this exists at all | [why-cloudstack-ai-services.md](why-cloudstack-ai-services.md) |
 | The specification | [SPEC.md](../SPEC.md) |
 | What is built, and what is not | [PROGRESS.md](../PROGRESS.md) |
 | Decisions already made | [docs/adr/](adr/) |

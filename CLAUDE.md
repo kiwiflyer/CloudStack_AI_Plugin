@@ -301,6 +301,10 @@ The spec leaves these unresolved. If a task depends on one, ask rather than assu
 skipped `alembic_version` and missed any table whose module that path had not imported
 (`aisvc_job`, on the apply path). A source scan over `aisvc/cli/main.py` guards it.
 
+`docs/why-cloudstack-ai-services.md` is the positioning document: the case for the
+product, who it is for and what it lets an operator sell. Every product claim in it
+is traceable to SPEC.md; keep it that way.
+
 `docs/installation.md` is the operator-facing install and setup guide: prerequisites,
 the four pieces and their order, every config key and environment variable, and an
 honest list of what has never been run. Keep it current when any of those change.
