@@ -583,3 +583,98 @@ class TestUsageAndBudgets:
 
     def test_a_tenant_without_a_budget_is_not_listed(self, client: TestClient) -> None:
         assert client.get("/v1/budgets", headers=ADMIN).json()["count"] == 0
+
+
+class TestSetupWizard:
+    """SPEC.md section 7: the wizard's checks, discovery and self-test."""
+
+    def test_preflight_reports_every_check(self, client: TestClient) -> None:
+        body = client.get("/v1/setup/preflight", headers=ADMIN).json()
+
+        assert body["checks"]
+        assert {"name", "status", "detail", "remedy"} <= set(body["checks"][0])
+
+    def test_preflight_says_whether_the_zone_is_ready(self, client: TestClient) -> None:
+        body = client.get("/v1/setup/preflight", headers=ADMIN).json()
+
+        assert isinstance(body["ok"], bool)
+
+    def test_every_failed_check_carries_a_remedy(self, client: TestClient) -> None:
+        """An operator in a wizard cannot read the source to find the fix."""
+        body = client.get("/v1/setup/preflight", headers=ADMIN).json()
+
+        assert all(c["remedy"] for c in body["checks"] if c["status"] == "fail")
+
+    def test_a_tenant_cannot_run_preflight(self, client: TestClient) -> None:
+        assert client.get("/v1/setup/preflight", headers=TENANT).status_code == 403
+
+    def test_gpu_discovery_proposes_classes(self, client: TestClient) -> None:
+        body = client.get("/v1/setup/gpu-discovery", headers=ADMIN).json()
+
+        assert "classes" in body
+        assert body["count"] == len(body["classes"])
+
+    def test_a_tenant_cannot_run_gpu_discovery(self, client: TestClient) -> None:
+        assert client.get("/v1/setup/gpu-discovery", headers=TENANT).status_code == 403
+
+    def test_the_self_test_is_accepted_as_a_job(self, client: TestClient) -> None:
+        response = client.post("/v1/setup/selftest?zone=zone-east-1", headers=ADMIN)
+
+        assert response.status_code == 202
+        assert response.json()["jobid"]
+
+    def test_the_self_test_plan_ends_in_teardown(self, client: TestClient) -> None:
+        """A self-test that leaves a model running has failed its purpose."""
+        job = client.post("/v1/setup/selftest?zone=zone-east-1", headers=ADMIN).json()
+        result = client.get(f"/v1/jobs/{job['jobid']}", headers=ADMIN).json()
+
+        assert result["jobresult"]["steps"][-1]["name"] == "teardown"
+
+    def test_an_unknown_zone_is_refused(self, client: TestClient) -> None:
+        response = client.post("/v1/setup/selftest?zone=ghost-zone", headers=ADMIN)
+
+        assert response.status_code == 404
+
+    def test_a_tenant_cannot_run_the_self_test(self, client: TestClient) -> None:
+        response = client.post("/v1/setup/selftest?zone=zone-east-1", headers=TENANT)
+
+        assert response.status_code == 403
+
+
+class TestUnexpectedFailures:
+    """CLAUDE.md: errors use RFC 9457 problem JSON — all of them.
+
+    Found by pointing the engine at an unreachable Postgres: the plugin
+    got `text/plain` "Internal Server Error", which its client cannot
+    parse. Anything escaping a handler has to come back as a problem
+    document too, without leaking what went wrong.
+    """
+
+    @pytest.fixture
+    def exploding(self, services: EngineServices) -> Iterator[TestClient]:
+        app = create_app(services)
+
+        @app.get("/v1/boom")
+        async def boom() -> None:
+            raise RuntimeError("connection to localhost:5432 failed for user 'secret'")
+
+        yield TestClient(app, raise_server_exceptions=False)
+
+    def test_an_unhandled_error_is_problem_json(self, exploding: TestClient) -> None:
+        response = exploding.get("/v1/boom", headers=ADMIN)
+
+        assert response.status_code == 500
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+    def test_the_document_has_the_required_members(self, exploding: TestClient) -> None:
+        body = exploding.get("/v1/boom", headers=ADMIN).json()
+
+        assert {"type", "title", "status", "detail"} <= set(body)
+        assert body["status"] == 500
+
+    def test_the_internals_are_not_leaked_to_the_caller(self, exploding: TestClient) -> None:
+        """A connection string in a 500 would hand out a password."""
+        text = exploding.get("/v1/boom", headers=ADMIN).text
+
+        assert "secret" not in text
+        assert "5432" not in text

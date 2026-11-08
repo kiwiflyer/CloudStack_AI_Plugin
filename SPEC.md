@@ -379,6 +379,8 @@ A Java API plugin owns auth, RBAC, async jobs, events, usage and limits, and a V
 | `listAiUsage` | GET `/v1/usage` | No | All | v1 |
 | `list/create/update/deleteAiBudget` | `/v1/budgets` | No | All, scoped | v1 |
 | `createAiPlaygroundSession` | POST `/v1/playground/sessions` | No | All | v1 |
+| `listAiSetupChecks` | GET `/v1/setup/preflight` | No | Root admin | v1 |
+| `discoverAiGpuClasses` | GET `/v1/setup/gpu-discovery` | No | Root admin | v1 |
 | `runAiSetupSelfTest` | POST `/v1/setup/selftest` | Yes | Root admin | v1 |
 | `listAiGpuCapacity` | GET `/v1/capacity` | No | Admin | v1 |
 | `drainAiNode` | POST `/v1/nodes/{id}/drain` | Yes | Admin | v1 |

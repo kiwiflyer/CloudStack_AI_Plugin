@@ -37,6 +37,11 @@
     "nodes_total": 7,
     "zone": "sample"
   },
+  "AiGpuClassProposalResponse": {
+    "host_tag": "sample",
+    "hosts": 7,
+    "suggested_name": "sample"
+  },
   "AiHfCheckResponse": {
     "architecture": "sample",
     "compatible": true,
@@ -74,6 +79,12 @@
     "started_at": "sample",
     "status": "sample",
     "zone": "sample"
+  },
+  "AiSetupCheckResponse": {
+    "detail": "sample",
+    "name": "sample",
+    "remedy": "sample",
+    "status": "sample"
   },
   "AiUsageResponse": {
     "account": "sample",

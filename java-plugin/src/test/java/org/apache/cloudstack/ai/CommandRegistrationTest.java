@@ -54,7 +54,7 @@ class CommandRegistrationTest {
             "deleteAiGenerationProfile", "assignAiTuningProfile",
             "getAiEffectiveParameters", "listAiUsage", "listAiBudgets", "createAiBudget",
             "updateAiBudget", "deleteAiBudget", "createAiPlaygroundSession",
-            "runAiSetupSelfTest", "listAiGpuCapacity", "drainAiNode",
+            "listAiSetupChecks", "discoverAiGpuClasses", "runAiSetupSelfTest", "listAiGpuCapacity", "drainAiNode",
             "listAiReconcilerRuns");
 
     /** The commands SPEC.md section 9 marks async. */

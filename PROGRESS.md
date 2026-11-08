@@ -642,3 +642,95 @@ was deployed, which silently ignored a spec change to `replicas.min`.
    still needs the operator to change the weights.
 4. **Alerts and Grafana dashboards** (section 11) are unwritten.
 
+
+## Milestone 8 — Tier 1 operability (setup wizard)
+
+**Status:** the `setup` module is in and reachable over the API. The rest of
+milestone 8 — maintenance integration, playground, scoped keys, budgets, engine
+HA, Terraform — is not started.
+
+Chosen first because it is section 14's opening acceptance criterion ("a new
+zone goes from empty to a passing self-test using only the setup wizard") and
+because `runAiSetupSelfTest` had been a generated command pointing at an
+endpoint that did not exist.
+
+### What landed
+
+- `aisvc/setup/` — preflight checks, GPU-class discovery and the self-test plan.
+  30 unit tests, 98% line coverage.
+- Three engine endpoints: `GET /v1/setup/preflight`, `GET /v1/setup/gpu-discovery`,
+  `POST /v1/setup/selftest`, with 10 API tests covering shape, RBAC and refusals.
+- Two new CloudStack commands, `listAiSetupChecks` and `discoverAiGpuClasses`,
+  generated into the Java plugin like the rest. 377 Java tests still pass.
+
+### Every failing check carries a remedy
+
+An operator working through a wizard cannot read the source to find out what
+"no capacity observed" means. So `CheckResult` has a `remedy` field, and a test
+asserts every `fail` fills it in. The GPU checks go furthest: CloudStack reports
+neither IOMMU nor the nouveau driver, but a tagged host with no GPU devices is
+exactly what both look like, so that check names them (ADR-0003 action item 5).
+
+Checks also all run even after one fails, so a misconfigured zone is fixed in
+one pass rather than one problem per round trip.
+
+### The spec's command table was incomplete
+
+Section 9 lists only `runAiSetupSelfTest`, but section 7 describes a wizard
+whose steps "validate live" and whose GPU discovery "reads host tags" — neither
+reachable from the UI without a command. The drift guards caught this from both
+ends: the Python test found engine routes with no command, and the Java
+`CommandRegistrationTest` found commands not in the spec's table.
+
+Amended SPEC.md section 9 to add both rather than loosening either guard. The
+guards exist to make the spec and the code disagree loudly; silencing them
+would have left the wizard unbuildable in milestone 6.
+
+### Three bugs the tests found after the code was written
+
+The module's unit tests passed before any of these surfaced, which is the
+argument for testing at the layer the caller actually uses.
+
+1. **An unknown zone returned 202 with a failed job.** Creating a job for a
+   typo fills the run log with validation errors and hands the caller a job id
+   for work that was never going to run. Now validated before the job exists,
+   returning 404 like `/v1/profiles/effective?model=ghost` already did.
+
+2. **Preflight 503'd when capacity had not been observed.** Which is every
+   brand-new zone — exactly the case section 14 asks the wizard to handle. The
+   capacity checks now come back `skipped` with a remedy naming what to run
+   first, and the spec and registry checks still run. `CheckStatus.SKIPPED` had
+   been defined and never produced, which was the tell.
+
+3. **Unexpected exceptions returned plain-text 500s.** Found by smoke-testing
+   against a real server with no Postgres running: the engine answered
+   `text/plain` "Internal Server Error", which the plugin's client cannot parse.
+   Every *known* exception had a handler; nothing caught the rest. Added a
+   catch-all returning problem JSON with a deliberately generic detail — the
+   exception text had the database connection string in it, password included —
+   and logging the real one server-side. This was an API-wide gap, not a setup
+   one.
+
+### Verified, not assumed
+
+`aisvc serve` on loopback, against `examples/platform.yaml`:
+
+- `/v1/setup/preflight` → 200, spec check passes, registry check fails with
+  "Unable to locate credentials" and its remedy, both GPU classes skipped.
+- `/v1/setup/gpu-discovery` → 200, no classes (nothing observed).
+- `/v1/setup/selftest?zone=ghost` → 404 problem JSON.
+- The same as a tenant → 403.
+- `/v1/setup/selftest?zone=zone-east-1` with Postgres down → 500 problem JSON,
+  no connection string in the body.
+
+### What milestone 8 still needs
+
+The self-test **plans** its five steps and records them on the job; it does not
+run them. Mirroring, deploying, sending a request and checking the usage record
+all need a zone with GPU capacity, and metering has no driver yet (milestone 7's
+outstanding gap), so step 4 could not pass today even with hardware. Section
+14's first criterion is therefore **not yet met** — the wizard reports honestly
+on a zone, but cannot take one from empty to serving on its own.
+
+Also outstanding: maintenance integration, playground, scoped keys, budgets,
+engine HA and Terraform.

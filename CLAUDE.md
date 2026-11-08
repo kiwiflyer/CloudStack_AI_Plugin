@@ -4,12 +4,15 @@ Guidance for Claude Code working in this repository.
 
 ## Current state
 
-**Milestones 1–5 are done bar their noted gaps; milestone 7 is partly done; 6, 8 and 9 are not.** See `PROGRESS.md`.
+**Milestones 1–5 are done bar their noted gaps; 7 and 8 are partly done; 6 and 9 are not.**
+See `PROGRESS.md`.
 Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`, `db`,
-`reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, the `aisvc` CLI
+`reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, `setup`, the `aisvc` CLI
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
-Not written: `setup/`, `playground/`, all v2 modules, `ui/`, `terraform/`, `deploy/`.
+Not written: `playground/`, all v2 modules, `ui/`, `terraform/`, `deploy/`.
+`setup` plans the self-test but cannot run it: the steps need GPU capacity and a
+metering driver, so section 14's first acceptance criterion is not yet met.
 `lifecycle` and `autoscale` are driven by the reconciler. `metering` is not: nothing pulls
 usage or writes usage records yet, and nothing fills in `DeploymentHealth`, so autoscaling
 decides correctly on data no one supplies. `make test-java`, `test-ui`,

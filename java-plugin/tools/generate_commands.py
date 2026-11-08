@@ -206,6 +206,27 @@ RESPONSES: tuple[Response, ...] = (
         ),
     ),
     Response(
+        "AiSetupCheckResponse", "aisetupcheck",
+        "One preflight check from the setup wizard (SPEC.md section 7).",
+        (
+            f("name", "name", "String", "what was checked"),
+            f("status", "status", "String", "pass, warn, fail or skipped"),
+            f("detail", "detail", "String", "what was found"),
+            f("remedy", "remedy", "String",
+              "what to do about it, where the check did not pass"),
+        ),
+    ),
+    Response(
+        "AiGpuClassProposalResponse", "aigpuclassproposal",
+        "A GPU class the wizard proposes from CloudStack's host tags.",
+        (
+            f("hostTag", "host_tag", "String", "the host tag seen", "hosttag"),
+            f("hosts", "hosts", "Integer", "healthy hosts carrying it"),
+            f("suggestedName", "suggested_name", "String",
+              "a name for the class", "suggestedname"),
+        ),
+    ),
+    Response(
         "AiPlaygroundSessionResponse", "aiplaygroundsession",
         "An ephemeral playground session (SPEC.md section 7).\n *\n * The key is"
         " model-scoped and expires in fifteen minutes, so a real\n * key never reaches"
@@ -565,6 +586,15 @@ COMMANDS: tuple[Command, ...] = (
         ),
     ),
     # -- operations -------------------------------------------------------
+    Command(
+        "listAiSetupChecks", "Runs the setup wizard's preflight checks.",
+        "/v1/setup/preflight", response="AiSetupCheckResponse", items_key="checks",
+    ),
+    Command(
+        "discoverAiGpuClasses", "Proposes GPU classes from the tags on healthy hosts.",
+        "/v1/setup/gpu-discovery", response="AiGpuClassProposalResponse",
+        items_key="classes",
+    ),
     Command(
         "runAiSetupSelfTest", "Runs the setup self-test for a zone.",
         "/v1/setup/selftest", method="POST", is_async=True,

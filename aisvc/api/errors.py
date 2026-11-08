@@ -7,6 +7,7 @@ plugin and the CLI get one shape to parse.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import FastAPI, Request, status
@@ -45,6 +46,9 @@ class ApiError(Exception):
         self.detail = detail
         self.code = code
         self.extra = extra or {}
+
+
+log = logging.getLogger("aisvc.api")
 
 
 def problem(status_code: int, detail: str, *, code: str, **extra: Any) -> JSONResponse:
@@ -116,6 +120,23 @@ def register_error_handlers(app: FastAPI) -> None:
                 {"loc": [str(part) for part in err["loc"]], "msg": err["msg"]}
                 for err in exc.errors()
             ],
+        )
+
+    @app.exception_handler(Exception)
+    async def _unexpected(_: Request, exc: Exception) -> JSONResponse:
+        """Anything that escapes a handler still answers in problem JSON.
+
+        The plugin parses every engine response as a problem document,
+        so a plain-text 500 is unreadable to it. The detail is
+        deliberately generic: the exception text can carry a connection
+        string or a password, and the caller does not need it. The real
+        one goes to the engine's log, where operators can reach it.
+        """
+        log.exception("unhandled error serving a request", exc_info=exc)
+        return problem(
+            500,
+            "the engine failed to handle this request; check the engine log",
+            code="internal_error",
         )
 
 

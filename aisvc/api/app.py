@@ -21,6 +21,7 @@ from aisvc.k8s.client import observe_deployments
 from aisvc.lifecycle import RolloutError, plan_drain, start_rollout
 from aisvc.metering import evaluate_budget, price_usage
 from aisvc.profiles import Level, ProfileLayer, resolve
+from aisvc.setup import discover_gpu_classes, plan_self_test, preflight
 
 if TYPE_CHECKING:
     from aisvc.api.deps import Services
@@ -210,6 +211,98 @@ def _register_routes(app: FastAPI) -> None:
             if _model_visible(model, caller)
         ]
         return {"count": len(visible), "endpoints": visible}
+
+    # -- setup ------------------------------------------------------------
+
+    @app.get(f"{PREFIX}/setup/preflight", tags=["admin"], summary="Preflight checks")
+    async def setup_preflight(_: AdminDep, services: ServicesDep) -> dict[str, Any]:
+        """Everything the wizard checks before a zone is enabled.
+
+        Every check runs even after one fails, so a misconfigured zone
+        is fixed in one pass rather than one problem at a time.
+        """
+        # No snapshot is not an error: a zone being set up has not been
+        # observed yet, and the wizard has to work from empty. The
+        # capacity checks come back skipped, saying what to run first.
+        report = preflight(
+            services.spec,
+            registry=services.registry,
+            snapshot=services.snapshot(),
+        )
+        return {
+            "ok": report.ok,
+            "checks": [
+                {
+                    "name": check.name,
+                    "status": check.status.value,
+                    "detail": check.detail,
+                    "remedy": check.remedy,
+                }
+                for check in report.checks
+            ],
+        }
+
+    @app.get(
+        f"{PREFIX}/setup/gpu-discovery",
+        tags=["admin"],
+        summary="Discover GPU classes",
+    )
+    async def setup_gpu_discovery(_: AdminDep, services: ServicesDep) -> dict[str, Any]:
+        """GPU classes the wizard proposes from the tags on healthy hosts."""
+        snapshot = services.snapshot()
+        proposals = discover_gpu_classes(snapshot) if snapshot else []
+        return {
+            "count": len(proposals),
+            "classes": [
+                {
+                    "host_tag": p.host_tag,
+                    "hosts": p.hosts,
+                    "suggested_name": p.suggested_name,
+                }
+                for p in proposals
+            ],
+        }
+
+    @app.post(
+        f"{PREFIX}/setup/selftest",
+        tags=["admin"],
+        summary="Run the setup self-test",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def setup_self_test(
+        caller: AdminDep,
+        services: ServicesDep,
+        jobs: JobsDep,
+        response: Response,
+        zone: str = Query(description="The zone to test."),
+    ) -> dict[str, Any]:
+        """Deploy a tiny model, exercise it, then tear it down.
+
+        Returns 202 with the plan recorded on the job. Running the steps
+        needs GPU capacity, so the job carries the plan and the lab runs
+        it (SPEC.md section 7).
+        """
+        # A zone the spec does not name is a bad argument, not a failed
+        # run: creating a job for it would fill the run log with typos
+        # and hand the caller a 202 for work that was never going to
+        # happen. Validate first, as /v1/profiles/effective does.
+        try:
+            plan = plan_self_test(services.spec, zone=zone)
+        except ValueError as exc:
+            raise ApiError(status.HTTP_404_NOT_FOUND, str(exc), code="zone-not-found") from exc
+
+        job = jobs.create("runAiSetupSelfTest", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        jobs.succeed(
+            job,
+            {
+                "zone": plan.zone,
+                "model": plan.model,
+                "steps": [{"name": s.name, "description": s.description} for s in plan.steps],
+                "teardown": plan.teardown,
+            },
+        )
+        return {"jobid": job.id}
 
     # -- rollouts ---------------------------------------------------------
 

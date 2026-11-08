@@ -161,6 +161,12 @@ COMMANDS: tuple[Command, ...] = (
     # -- tenant experience ------------------------------------------------
     _c("createAiPlaygroundSession", "POST", "/v1/playground/sessions", ALL),
     # -- operations -------------------------------------------------------
+    # SPEC.md section 9's table lists only the self-test, but section 7
+    # describes a wizard whose steps "validate live" and whose GPU
+    # discovery "reads host tags". Those need commands of their own, so
+    # they are added here rather than left unreachable from the UI.
+    _c("listAiSetupChecks", "GET", "/v1/setup/preflight", ROOT),
+    _c("discoverAiGpuClasses", "GET", "/v1/setup/gpu-discovery", ROOT),
     _c("runAiSetupSelfTest", "POST", "/v1/setup/selftest", ROOT, is_async=True),
     _c("listAiGpuCapacity", "GET", "/v1/capacity", ROOT),
     _c("drainAiNode", "POST", "/v1/nodes/{node_id}/drain", ROOT, is_async=True),
