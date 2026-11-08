@@ -226,13 +226,16 @@ on them; and **LiteLLM's split licence**, where `enterprise/` is commercial and 
 the MIT side. `licenses.yaml` now separates OSI-approved from restricted entries so the
 distinction is visible at the point of approval.
 
-## Milestone 3 — Serving and sourcing (mostly done)
+## Milestone 3 — Serving and sourcing (done, less the GPU lab)
 
 `registry`, `hf`, `k8s` rendering, `gateway` with hooks, `profiles`. **Not done:** one model
 end to end in a lab zone with the cold-start target validated — that needs GPUs.
 
-**State:** 438 tests pass, `ruff` clean, `mypy --strict` clean, 95% line coverage.
+**State:** 504 tests pass, `ruff` clean, `mypy --strict` clean, 94% line coverage.
 `profiles` is at 99% and `gateway` at 100%, both above the 90% the spec sets for them.
+
+`aisvc apply` now takes an empty zone to a served model in one run: GPU nodes, then model
+deployments, then gateway routes, in dependency order, and a second run plans nothing.
 
 ### What landed
 
@@ -244,6 +247,10 @@ end to end in a lab zone with the cold-start target validated — that needs GPU
 | `aisvc/hf` | Compatibility report (architecture, size, context, licence, gating, remote code) with `capacity` saying which GPU classes and TP widths fit; mirroring that resolves to a commit SHA first, filters by allow-pattern, digests, uploads and re-verifies |
 | `aisvc/gateway` | Key scopes (model, expiry, CIDR), request enforcement through `aisvc.profiles`, metering records with no prompt content, and LiteLLM config generation with canary weights |
 | `gateway-hooks/` | The LiteLLM `async_pre_call_hook` adapter and RFC 9457 error mapping |
+| `aisvc/k8s/client.py` | Server-side apply with a fixed field manager, deletion, and reading back what is running. `FakeKubernetes` for tests, `ClusterKubernetes` for real |
+| `aisvc/reconciler/state.py` | `ActualState` — CloudStack capacity and Kubernetes workloads observed into one object, as section 4 describes |
+| `aisvc/reconciler/deployer.py` | Applies model deployments and writes the gateway config as a ConfigMap |
+| `plan_all` | The ordered diff: capacity, models, routes, with dependency edges so a deployment waits for its pool's nodes |
 | `tests/gpu/` | The lab tests for serving end to end and the cold-start budget, marked `gpu` and skipped by default |
 
 ### Decisions taken, and why
@@ -267,6 +274,30 @@ fine, because the allow-patterns exclude the pickle files anyway.
 **GPU tests are deselected by default** via `addopts = "-m 'not gpu'"`; `make test-gpu`
 overrides it. Running the whole suite on a laptop should not look like a failure.
 
+### Wiring, and what it exposed
+
+Change detection is by **spec hash**: the rendered manifest is digested and stamped on the
+Deployment as an annotation, and the gateway config's digest on its ConfigMap. The next plan
+compares digests rather than diffing against a server that fills in its own defaults. That is
+what makes the whole-platform version of `test_second_apply_produces_empty_plan` honest.
+
+Two real bugs surfaced while wiring, both now fixed:
+
+**The gateway config would have re-applied on every run.** The integration harness tracked the
+route digest itself, which hid the fact that nothing read it back from the cluster. The
+harness now observes exactly the way the CLI does, and `observe_route_hash` reads the
+annotation. A test harness that is more capable than the product proves nothing.
+
+**A registry outage looked exactly like "nothing is mirrored".** `S3ObjectStore.get` turned
+every exception into `KeyError`, and `ModelRegistry.has` turned every `RegistryError` into
+`False` — so an unreachable S3 would have silently skipped every model deployment and reported
+a clean run. Now only a genuine 404 is `ManifestNotFound`; anything else propagates and fails
+the run.
+
+**A model is only deployed once its weights are mirrored.** A deployment pointing at an
+unmirrored revision would start, fail to load and crash-loop. Unmirrored models are a warning,
+and the nodes are still built, so the mirror job and the hardware can proceed in parallel.
+
 ### Open questions for the next session
 
 1. **LiteLLM is not yet a dependency.** `gateway-hooks/enforcement.py` imports its base class
@@ -274,16 +305,15 @@ overrides it. Running the whole suite on a laptop should not look like a failure
    real proxy yet. ADR-0002's action items — pin the version, contract-test the hook signatures,
    prove content logging is off in the real thing — all still stand.
 
-2. **Server-side apply is not written.** `aisvc/k8s` renders; nothing applies. The `kubernetes`
-   client is in the mypy ignore list but not in `pyproject.toml`.
-
-3. **`architecture_from_config` guesses parameter count from download size** (total bytes / 2,
+2. **`architecture_from_config` guesses parameter count from download size** (total bytes / 2,
    assuming bf16 on the Hub). Good enough to rank GPU classes, wrong for a quantized upload.
    Read it from safetensors metadata instead.
 
-4. **Nothing wires the modules together yet.** `plan_capacity` still only plans GPU nodes; it
-   does not plan model deployments, so `aisvc apply` will not serve a model. That is the join
-   between milestone 3's pieces and milestone 4's API.
+3. **Only the blue colour is ever deployed.** `ACTIVE_COLOUR` is fixed; green exists in the
+   renderer and the gateway config but nothing drives a rollout. That is `lifecycle`, milestone 7.
+
+4. **`ClusterKubernetes` is unexercised.** Every test runs against `FakeKubernetes`; the real
+   client's apply-then-create fallback has never touched an API server.
 
 ## Milestone 4 — Engine API (next)
 

@@ -6,15 +6,34 @@ executor's job.
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from aisvc.k8s import DEFAULT_NAMESPACE, DeploymentTarget, image_for, render, spec_hash
+
 if TYPE_CHECKING:
     from aisvc.inventory import CapacitySnapshot
+    from aisvc.reconciler.state import ActualState
+    from aisvc.registry import ModelRegistry
     from aisvc.spec import NodePool, PlatformSpec
 
-__all__ = ["Action", "ActionKind", "Plan", "plan_capacity"]
+__all__ = [
+    "ACTIVE_COLOUR",
+    "Action",
+    "ActionKind",
+    "Plan",
+    "config_hash",
+    "plan_all",
+    "plan_capacity",
+]
+
+#: v1 serves one colour; blue/green rollouts arrive with `lifecycle`
+#: in milestone 7, which is what introduces green.
+ACTIVE_COLOUR = "blue"
 
 
 class ActionKind(Enum):
@@ -170,3 +189,189 @@ def _warn_if_no_room(
             f"{capacity.nodes_free} free {pool.gpu_class} host(s) in "
             f"{pool.zone}; some deployments may fail for want of capacity"
         )
+
+
+def plan_models(
+    spec: PlatformSpec,
+    state: ActualState,
+    *,
+    registry: ModelRegistry,
+    namespace: str = DEFAULT_NAMESPACE,
+    capacity_actions: Sequence[Action] = (),
+) -> tuple[list[Action], list[str]]:
+    """Diff declared models against what the cluster is serving.
+
+    A model is only deployed once its weights are in the registry: a
+    deployment pointing at an unmirrored revision would start, fail to
+    load and crash-loop, which is worse than not starting.
+    """
+    actions: list[Action] = []
+    warnings: list[str] = []
+
+    node_action_for = {
+        action.name: action
+        for action in capacity_actions
+        if action.resource_type == "gpu-node" and action.kind is ActionKind.CREATE
+    }
+    declared: set[tuple[str, str]] = set()
+
+    for model in spec.document.models:
+        declared.add((model.name, ACTIVE_COLOUR))
+
+        if not model.source_is_pinned:
+            warnings.append(
+                f"models.{model.name}: source does not pin a commit SHA, so it cannot be deployed"
+            )
+            continue
+
+        revision = model.revision or ""
+        if not registry.has(model.repo_id, revision):
+            warnings.append(
+                f"models.{model.name}: {model.repo_id}@{revision[:12]} is not "
+                "mirrored yet, so it will not be deployed"
+            )
+            continue
+
+        pool = next((p for p in spec.document.node_pools if p.name == model.node_pool), None)
+        if pool is None:  # already reported by validation
+            continue
+
+        target = DeploymentTarget(
+            model=model,
+            pool=pool,
+            gpu_class=spec.gpu_class(pool.gpu_class),
+            serving_profile=spec.serving_profile_for(model),
+            image=image_for(model),
+            replicas=model.replicas.min,
+            weights_uri=registry.uri_for(model.repo_id, revision),
+            colour=ACTIVE_COLOUR,
+        )
+        desired_hash = spec_hash(render(target, namespace=namespace))
+        current = state.deployment(model.name, ACTIVE_COLOUR)
+
+        depends_on: tuple[str, ...] = ()
+        if (node_action := node_action_for.get(pool.name)) is not None:
+            depends_on = (node_action.key,)
+
+        detail = (
+            f"{model.replicas.min} replica(s) of {target.image} "
+            f"on {pool.name}, weights {target.weights_uri}"
+        )
+
+        if current is None:
+            actions.append(
+                Action(
+                    kind=ActionKind.CREATE,
+                    resource_type="model-deployment",
+                    name=target.name,
+                    count=1,
+                    detail=detail,
+                    reason="not deployed",
+                    depends_on=depends_on,
+                )
+            )
+        elif current.spec_hash != desired_hash:
+            actions.append(
+                Action(
+                    kind=ActionKind.UPDATE,
+                    resource_type="model-deployment",
+                    name=target.name,
+                    count=1,
+                    detail=detail,
+                    reason=(
+                        f"spec changed: running {current.spec_hash[:12] or 'unknown'}, "
+                        f"want {desired_hash[:12]}"
+                    ),
+                    depends_on=depends_on,
+                )
+            )
+
+    for (name, colour), deployed in sorted(state.deployments.items()):
+        if (name, colour) in declared:
+            continue
+        actions.append(
+            Action(
+                kind=ActionKind.DELETE,
+                resource_type="model-deployment",
+                name=f"{name}-{colour}",
+                count=1,
+                detail=f"{deployed.replicas_desired} replica(s)",
+                reason="no longer declared in the spec",
+            )
+        )
+
+    return actions, warnings
+
+
+def plan_routes(
+    spec: PlatformSpec,
+    state: ActualState,
+    *,
+    model_actions: Sequence[Action] = (),
+    namespace: str = DEFAULT_NAMESPACE,
+) -> list[Action]:
+    """Diff the gateway's routing config against what the spec implies."""
+    from aisvc.gateway import build_litellm_config
+
+    servable = [m for m in spec.document.models]
+    if not servable:
+        return []
+
+    config = build_litellm_config(spec, weights=None, namespace=namespace)
+    digest = config_hash(config)
+    if state.route_hash == digest:
+        return []
+
+    depends_on = tuple(
+        action.key
+        for action in model_actions
+        if action.resource_type == "model-deployment" and action.kind is not ActionKind.DELETE
+    )
+
+    return [
+        Action(
+            kind=ActionKind.UPDATE,
+            resource_type="gateway-config",
+            name="litellm",
+            count=1,
+            detail=f"{len(config['model_list'])} route(s), digest {digest}",
+            reason="routing config differs from what the gateway has",
+            depends_on=depends_on,
+        )
+    ]
+
+
+def config_hash(config: dict[str, object]) -> str:
+    """Digest of a rendered gateway config, used to detect drift."""
+    canonical = json.dumps(config, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
+
+
+def plan_all(
+    spec: PlatformSpec,
+    state: ActualState,
+    *,
+    registry: ModelRegistry,
+    namespace: str = DEFAULT_NAMESPACE,
+) -> Plan:
+    """The whole plan, in dependency order: capacity, models, routes.
+
+    Profiles sit between models and routes in SPEC.md section 4; they are
+    rendered into the deployments and the gateway config rather than
+    being a stage of their own, so there is nothing separate to plan.
+    """
+    capacity = plan_capacity(spec, state.capacity)
+    models, model_warnings = plan_models(
+        spec,
+        state,
+        registry=registry,
+        namespace=namespace,
+        capacity_actions=capacity.actions,
+    )
+    routes = plan_routes(spec, state, model_actions=models, namespace=namespace)
+
+    return Plan(
+        actions=[*capacity.actions, *models, *routes],
+        warnings=[*capacity.warnings, *model_warnings],
+        notes=capacity.notes,
+    )

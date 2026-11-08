@@ -13,6 +13,8 @@ mechanism SPEC.md section 6 specifies; only the allow-listed parameters in
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -21,19 +23,44 @@ import yaml
 from aisvc.spec import engines
 
 if TYPE_CHECKING:
-    from aisvc.spec.models import GpuClass, Model, NodePool, ServingProfile
+    from collections.abc import Sequence
+
+from aisvc.spec.models import GpuClass, Model, NodePool, ServingProfile
 
 __all__ = [
+    "DEFAULT_ENGINE_IMAGES",
     "DEFAULT_NAMESPACE",
     "ENGINE_PORT",
     "WEIGHT_CACHE_PATH",
     "DeploymentTarget",
     "engine_args",
+    "image_for",
     "render",
     "render_yaml",
+    "spec_hash",
 ]
 
 DEFAULT_NAMESPACE = "aisvc-serving"
+
+#: Engine images used when a model does not pin its own. Operators
+#: override per model with `image:` in platform.yaml.
+DEFAULT_ENGINE_IMAGES: dict[str, str] = {
+    "vllm": "vllm/vllm-openai:v0.11.0",
+    "sglang": "lmsysorg/sglang:v0.4.6-cu124",
+    "trtllm": "nvcr.io/nvidia/tritonserver:25.01-trtllm-python-py3",
+}
+
+
+def image_for(model: Model) -> str:
+    """The container image to run this model's engine with."""
+    if model.image:
+        return model.image
+    try:
+        return DEFAULT_ENGINE_IMAGES[model.engine]
+    except KeyError:
+        raise ValueError(f"no default image for engine {model.engine!r}") from None
+
+
 ENGINE_PORT = 8000
 
 #: Where the cache DaemonSet stages weights on node-local NVMe
@@ -330,6 +357,17 @@ def render(target: DeploymentTarget, *, namespace: str = DEFAULT_NAMESPACE) -> l
         _service(target, namespace),
         _pdb(target, namespace),
     ]
+
+
+def spec_hash(objects: Sequence[dict[str, Any]]) -> str:
+    """A short digest of a rendered manifest.
+
+    Stamped onto the objects as an annotation so the next plan can tell
+    "already correct" from "changed" without diffing against a server
+    that fills in its own defaults.
+    """
+    canonical = json.dumps(objects, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
 
 
 def render_yaml(target: DeploymentTarget, *, namespace: str = DEFAULT_NAMESPACE) -> str:

@@ -13,6 +13,16 @@ import pytest
 from aisvc.registry import ModelRegistry, S3ObjectStore
 
 
+def _client_error(code: str, status: int) -> Exception:
+    """An exception shaped like botocore's ClientError."""
+    error = Exception(code)
+    error.response = {  # type: ignore[attr-defined]
+        "Error": {"Code": code},
+        "ResponseMetadata": {"HTTPStatusCode": status},
+    }
+    return error
+
+
 class FakeS3Client:
     """Enough of the boto3 S3 client for the store to exercise."""
 
@@ -30,7 +40,7 @@ class FakeS3Client:
         self.calls.append(("get_object", kwargs))
         key = kwargs["Key"]
         if key not in self.objects:
-            raise RuntimeError("NoSuchKey")
+            raise _client_error("NoSuchKey", 404)
 
         class Body:
             def __init__(self, data: bytes) -> None:
@@ -129,3 +139,46 @@ class TestRegistryOverS3:
         client.objects[f"org/repo/{sha}/model.safetensors"] = b"tampered"
 
         assert not registry.verify("org/repo", sha).ok
+
+
+class TestErrorDiscrimination:
+    """A missing object and an unreachable registry are different things."""
+
+    def test_a_missing_key_is_a_keyerror(self, store: S3ObjectStore) -> None:
+        with pytest.raises(KeyError):
+            store.get("absent")
+
+    def test_an_outage_is_not_mistaken_for_a_missing_object(self) -> None:
+        """Otherwise every model would read as unmirrored during an outage."""
+
+        class BrokenClient:
+            def get_object(self, **_: Any) -> dict[str, Any]:
+                raise ConnectionError("connection refused")
+
+        from aisvc.registry import RegistryError
+
+        store = S3ObjectStore(bucket="models", client=BrokenClient())
+        with pytest.raises(RegistryError, match="could not read"):
+            store.get("anything")
+
+    def test_a_404_response_is_a_keyerror(self) -> None:
+        class NotFoundClient:
+            def get_object(self, **_: Any) -> dict[str, Any]:
+                raise _client_error("NoSuchKey", 404)
+
+        store = S3ObjectStore(bucket="models", client=NotFoundClient())
+        with pytest.raises(KeyError):
+            store.get("anything")
+
+    def test_an_outage_does_not_make_a_model_look_unmirrored(self) -> None:
+        class BrokenClient:
+            def get_object(self, **_: Any) -> dict[str, Any]:
+                raise ConnectionError("connection refused")
+
+        from aisvc.registry import RegistryError
+
+        registry = ModelRegistry(
+            S3ObjectStore(bucket="models", client=BrokenClient()), bucket="models"
+        )
+        with pytest.raises(RegistryError):
+            registry.has("org/repo", "0" * 40)

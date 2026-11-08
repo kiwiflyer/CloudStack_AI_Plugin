@@ -17,6 +17,7 @@ from aisvc.reconciler.plan import Action, ActionKind, Plan
 
 if TYPE_CHECKING:
     from aisvc.provision import GpuNode
+    from aisvc.reconciler.deployer import ServingDeployer
 
 __all__ = ["Executor", "ExecutorError"]
 
@@ -85,10 +86,12 @@ class Executor:
         provisioner: SupportsNodeProvisioning,
         run_log: RunLog,
         *,
+        deployer: ServingDeployer | None = None,
         action_timeout: float = DEFAULT_ACTION_TIMEOUT,
     ) -> None:
         self.provisioner = provisioner
         self.run_log = run_log
+        self.deployer = deployer
         self.action_timeout = action_timeout
 
     async def execute(self, plan: Plan, *, zone: str, dry_run: bool = False) -> RunRecord:
@@ -140,7 +143,7 @@ class Executor:
 
         self.run_log.action_started(record)
         try:
-            nodes = await asyncio.wait_for(handler(dry_run), timeout=self.action_timeout)
+            affected = await asyncio.wait_for(handler(dry_run), timeout=self.action_timeout)
         except TimeoutError:
             self.run_log.action_failed(
                 record,
@@ -149,29 +152,58 @@ class Executor:
         except Exception as exc:
             self.run_log.action_failed(record, error=f"{type(exc).__name__}: {exc}")
         else:
-            names = ", ".join(node.name for node in nodes)
-            self.run_log.action_succeeded(record, detail=names)
+            self.run_log.action_succeeded(record, detail=", ".join(affected))
 
-    def _handler_for(self, action: Action) -> Callable[[bool], Awaitable[list[GpuNode]]] | None:
-        if action.resource_type != "gpu-node":
-            return None
+    def _handler_for(self, action: Action) -> Callable[[bool], Awaitable[list[str]]] | None:
+        if action.resource_type == "gpu-node":
+            return self._gpu_node_handler(action)
+        if action.resource_type in {"model-deployment", "gateway-config"}:
+            return self._serving_handler(action)
+        return None
 
+    def _gpu_node_handler(self, action: Action) -> Callable[[bool], Awaitable[list[str]]] | None:
         if action.kind is ActionKind.CREATE:
 
-            async def create(dry_run: bool) -> list[GpuNode]:
-                return await self.provisioner.create_nodes(
+            async def create(dry_run: bool) -> list[str]:
+                nodes: list[GpuNode] = await self.provisioner.create_nodes(
                     action.name, action.count, dry_run=dry_run
                 )
+                return [node.name for node in nodes]
 
             return create
 
         if action.kind is ActionKind.DELETE:
 
-            async def destroy(dry_run: bool) -> list[GpuNode]:
-                return await self.provisioner.destroy_nodes(
+            async def destroy(dry_run: bool) -> list[str]:
+                nodes: list[GpuNode] = await self.provisioner.destroy_nodes(
                     action.name, action.count, dry_run=dry_run
                 )
+                return [node.name for node in nodes]
 
             return destroy
 
         return None
+
+    def _serving_handler(self, action: Action) -> Callable[[bool], Awaitable[list[str]]] | None:
+        deployer = self.deployer
+        if deployer is None:
+            return None
+
+        if action.resource_type == "gateway-config":
+
+            async def routes(dry_run: bool) -> list[str]:
+                return await deployer.apply_routes(action.name, dry_run=dry_run)
+
+            return routes
+
+        if action.kind is ActionKind.DELETE:
+
+            async def remove(dry_run: bool) -> list[str]:
+                return await deployer.delete_model(action.name, dry_run=dry_run)
+
+            return remove
+
+        async def apply(dry_run: bool) -> list[str]:
+            return await deployer.apply_model(action.name, dry_run=dry_run)
+
+        return apply

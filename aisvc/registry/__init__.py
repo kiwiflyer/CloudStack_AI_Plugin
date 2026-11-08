@@ -33,6 +33,7 @@ __all__ = [
     "ArtifactEntry",
     "InMemoryObjectStore",
     "Manifest",
+    "ManifestNotFound",
     "ModelRegistry",
     "ObjectStore",
     "RegistryError",
@@ -51,6 +52,15 @@ PICKLE_SUFFIXES = (".bin", ".pt", ".pth", ".ckpt", ".pkl")
 
 class RegistryError(Exception):
     """An artifact could not be stored, found or trusted."""
+
+
+class ManifestNotFound(RegistryError):
+    """This revision has not been mirrored.
+
+    Distinct from every other RegistryError on purpose: "not mirrored" is
+    an ordinary state the planner acts on, while a registry it cannot
+    reach must stop the run rather than look like an empty registry.
+    """
 
 
 class ObjectStore(Protocol):
@@ -80,6 +90,17 @@ class InMemoryObjectStore:
         return sorted(self.objects)
 
 
+def _is_not_found(exc: Exception) -> bool:
+    """Whether a botocore error means the object simply is not there."""
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        error = response.get("Error") or {}
+        code = str(error.get("Code", ""))
+        status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+        return code in {"NoSuchKey", "404", "NotFound"} or status == 404
+    return exc.__class__.__name__ in {"NoSuchKey", "404"}
+
+
 class S3ObjectStore:
     """boto3 against Ceph RGW, MinIO or S3 (SPEC.md section 4)."""
 
@@ -87,7 +108,8 @@ class S3ObjectStore:
         if client is None:  # pragma: no cover - needs real credentials
             import boto3
 
-            client = boto3.client("s3", **client_kwargs)
+            # endpoint_url points at Ceph RGW or MinIO; None means AWS S3.
+            client = boto3.client("s3", **{k: v for k, v in client_kwargs.items() if v is not None})
         self.bucket = bucket
         self.client = client
 
@@ -98,7 +120,12 @@ class S3ObjectStore:
         try:
             response = self.client.get_object(Bucket=self.bucket, Key=key)
         except Exception as exc:
-            raise KeyError(key) from exc
+            # "Not there" and "cannot reach the registry" must not look the
+            # same: the first means a model is unmirrored, the second would
+            # otherwise silently skip every deployment during an outage.
+            if _is_not_found(exc):
+                raise KeyError(key) from exc
+            raise RegistryError(f"could not read {key} from s3://{self.bucket}: {exc}") from exc
         body: bytes = response["Body"].read()
         return body
 
@@ -269,17 +296,21 @@ class ModelRegistry:
         try:
             raw = self.store.get(f"{prefix}{MANIFEST_NAME}")
         except KeyError as exc:
-            raise RegistryError(
+            raise ManifestNotFound(
                 f"no manifest for {repo_id}@{revision}; it was never mirrored, "
                 "or the mirror did not finish"
             ) from exc
         return Manifest.from_json(raw.decode("utf-8"))
 
     def has(self, repo_id: str, revision: str) -> bool:
-        """Whether a *complete* mirror exists, manifest included."""
+        """Whether a *complete* mirror exists, manifest included.
+
+        Only a genuine absence answers False; a registry that cannot be
+        reached raises, so an outage never reads as "nothing is mirrored".
+        """
         try:
             self.read_manifest(repo_id, revision)
-        except RegistryError:
+        except ManifestNotFound:
             return False
         return True
 

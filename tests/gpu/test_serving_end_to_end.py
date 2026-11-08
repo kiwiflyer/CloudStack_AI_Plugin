@@ -126,7 +126,7 @@ class TestColdStart:
         from kubernetes import config as k8s_config
 
         lab_env("AISVC_GPU_LAB_SPEC")
-        k8s_config.load_kube_config()
+        k8s_config.load_kube_config()  # type: ignore[no-untyped-call]
         core = k8s_client.CoreV1Api()
 
         namespace = os.environ.get("AISVC_GPU_LAB_NAMESPACE", "aisvc-serving")
@@ -134,14 +134,12 @@ class TestColdStart:
         assert pods, f"no pods for {MODEL} in {namespace}"
 
         pod = pods[0]
+        conditions = (pod.status.conditions or []) if pod.status else []
         scheduled = next(
-            (c.last_transition_time for c in pod.status.conditions if c.type == "PodScheduled"),
+            (c.last_transition_time for c in conditions if c.type == "PodScheduled"),
             None,
         )
-        ready = next(
-            (c.last_transition_time for c in pod.status.conditions if c.type == "Ready"),
-            None,
-        )
+        ready = next((c.last_transition_time for c in conditions if c.type == "Ready"), None)
         assert scheduled and ready, "pod never became ready"
 
         elapsed = (ready - scheduled).total_seconds()

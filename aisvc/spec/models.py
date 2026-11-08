@@ -138,6 +138,9 @@ class Model(Base):
     visibility: Visibility = Field(default_factory=Visibility)
     price_tier: str | None = None
     architecture: Architecture | None = None
+    #: Engine container image. Defaults per engine in aisvc.k8s when unset,
+    #: so an operator can pin one without editing code.
+    image: str | None = None
     concurrency: Concurrency = Field(default_factory=Concurrency)
     lora: LoraSettings = Field(default_factory=LoraSettings)
     batch: BatchSettings = Field(default_factory=BatchSettings)

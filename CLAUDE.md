@@ -13,9 +13,14 @@ Not written: `api/` (m4), `autoscale/`, `lifecycle/`, `metering/`, `setup/`, `pl
 all v2 modules, `java-plugin/`, `ui/`, `terraform/`, `deploy/`. `make test-java`, `test-ui`,
 `test-tf` and `record` deliberately exit 1 naming the milestone that fills them in.
 
-**Not yet wired together:** `plan_capacity` plans GPU nodes only, so `aisvc apply` provisions
-hardware but does not serve a model. LiteLLM is not a dependency yet, and `k8s` renders
-manifests nothing applies.
+`aisvc apply` takes an empty zone to a served model in one run — nodes, then deployments, then
+routes — and a second run plans nothing. **Still missing:** LiteLLM as a real dependency, any
+rollout between blue and green, and a single test against a real API server.
+
+**Change detection is by spec hash.** The rendered manifest is digested and stamped as
+`aisvc.io/spec-hash`; the gateway config's digest goes on its ConfigMap. Plans compare digests
+rather than diffing live objects, so anything that changes rendering must flow through
+`spec_hash` or convergence breaks silently.
 
 Before claiming a command works, run it. Before referencing a module, confirm the file exists.
 

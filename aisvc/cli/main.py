@@ -16,9 +16,17 @@ from rich.console import Console
 
 from aisvc.cloudstack import CloudStackClient, CloudStackError, Credentials
 from aisvc.db import Base, RunLog, create_session_factory, session_scope
-from aisvc.inventory import CapacitySnapshot, take_snapshot
+from aisvc.inventory import take_snapshot
+from aisvc.k8s import DEFAULT_NAMESPACE
+from aisvc.k8s.client import (
+    ClusterKubernetes,
+    observe_deployments,
+    observe_route_hash,
+)
 from aisvc.provision import ClusterJoin, NodeProvisioner
-from aisvc.reconciler import Executor, Plan, plan_capacity
+from aisvc.reconciler import ActualState, Executor, Plan, plan_all
+from aisvc.reconciler.deployer import ServingDeployer
+from aisvc.registry import InMemoryObjectStore, ModelRegistry, S3ObjectStore
 from aisvc.spec import PlatformSpec, SpecError, load_spec
 
 app = typer.Typer(
@@ -106,10 +114,39 @@ def _cluster_join() -> ClusterJoin:
     )
 
 
-async def _observe(spec: PlatformSpec) -> CapacitySnapshot:
+def _registry(*, observe: bool = True) -> ModelRegistry:
+    """The artifact registry, from the environment.
+
+    With `--no-observe` nothing should leave the machine, so the plan is
+    drawn against an empty registry and every model reads as unmirrored.
+    """
+    if not observe:
+        return ModelRegistry(InMemoryObjectStore(), bucket="models")
+
+    bucket = os.environ.get("AISVC_REGISTRY_BUCKET", "models")
+    endpoint = os.environ.get("AISVC_REGISTRY_ENDPOINT") or None
+    store = S3ObjectStore(bucket=bucket, endpoint_url=endpoint)
+    return ModelRegistry(store, bucket=bucket)
+
+
+def _cluster() -> ClusterKubernetes:
+    return ClusterKubernetes(kubeconfig=os.environ.get("KUBECONFIG") or None)
+
+
+async def _observe(spec: PlatformSpec) -> ActualState:
+    """Read CloudStack capacity and the cluster's serving workloads."""
     credentials = _credentials()
+    namespace = os.environ.get("AISVC_NAMESPACE", DEFAULT_NAMESPACE)
+
     async with CloudStackClient(credentials) as client:
-        return await take_snapshot(client, spec)
+        capacity = await take_snapshot(client, spec)
+
+    cluster = _cluster()
+    return ActualState(
+        capacity=capacity,
+        deployments=observe_deployments(cluster, namespace=namespace),
+        route_hash=observe_route_hash(cluster, namespace=namespace),
+    )
 
 
 async def _apply(
@@ -118,16 +155,30 @@ async def _apply(
     """Execute a plan, returning the run id and its status."""
     credentials = _credentials()
     join = _cluster_join()
+    namespace = os.environ.get("AISVC_NAMESPACE", DEFAULT_NAMESPACE)
 
     factory = create_session_factory()
     Base.metadata.create_all(factory.kw["bind"])
 
     async with CloudStackClient(credentials) as client:
         provisioner = NodeProvisioner(client, spec, join=join)
+        deployer = ServingDeployer(_cluster(), spec, _registry(), namespace=namespace)
         with session_scope(factory) as session:
-            executor = Executor(provisioner, RunLog(session))
+            executor = Executor(provisioner, RunLog(session), deployer=deployer)
             run = await executor.execute(computed, zone=zone, dry_run=dry_run)
             return run.id, run.status.value
+
+
+def _observe_or_empty(spec: PlatformSpec, *, observe: bool) -> ActualState:
+    """Observe the world, or stand in an empty one for --no-observe."""
+    if not observe:
+        out.print("[dim]--no-observe: planning against an empty platform.[/dim]\n")
+        return ActualState.empty_for(spec)
+    try:
+        return asyncio.run(_observe(spec))
+    except CloudStackError as exc:
+        err.print(f"[bold red]CloudStack call failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()
@@ -160,17 +211,8 @@ def plan(
     """Print the plan to converge CloudStack onto platform.yaml."""
     loaded = _load(spec, licenses)
 
-    if observe:
-        try:
-            snapshot = asyncio.run(_observe(loaded))
-        except CloudStackError as exc:
-            err.print(f"[bold red]CloudStack call failed:[/bold red] {exc}")
-            raise typer.Exit(code=1) from exc
-    else:
-        snapshot = CapacitySnapshot.empty_for(loaded)
-        out.print("[dim]--no-observe: planning against an empty platform.[/dim]\n")
-
-    computed: Plan = plan_capacity(loaded, snapshot)
+    state = _observe_or_empty(loaded, observe=observe)
+    computed: Plan = plan_all(loaded, state, registry=_registry(observe=observe))
     out.print(computed.render())
     out.print("\n[dim]plan is read-only; nothing was changed.[/dim]")
 
@@ -201,16 +243,8 @@ def apply(
     _credentials()
     _cluster_join()
 
-    if observe:
-        try:
-            snapshot = asyncio.run(_observe(loaded))
-        except CloudStackError as exc:
-            err.print(f"[bold red]CloudStack call failed:[/bold red] {exc}")
-            raise typer.Exit(code=1) from exc
-    else:
-        snapshot = CapacitySnapshot.empty_for(loaded)
-
-    computed = plan_capacity(loaded, snapshot)
+    state = _observe_or_empty(loaded, observe=observe)
+    computed = plan_all(loaded, state, registry=_registry(observe=observe))
     out.print(computed.render())
 
     if not computed.has_changes:
