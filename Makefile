@@ -31,7 +31,9 @@ test-java:
 	cd java-plugin && JAVA_HOME=$(JAVA_HOME) PATH=$(JAVA_HOME)/bin:$$PATH mvn -q test
 
 test-ui:
-	@echo "milestone 6: not scaffolded yet"; exit 1
+	cd ui && npm run --silent test:unit
+	@echo "Playwright needs a CloudStack; see ui/README.md"
+	cd ui && npx playwright test
 
 test-tf:
 	cd terraform && go build ./... && go vet ./... && go test ./...

@@ -1,0 +1,20 @@
+{
+  "name": "cloudstack-ui-aiservices",
+  "version": "1.0.0",
+  "description": "AI Services section for the Apache CloudStack UI",
+  "license": "Apache-2.0",
+  "private": true,
+  "scripts": {
+    "test:unit": "vitest run --config vitest.config.mjs",
+    "test:e2e": "playwright test",
+    "lint": "eslint src tests"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.1",
+    "@vitejs/plugin-vue": "5.2.1",
+    "@vue/test-utils": "2.4.6",
+    "jsdom": "25.0.1",
+    "vitest": "2.1.8",
+    "vue": "3.5.13"
+  }
+}

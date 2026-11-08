@@ -1,0 +1,35 @@
+<!-- Scoped API keys for an endpoint (SPEC.md section 7).
+
+     A key's secret is shown once, by the dialog that creates it, and
+     never again — so this list carries metadata only. `lastused` is
+     here because it is how a tenant decides whether an old key is
+     still in use before revoking it. -->
+<template>
+  <table class="ai-keys">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Models</th>
+        <th>Last used</th>
+        <th>Expires</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="key in keys" :key="key.id" data-test="key">
+        <td>{{ key.name }}</td>
+        <td>{{ (key.allowedmodels || []).join(', ') || 'any' }}</td>
+        <td>{{ key.lastused || 'never' }}</td>
+        <td>{{ key.expires || 'never' }}</td>
+        <td>{{ key.revoked ? 'revoked' : 'active' }}</td>
+      </tr>
+    </tbody>
+  </table>
+</template>
+
+<script>
+export default {
+  name: 'AiApiKeysTab',
+  props: { keys: { type: Array, default: () => [] } }
+}
+</script>

@@ -16,3 +16,8 @@ target/
 
 # Terraform provider build output
 terraform/terraform-provider-cloudstack-ai
+
+# UI build and test output
+ui/node_modules/
+ui/test-results/
+ui/playwright-report/

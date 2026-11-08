@@ -4,14 +4,15 @@ Guidance for Claude Code working in this repository.
 
 ## Current state
 
-**Milestones 1–5, 7 and 8 are done bar their noted gaps; 6 and 9 are not.**
+**Milestones 1–8 are done bar their noted gaps; 9 is not.**
 See `PROGRESS.md`.
 Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`, `db`,
 `reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, `setup`, `playground`,
 `observability`, the `aisvc` CLI
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
-Not written: all v2 modules, `ui/`, `deploy/`. `terraform/` builds and unit-tests but
+Not written: all v2 modules. `ui/` has the section, screens and strings but has
+never been loaded by a real CloudStack UI, and its Playwright specs have never run. `terraform/` builds and unit-tests but
 its acceptance tests have never run against a live management server.
 `setup` plans the self-test but cannot run it: the steps need GPU capacity, so
 section 14's first acceptance criterion is not yet met. Host maintenance drains
@@ -20,7 +21,7 @@ synchronous pre-maintenance hook, and no bus is enabled by default.
 `lifecycle` and `autoscale` are driven by the reconciler, and `observability` now fills
 `DeploymentHealth` from Prometheus — autoscaling is opt-in on `AISVC_PROMETHEUS_URL` and
 holds at the replica floor without it. The engine exports its own counters on `/metrics`.
-`make test-ui` and `record` deliberately exit 1 naming the milestone that fills them in.
+`make record` deliberately exits 1 naming the milestone that fills it in.
 
 `aisvc apply` takes an empty zone to a served model in one run — nodes, then deployments, then
 routes — and a second run plans nothing. **Still missing:** LiteLLM as a real dependency, any

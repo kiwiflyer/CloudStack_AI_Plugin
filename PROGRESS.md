@@ -990,3 +990,104 @@ outcome series at zero before anything has happened.
   the only path with a test behind it.
 - Milestone 7's **Grafana dashboard** ships one board. Per-tenant usage
   and budget views belong with the UI work in milestone 6.
+
+## Milestone 6 — Native UI section
+
+**Status:** the `aiservices` section exists with all 14 of SPEC.md
+section 9's v1 screens, English strings, 86 Vitest tests and 27
+Playwright specs. `make test-ui` runs for the first time instead of
+exiting 1.
+
+It has never been loaded by a real CloudStack UI. See the end.
+
+### Declarative, because that is where the behaviour comes from
+
+Almost every screen is config in `src/config/section/aiservices.js`,
+not code. CloudStack builds list views, detail views, search,
+pagination, async job notifications and role-based action visibility
+from that config, so a screen described there inherits all of it —
+which is the actual reason SPEC.md asks for "standard list, detail and
+action patterns" rather than a bespoke section.
+
+It is also what keeps "everything in the UI is also available through
+CloudMonkey and Terraform" true: the config names API commands and
+nothing else, so there is no path the UI can take that the API cannot.
+
+Five screens are components because a table cannot express them: the
+setup wizard (a sequence), the GPU heatmap, effective parameters, the
+Hugging Face browser and the playground.
+
+### Four drift guards do most of the work
+
+The section is mostly data, so the tests that matter check it against
+the things it has to agree with:
+
+1. **Every `api:` exists in `aisvc/api/commands.py`.** The UI is the
+   only place that can name a command the engine does not map; a
+   rename would otherwise leave a button that fails with nothing in the
+   console to say why. This is the Java `CommandRegistrationTest`
+   equivalent across the JS boundary.
+2. **Every component path resolves**, by actually loading each async
+   import. A typo there is a blank screen and a chunk-load error.
+   Checked by breaking one on purpose and watching it fail.
+3. **Every `label.*` key exists in `en.json`, and none is unused.**
+   CloudStack renders a missing key as the key itself.
+4. **Every locale file has English's keys, sorted**, so a translation
+   cannot silently fall behind.
+
+### Tenant first, and tested per role
+
+Tenant screens come before admin ones in the config, so a tenant lands
+on their catalog rather than an admin list they cannot read. Visibility
+is `show()` per screen, unit-tested for Admin, DomainAdmin and User —
+including that a tenant sees none of setup, capacity, fleet health or
+the registry.
+
+The Playwright specs go further and check what the unit tests cannot:
+that CloudStack honours it end to end, and that a tenant reaching an
+admin screen *by URL* is refused by the plugin rather than merely
+hidden by the menu. Hiding a link is presentation; the refusal is the
+security property.
+
+### A screen that only takes props renders empty
+
+Caught while wiring: CloudStack renders a section's `component` as the
+route view and passes it nothing. The first versions of these screens
+took all their data as props, which tested beautifully and would have
+shown an empty page in the real UI.
+
+They fetch for themselves now, with the prop kept as an override that
+means "you already have the data" — which is how the rendering tests
+stay honest about rendering what they were given rather than whatever a
+double answered. The Hugging Face browser deliberately does *not* fetch
+on mount: searching the Hub for every operator who opens the screen
+would be slow and the results meaningless.
+
+### Playwright 1.49 hangs on `"type": "module"`
+
+Worth writing down because it cost time and gives no clue. With
+`"type": "module"` in `package.json`, `playwright test` never returns —
+no output, no error, no timeout — on Node 25, in `--list` as much as in
+a run. Bisected to that one field against a minimal project.
+
+The package therefore is not `"type": "module"`, and Vitest's config
+carries the `.mjs` extension instead.
+
+### What is still not true
+
+- **No CloudStack has served this section.** It is not registered in
+  their `src/config/router.js` — that is an edit to their tree, not
+  ours — and nothing here has been through their build. Treat the
+  response field names in the components (`aigpucapacity`,
+  `listaisetupchecksresponse`) as unverified: they match the Java
+  response classes by eye, not by a round trip.
+- **The Playwright specs have never run.** They need a running
+  CloudStack with the plugin installed, which `make check` does not
+  provide, so the per-role assertions are untested assertions.
+- **The components are plain.** They render correct, accessible markup
+  with no Ant Design Vue components and no styling beyond class names,
+  because Ant is CloudStack's dependency and not ours. They will look
+  unlike the rest of the UI until that is done inside their tree.
+- **The playground does not stream.** It renders a transcript and the
+  token counts beside each turn; opening the session, sending a message
+  and consuming the SSE stream are not written.
