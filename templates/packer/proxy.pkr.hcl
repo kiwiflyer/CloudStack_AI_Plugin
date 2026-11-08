@@ -101,7 +101,7 @@ build {
       "sudo apt-get install -y nginx certbot python3-certbot-nginx curl ca-certificates",
 
       "sudo install -m 0755 /tmp/aisvc-fetch-cert /usr/local/bin/aisvc-fetch-cert",
-      "sudo mkdir -p /etc/aisvc/tls /etc/aisvc/mtls",
+      "sudo mkdir -p /etc/aisvc/tls",
       "sudo chmod 0700 /etc/aisvc/tls",
 
       // The proxy serves one deployment and nothing else; the default

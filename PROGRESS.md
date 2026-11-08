@@ -1648,25 +1648,11 @@ them.
 
 ### The bootstrap problem
 
-`aisvc-fetch-cert` authenticates to the engine with mTLS, and **nothing
-puts the client material on the proxy**. It cannot come from
-cloud-init: that is the same readable-userdata problem the fetcher
-exists to avoid, and a client key there would be worse than the server
-key it protects.
-
-This needs a decision rather than code. A one-time bootstrap token in
-userdata is the usual answer — short-lived and single-use, so a leaked
-userdata document yields a spent token rather than a key — but it is
-not written, and guessing at it would be worse than leaving it marked.
-
-**So today a private endpoint with an uploaded certificate boots, fails
-to fetch, and serves nothing.** A private endpoint without a custom
-domain works: plain HTTP on the tenant's own network needs no
-certificate at all.
+How a proxy authenticates at first boot, when it has no identity yet.
+Solved with a one-time token; see the next section.
 
 ### What is still not true
 
-- **The bootstrap above.** The proxy cannot authenticate to the engine.
 - **Neither template has been built against a real CloudStack.**
   `packer validate` passes; a build needs a zone, a base template and
   network egress.
@@ -1720,3 +1706,90 @@ fails `validate`, and `>= 9.9.9` fails `init`.
 The Packer tests skip when the binary is absent, as the Terraform and
 Playwright acceptance tests do, so a contributor without Packer still
 gets a green suite and the structural checks still run.
+
+## Milestone 9 — one-time bootstrap tokens
+
+**Status:** a proxy fetches its TLS material at first boot. The
+bootstrap problem is closed.
+
+1582 Python tests, 399 Java, 21 Go, 86 Vitest.
+
+### The trade, stated plainly
+
+A proxy needs its certificate at first boot and has no identity yet.
+mTLS cannot solve that: the client key would have to travel in
+cloud-init userdata, which is readable through the CloudStack API —
+the very problem the fetch exists to avoid, and worse, because one
+client key opens every certificate rather than one.
+
+So the proxy carries a token instead. **This is still a credential in a
+readable place.** What makes it acceptable is that it is short-lived
+(30 minutes), single-use, and bound to one certificate: a userdata
+document read tomorrow yields something already spent and useless for
+anything else, where a private key read tomorrow is a private key.
+
+Everything in `aisvc/certificates/bootstrap.py` exists to hold that
+trade up. The two load-bearing properties are that redeeming burns the
+token in the same flush that returns the material, and that a token
+buys exactly one certificate.
+
+### The endpoint with no caller context
+
+`POST /v1/certificates/bootstrap` is the only one, and it has to be:
+the proxy has no identity, which is the whole reason the token exists.
+The token *is* the authentication. It is kept narrow —
+
+- out of the published schema, so nothing else discovers it;
+- the token in the body rather than the path, since paths reach access
+  logs and proxies;
+- 256-bit secrets, because nothing rate-limits redemption and the
+  token space is the only thing between an attacker and one
+  certificate;
+- stored as a salted hash, so a database read yields nothing usable;
+- an unknown id and a wrong secret refuse identically, so this is not
+  an oracle for which tokens exist;
+- a second presentation logs a warning, because it means either a
+  retry after a crash or someone reading userdata.
+
+A test asserts caller context is still required everywhere else.
+
+### Minted at deploy time
+
+Not at plan time. A token's half-hour starts when it is minted, and one
+issued while a plan was still being reviewed would be spent before the
+VM booted. `ProxyProvisioner` mints as it calls `deployVirtualMachine`,
+and only where there is material to fetch — no certificate means no
+token, rather than a credential in readable userdata for nothing. An
+existing proxy mints none either.
+
+`aisvc apply` sweeps spent and expired tokens afterwards.
+
+### Verified against a running engine
+
+With the actual shipped `aisvc-fetch-cert`, not a stand-in:
+
+- a token minted as the provisioner would mint it;
+- redeemed, writing a byte-exact certificate and key at mode 600;
+- a second attempt refused with 403;
+- the token not echoed in the error.
+
+### What is still not true
+
+- **Neither template has been built against a real CloudStack**, and
+  no proxy has booted. `packer validate` passes; a build needs a zone,
+  a base template and network egress.
+- **The proxy must be able to reach the engine.** The token replaces
+  mTLS as the credential but not the route: `AISVC_ENGINE_URL` has to
+  resolve from the tenant's VPC tier. Nothing checks that, and a proxy
+  that cannot reach the engine spends its token on a failed attempt
+  and needs redeploying.
+- **A failed fetch costs a redeploy.** The token is burned on the
+  engine's side by a successful redemption, so a proxy that fetches
+  and then loses the file has no second chance. That is the intended
+  trade, not an oversight, but it means a transient disk error at
+  first boot is a redeploy.
+- **Nothing renews an uploaded certificate**, and ACME remains
+  configured but unexercised.
+- Adapter artefacts are not fetched, evaluations are judged rather than
+  produced, the guard model is not called, no v2 command reaches
+  CloudStack, and the batch worker has no leader election.

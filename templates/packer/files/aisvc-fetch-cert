@@ -1,35 +1,37 @@
 #!/usr/bin/env bash
-# Fetch this proxy's TLS material from the engine (SPEC.md section 8).
+# Redeem this proxy's one-time bootstrap token for its TLS material
+# (SPEC.md section 8).
 #
-# Called by cloud-init at first boot. The material is NOT in the
-# userdata on purpose: that document is readable through the CloudStack
-# API by anyone who can see the VM, so a private key there is a private
-# key published. It is fetched here instead, over mTLS, by id.
+# Called once by cloud-init at first boot. The material is NOT in the
+# userdata: that document is readable through the CloudStack API, so a
+# private key there is a private key published. The token is, and it is
+# single-use, short-lived and bound to one certificate — so a userdata
+# document read later yields something already spent.
 #
-# The engine is unreachable from tenant networks; this runs on the
-# proxy, which sits on both.
+# The token is therefore burned the first time this runs, successfully
+# or not, from the engine's point of view. A retry needs a redeployed
+# proxy, which is why this writes nothing until it has everything.
 set -euo pipefail
 
 usage() {
-    echo "usage: aisvc-fetch-cert --id <certificate-id> --out <dir>" >&2
+    echo "usage: aisvc-fetch-cert --token <token> [--out <dir>] [--engine <url>]" >&2
     exit 2
 }
 
-CERT_ID=""
+TOKEN=""
 OUT_DIR="/etc/aisvc/tls"
 ENGINE="${AISVC_ENGINE_URL:-}"
-MTLS_DIR="${AISVC_MTLS_DIR:-/etc/aisvc/mtls}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --id) CERT_ID="${2:-}"; shift 2 ;;
+        --token) TOKEN="${2:-}"; shift 2 ;;
         --out) OUT_DIR="${2:-}"; shift 2 ;;
         --engine) ENGINE="${2:-}"; shift 2 ;;
         *) usage ;;
     esac
 done
 
-[ -n "$CERT_ID" ] || usage
+[ -n "$TOKEN" ] || usage
 if [ -z "$ENGINE" ]; then
     echo "aisvc-fetch-cert: no engine URL; set AISVC_ENGINE_URL or pass --engine" >&2
     exit 1
@@ -38,21 +40,28 @@ fi
 install -d -m 0700 "$OUT_DIR"
 umask 077
 
-# Written to a temporary file first: a half-written key would leave
-# nginx serving a certificate it cannot use, and the failure would look
-# like a bad upload rather than a bad fetch.
 response="$(mktemp)"
-trap 'rm -f "$response"' EXIT
+request="$(mktemp)"
+# Removed whatever happens: the response holds a private key and the
+# request holds the token.
+trap 'rm -f "$response" "$request"' EXIT
 
-curl --fail --silent --show-error \
-     --cert "$MTLS_DIR/client.crt" \
-     --key "$MTLS_DIR/client.key" \
-     --cacert "$MTLS_DIR/ca.crt" \
-     -H "X-Aisvc-User-Id: proxy" \
-     -H "X-Aisvc-Account: system" \
-     -H "X-Aisvc-Domain: /" \
-     -H "X-Aisvc-Role: Admin" \
-     "$ENGINE/v1/certificates/$CERT_ID/material" > "$response"
+# The token goes in the body rather than the URL: paths reach access
+# logs and proxies, bodies do not.
+printf '{"token":"%s"}' "$TOKEN" > "$request"
+
+# --fail so an HTTP error is an exit code rather than an error page
+# written out as a certificate. The engine's reply is RFC 9457 problem
+# JSON, which is not a PEM file.
+if ! curl --fail --silent --show-error \
+          --header "Content-Type: application/json" \
+          --data "@$request" \
+          "$ENGINE/v1/certificates/bootstrap" > "$response"; then
+    echo "aisvc-fetch-cert: the engine refused this token" >&2
+    echo "  A token is single-use and expires in 30 minutes; redeploy" >&2
+    echo "  the proxy to mint a new one." >&2
+    exit 1
+fi
 
 python3 - "$response" "$OUT_DIR" <<'PY'
 import json
@@ -62,15 +71,21 @@ import sys
 body = json.load(open(sys.argv[1]))
 out = sys.argv[2]
 
-for field, name in (("certificate", "fullchain.pem"), ("privatekey", "privkey.pem")):
-    material = body.get(field)
-    if not material:
-        # Better to fail than to write an empty file nginx will refuse
-        # with an error that points at the file rather than the fetch.
-        sys.exit(f"aisvc-fetch-cert: the engine returned no {field}")
+# Both or neither: a half-written pair leaves nginx blaming the file
+# rather than the fetch that produced it, and the token is already
+# spent by then.
+material = {
+    "fullchain.pem": body.get("certificate"),
+    "privkey.pem": body.get("privatekey"),
+}
+missing = [name for name, value in material.items() if not value]
+if missing:
+    sys.exit(f"aisvc-fetch-cert: the engine returned no {', '.join(missing)}")
+
+for name, value in material.items():
     path = os.path.join(out, name)
     with open(path, "w") as handle:
-        handle.write(material)
+        handle.write(value)
     os.chmod(path, 0o600)
 PY
 

@@ -14,11 +14,9 @@ Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`,
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
 v2 is reachable through the engine API and the CLI, not through CloudStack: its
-commands are `Release.V2` and the Java generator emits V1 only. No CloudStack has run the proxy provisioner, and
-nothing puts mTLS client material on a proxy, so one with an uploaded certificate
-cannot fetch it — see PROGRESS.md's "bootstrap problem". Nothing renews a
-certificate, fetches an adapter's artefacts, produces an evaluation or calls the
-guard model. The batch
+commands are `Release.V2` and the Java generator emits V1 only. No CloudStack has run the proxy provisioner and no
+proxy has booted. Nothing renews a certificate, fetches an adapter's artefacts,
+produces an evaluation or calls the guard model. The batch
 worker (`aisvc batch`) has no leader election, so run one.
 
 **A Kubernetes LoadBalancer Service cannot be placed on a chosen network.** The
@@ -181,6 +179,10 @@ and is updated by Git commit when changes come in through the UI or API.
 - Secrets come from a secrets manager or Kubernetes Secrets, never `platform.yaml`.
 - API keys stored as salted hashes, shown once. Playground keys expire in 15 minutes.
 - Engine↔plugin over mTLS; the engine is unreachable from tenant networks.
+- **One endpoint takes no caller context**: `POST /v1/certificates/bootstrap`, where
+  a proxy redeems a one-time token for its TLS material. It cannot — the proxy has no
+  identity at first boot. The token is single-use, expires in 30 minutes, is bound to
+  one certificate and is stored hashed. Do not add a second such endpoint.
 - Prompts and outputs are never logged by default. Guardrail blocks record the category only.
 
 **Profile precedence** (most specific wins; a `locked` value beats every level below it):

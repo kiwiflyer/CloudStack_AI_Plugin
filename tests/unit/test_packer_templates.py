@@ -110,21 +110,33 @@ class TestTheProxyTemplate:
 class TestTheCertificateFetcher:
     SCRIPT = PACKER / "files" / "aisvc-fetch-cert"
 
-    def test_it_uses_mtls(self) -> None:
+    def test_it_redeems_a_token(self) -> None:
+        """Not mTLS: the client key would have to travel in the same
+        readable userdata the material is kept out of."""
         text = source(self.SCRIPT)
 
-        assert "--cert" in text
-        assert "--key" in text
-        assert "--cacert" in text
+        assert "--token" in text
+        assert "/v1/certificates/bootstrap" in text
 
-    def test_it_fetches_by_id_rather_than_taking_material(self) -> None:
-        assert "/v1/certificates/" in source(self.SCRIPT)
-        assert "/material" in source(self.SCRIPT)
+    def test_the_token_goes_in_the_body_not_the_url(self) -> None:
+        """Paths reach access logs and proxies; bodies do not."""
+        text = source(self.SCRIPT)
 
-    def test_it_refuses_to_write_an_empty_key(self) -> None:
-        """An empty file makes nginx blame the file rather than the
-        fetch that produced it."""
-        assert "no %s" in source(self.SCRIPT) or "returned no" in source(self.SCRIPT)
+        assert "--data" in text
+        assert "bootstrap?" not in text
+
+    def test_it_fails_on_an_http_error(self) -> None:
+        """Without --fail, curl writes the error page out as a
+        certificate and nginx blames the file."""
+        assert "--fail" in source(self.SCRIPT)
+
+    def test_it_says_what_to_do_when_a_token_is_spent(self) -> None:
+        assert "redeploy" in source(self.SCRIPT).lower()
+
+    def test_it_writes_both_files_or_neither(self) -> None:
+        """A half-written pair makes nginx blame the file rather than
+        the fetch, and by then the token is spent."""
+        assert "returned no" in source(self.SCRIPT)
 
     def test_the_key_is_written_private(self) -> None:
         assert "0o600" in source(self.SCRIPT)

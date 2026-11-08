@@ -566,3 +566,182 @@ class TestTheFetcherKnowsWhereToGo:
         assert plan is not None
 
         assert "aisvc-fetch-cert" not in render_proxy_userdata(plan)
+
+
+class TestTheUserdataCarriesAToken:
+    """Not a certificate id and not mTLS material.
+
+    The id alone would need an identity the proxy has not got; mTLS
+    material would be a private key in a readable document, which is
+    the problem the whole mechanism exists to avoid.
+    """
+
+    def userdata(self, **kw: Any) -> str:
+        from aisvc.endpoints.proxy import plan_proxy, render_proxy_userdata
+
+        plan = plan_proxy(
+            exposure(
+                custom_domain="ai.acme.example",
+                tls=TlsSource.UPLOADED,
+                certificate_id="cert-1",
+                **kw,
+            ),
+            zone_id="z",
+            gateway_host="gw",
+            engine_url="https://engine.aisvc.internal:8443",
+            bootstrap_token="aisvc-boot-abcd1234-thesecret",
+        )
+        assert plan is not None
+        return render_proxy_userdata(plan)
+
+    def test_the_token_is_there(self) -> None:
+        assert "aisvc-boot-abcd1234-thesecret" in self.userdata()
+
+    def test_no_mtls_material_is(self) -> None:
+        text = self.userdata()
+
+        assert "client.key" not in text
+        assert "PRIVATE KEY" not in text
+
+    def test_the_fetcher_is_given_the_token(self) -> None:
+        assert "--token" in self.userdata()
+
+    def test_the_engine_is_still_named(self) -> None:
+        assert "https://engine.aisvc.internal:8443" in self.userdata()
+
+    def test_a_plain_endpoint_carries_no_token(self) -> None:
+        from aisvc.endpoints.proxy import plan_proxy, render_proxy_userdata
+
+        plan = plan_proxy(exposure(), zone_id="z", gateway_host="gw")
+        assert plan is not None
+        text = render_proxy_userdata(plan)
+
+        assert "aisvc-boot" not in text
+        assert "aisvc-fetch-cert" not in text
+
+
+class TestMintingAtProvisionTime:
+    """A token is minted when the VM is deployed, not before.
+
+    Minting earlier would start the clock while the plan was still
+    being reviewed, and a thirty-minute token is no use if it was
+    issued an hour ago.
+    """
+
+    def setup_store(self) -> tuple[Any, Any]:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from aisvc.db import Base
+        from aisvc.db.tier2 import CertificateStore
+
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        session = sessionmaker(engine)()
+
+        from tests.unit.test_certificates import make_cert
+
+        cert, key = make_cert()
+        record = CertificateStore(session).add(
+            account="acme",
+            domain="/Customers/Acme",
+            custom_domain="ai.acme.example",
+            certificate=cert,
+            private_key=key,
+            fingerprint="ff",
+            not_after=__import__("datetime").datetime.now(__import__("datetime").UTC)
+            + __import__("datetime").timedelta(days=90),
+        )
+        session.commit()
+        return session, record
+
+    def provisioner(self, client: Any, session: Any, exposures: Any) -> Any:
+        from aisvc.endpoints.proxy import ProxyProvisioner
+
+        return ProxyProvisioner(
+            client,
+            zone_id="zone-1",
+            template_id="tmpl-1",
+            offering_id="off-1",
+            gateway_host="gw",
+            engine_url="https://engine.invalid:8443",
+            exposures_for=lambda: exposures,
+            mint_token=lambda certificate_id, proxy: (
+                __import__("aisvc.certificates.bootstrap", fromlist=["BootstrapTokens"])
+                .BootstrapTokens(session)
+                .issue(certificate_id=certificate_id, proxy=proxy)
+                .plaintext
+            ),
+        )
+
+    async def test_a_token_reaches_the_userdata(self) -> None:
+        import base64
+
+        from aisvc.endpoints.proxy import proxy_name
+
+        session, record = self.setup_store()
+        exposed = exposure(
+            custom_domain="ai.acme.example",
+            tls=TlsSource.UPLOADED,
+            certificate_id=record.id,
+        )
+        client = FakeCloudStack()
+
+        await self.provisioner(client, session, (exposed,)).ensure_named(proxy_name("acme", BASE))
+
+        userdata = base64.b64decode(client.params_for("deployVirtualMachine")["userdata"]).decode()
+        assert "aisvc-boot-" in userdata
+
+    async def test_the_token_is_stored_against_that_proxy(self) -> None:
+        from aisvc.certificates.bootstrap import BootstrapTokens
+        from aisvc.db.models import BootstrapTokenRecord
+        from aisvc.endpoints.proxy import proxy_name
+
+        session, record = self.setup_store()
+        exposed = exposure(
+            custom_domain="ai.acme.example",
+            tls=TlsSource.UPLOADED,
+            certificate_id=record.id,
+        )
+
+        await self.provisioner(FakeCloudStack(), session, (exposed,)).ensure_named(
+            proxy_name("acme", BASE)
+        )
+
+        stored = session.query(BootstrapTokenRecord).all()
+        assert len(stored) == 1
+        assert stored[0].proxy == proxy_name("acme", BASE)
+        assert stored[0].certificate_id == record.id
+        assert BootstrapTokens(session)  # store is usable
+
+    async def test_a_plain_endpoint_mints_nothing(self) -> None:
+        """No certificate, no token: there is nothing to fetch."""
+        from aisvc.db.models import BootstrapTokenRecord
+        from aisvc.endpoints.proxy import proxy_name
+
+        session, _ = self.setup_store()
+
+        await self.provisioner(FakeCloudStack(), session, (exposure(),)).ensure_named(
+            proxy_name("acme", BASE)
+        )
+
+        assert session.query(BootstrapTokenRecord).all() == []
+
+    async def test_an_existing_proxy_mints_nothing(self) -> None:
+        """It already has what it needs; a second token would be a
+        second credential in a readable place for no reason."""
+        from aisvc.db.models import BootstrapTokenRecord
+        from aisvc.endpoints.proxy import proxy_name
+
+        session, record = self.setup_store()
+        name = proxy_name("acme", BASE)
+        exposed = exposure(
+            custom_domain="ai.acme.example",
+            tls=TlsSource.UPLOADED,
+            certificate_id=record.id,
+        )
+        client = FakeCloudStack(existing=[{"id": "vm-1", "name": name}])
+
+        await self.provisioner(client, session, (exposed,)).ensure_named(name)
+
+        assert session.query(BootstrapTokenRecord).all() == []

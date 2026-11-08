@@ -36,6 +36,7 @@ from aisvc.api.errors import ApiError, register_error_handlers
 from aisvc.batch import BatchRejected, parse_requests
 from aisvc.batch.runner import read_output, store_input
 from aisvc.certificates import CertificateRejected, validate_certificate
+from aisvc.certificates.bootstrap import BootstrapRejected, BootstrapTokens
 from aisvc.db import BudgetRecord, KeyStore, RunLog, UsageStore
 from aisvc.db.tier2 import (
     TERMINAL_BATCH_STATES,
@@ -309,6 +310,12 @@ def _evaluation_row(record: Any) -> dict[str, Any]:
         "regressions": record.suites or [],
         "performance": record.performance or [],
     }
+
+
+class BootstrapBody(BaseModel):
+    """A proxy redeeming its one-time token."""
+
+    token: str = Field(min_length=1)
 
 
 class CertificateBody(BaseModel):
@@ -1378,6 +1385,36 @@ def _register_routes(app: FastAPI) -> None:
             "id": record.id,
             "certificate": record.certificate,
             "privatekey": record.private_key,
+        }
+
+    @app.post(
+        f"{PREFIX}/certificates/bootstrap",
+        tags=["deployments"],
+        summary="Redeem a proxy bootstrap token",
+        include_in_schema=False,
+    )
+    async def redeem_bootstrap_token(session: SessionDep, body: BootstrapBody) -> dict[str, Any]:
+        """Exchange a one-time token for certificate material.
+
+        **The one endpoint that takes no caller context.** A proxy has
+        no identity at first boot — that is why the token exists — so
+        this cannot ask for one. The token is the credential, and what
+        makes that defensible is in `aisvc.certificates.bootstrap`:
+        single use, short-lived, bound to one certificate, and burned
+        in the same flush that returns the material.
+
+        Out of the published schema: nothing a tenant or the plugin
+        should ever call.
+        """
+        try:
+            material = BootstrapTokens(session).redeem(body.token)
+        except BootstrapRejected as exc:
+            raise ApiError(status.HTTP_403_FORBIDDEN, exc.detail, code=exc.reason) from exc
+
+        return {
+            "id": material.certificate_id,
+            "certificate": material.certificate,
+            "privatekey": material.private_key,
         }
 
     @app.delete(

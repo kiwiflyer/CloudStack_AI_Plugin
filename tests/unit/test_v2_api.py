@@ -593,3 +593,101 @@ class TestCertificates:
         )
 
         assert response.status_code == 400
+
+
+class TestBootstrapRedemption:
+    """The one endpoint with no caller context (SPEC.md section 8).
+
+    A proxy has no identity at first boot — that is the whole reason
+    the token exists — so this cannot ask for one. The token is the
+    credential, and everything that makes that safe lives in
+    `aisvc.certificates.bootstrap`.
+    """
+
+    def certificate(self, client: TestClient) -> str:
+        from tests.unit.test_certificates import make_cert
+
+        cert, key = make_cert(domains=("ai.acme.example",))
+        certificate_id: str = client.post(
+            "/v1/certificates",
+            json={
+                "custom_domain": "ai.acme.example",
+                "certificate": cert,
+                "private_key": key,
+            },
+            headers=TENANT,
+        ).json()["id"]
+        return certificate_id
+
+    def token_for(self, client: TestClient, certificate_id: str) -> str:
+        from aisvc.certificates.bootstrap import BootstrapTokens
+
+        services = cast(FastAPI, client.app).state.services
+        session = services.session_factory()
+        minted = BootstrapTokens(session).issue(
+            certificate_id=certificate_id, proxy="aisvc-gw-acme-m"
+        )
+        session.commit()
+        return minted.plaintext
+
+    def redeem(self, client: TestClient, token: str) -> Any:
+        # Deliberately no X-Aisvc-* headers: the proxy has none to send.
+        return client.post(
+            "/v1/certificates/bootstrap",
+            json={"token": token},
+            headers={"Content-Type": "application/json"},
+        )
+
+    def test_a_proxy_with_no_identity_can_redeem(self, client: TestClient) -> None:
+        token = self.token_for(client, self.certificate(client))
+
+        response = self.redeem(client, token)
+
+        assert response.status_code == 200
+
+    def test_it_returns_the_material(self, client: TestClient) -> None:
+        token = self.token_for(client, self.certificate(client))
+
+        body = self.redeem(client, token).json()
+
+        assert "BEGIN CERTIFICATE" in body["certificate"]
+        assert "PRIVATE KEY" in body["privatekey"]
+
+    def test_a_second_attempt_is_refused(self, client: TestClient) -> None:
+        """The property the whole design rests on."""
+        token = self.token_for(client, self.certificate(client))
+        self.redeem(client, token)
+
+        response = self.redeem(client, token)
+
+        assert response.status_code == 403
+        assert "already" in response.json()["detail"].lower()
+
+    def test_a_forged_token_is_refused(self, client: TestClient) -> None:
+        self.certificate(client)
+
+        response = self.redeem(client, "aisvc-boot-deadbeef-nonsense")
+
+        assert response.status_code == 403
+
+    def test_the_refusal_does_not_echo_the_token(self, client: TestClient) -> None:
+        response = self.redeem(client, "aisvc-boot-abc-supersecretvalue")
+
+        assert "supersecretvalue" not in response.text
+
+    def test_a_missing_token_is_refused(self, client: TestClient) -> None:
+        response = client.post(
+            "/v1/certificates/bootstrap", json={}, headers={"Content-Type": "application/json"}
+        )
+
+        assert response.status_code in (403, 422)
+
+    def test_it_is_not_in_the_published_schema(self, client: TestClient) -> None:
+        """Nothing a tenant or the plugin should ever call."""
+        paths = client.get("/v1/openapi.json").json()["paths"]
+
+        assert "/v1/certificates/bootstrap" not in paths
+
+    def test_caller_context_is_still_required_everywhere_else(self, client: TestClient) -> None:
+        """The exception has to be this one path and no other."""
+        assert client.get("/v1/models").status_code == 401

@@ -21,7 +21,7 @@ to the whole platform.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from aisvc.endpoints import TlsSource
@@ -83,6 +83,11 @@ class ProxyPlan:
     #: refuses without one, so a proxy with an uploaded certificate and
     #: no engine URL would boot and serve nothing.
     engine_url: str = ""
+    #: A one-time token, minted at provision time. It travels in
+    #: userdata, which is readable through the CloudStack API — which
+    #: is why it is single-use, short-lived and bound to one
+    #: certificate rather than being a key.
+    bootstrap_token: str = ""
     custom_domain: str = ""
     tls: TlsSource = TlsSource.NONE
     certificate_id: str = ""
@@ -95,6 +100,7 @@ def plan_proxy(
     zone_id: str,
     gateway_host: str,
     engine_url: str = "",
+    bootstrap_token: str = "",
 ) -> ProxyPlan | None:
     """What this exposure needs on the tenant's network, if anything.
 
@@ -113,6 +119,7 @@ def plan_proxy(
         zone_id=zone_id,
         gateway_host=gateway_host,
         engine_url=engine_url,
+        bootstrap_token=bootstrap_token,
         custom_domain=exposure.custom_domain,
         tls=exposure.tls,
         certificate_id=exposure.certificate_id,
@@ -183,7 +190,10 @@ def render_proxy_userdata(plan: ProxyPlan) -> str:
         lines.append(f"  - echo 'AISVC_ENGINE_URL={plan.engine_url}' >> /etc/environment")
         lines.append("  # Fetched from the engine over mTLS by id: userdata is readable")
         lines.append("  # through the CloudStack API and must not carry a key.")
-        lines.append(f"  - aisvc-fetch-cert --id {plan.certificate_id} --out /etc/aisvc/tls")
+        lines.append(
+            f"  - AISVC_ENGINE_URL={plan.engine_url} aisvc-fetch-cert "
+            f"--token {plan.bootstrap_token} --out /etc/aisvc/tls"
+        )
     if plan.tls is TlsSource.ACME:
         lines.append(
             f"  - certbot --nginx -n --agree-tos -d {plan.custom_domain} "
@@ -229,11 +239,17 @@ class ProxyProvisioner:
         gateway_host: str,
         engine_url: str = "",
         exposures_for: Any = None,
+        mint_token: Any = None,
     ) -> None:
         self.client = client
         # How a name is resolved back to what it should be: the
         # executor knows an action's name and nothing else.
         self.exposures_for = exposures_for
+        # Called at deploy time, not at plan time: a token's
+        # half-hour starts when it is minted, and one issued
+        # while a plan was still being reviewed would be spent
+        # before the VM ever booted.
+        self.mint_token = mint_token
         self.zone_id = zone_id
         self.template_id = template_id
         self.offering_id = offering_id
@@ -257,6 +273,14 @@ class ProxyProvisioner:
 
         if dry_run:
             return
+
+        # Only where there is material to fetch. No certificate means
+        # no token: a credential in readable userdata for nothing.
+        if plan.tls is TlsSource.UPLOADED and plan.certificate_id and self.mint_token is not None:
+            plan = replace(
+                plan,
+                bootstrap_token=self.mint_token(plan.certificate_id, plan.name),
+            )
 
         await self.client.call_async(
             "deployVirtualMachine",

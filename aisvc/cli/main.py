@@ -24,6 +24,7 @@ from aisvc.batch.runner import (
     batch_tier,
     preemption_signal,
 )
+from aisvc.certificates.bootstrap import BootstrapTokens
 from aisvc.cloudstack import CloudStackClient, CloudStackError, Credentials
 from aisvc.db import Base, RunLog, UsageStore, create_session_factory, session_scope
 from aisvc.db.tier2 import AdapterStore, BatchStore, ExposureStore
@@ -234,7 +235,24 @@ async def _proxy_provisioner(client: Any, spec: PlatformSpec, session: Any) -> A
         ),
         engine_url=os.environ.get("AISVC_ENGINE_URL", ""),
         exposures_for=_exposures_for(session),
+        mint_token=_token_minter(session),
     )
+
+
+def _token_minter(session: Any) -> Callable[[str, str], str]:
+    """Mints a proxy's one-time bootstrap token (SPEC.md section 8).
+
+    Given to the provisioner rather than called here, so the token is
+    minted as the VM is deployed: its half-hour starts at mint time,
+    and one issued while a plan was still being reviewed would be spent
+    before the VM booted.
+    """
+    tokens = BootstrapTokens(session)
+
+    def mint(certificate_id: str, proxy: str) -> str:
+        return tokens.issue(certificate_id=certificate_id, proxy=proxy).plaintext
+
+    return mint
 
 
 def _exposures_for(session: Any) -> Callable[[], list[Any]]:
@@ -319,6 +337,11 @@ async def _apply(
                     proxies=await _proxy_provisioner(client, spec, session),
                 )
                 run = await executor.execute(computed, zone=zone, dry_run=dry_run)
+                if not dry_run:
+                    # Spent and expired tokens are useless but still
+                    # rows naming a certificate; there is no reason to
+                    # keep them, and this is the run that created them.
+                    BootstrapTokens(session).sweep()
                 return run.id, run.status.value
 
 

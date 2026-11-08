@@ -36,6 +36,7 @@ __all__ = [
     "ApiKeyRecord",
     "Base",
     "BatchRecord",
+    "BootstrapTokenRecord",
     "BudgetRecord",
     "CertificateRecord",
     "EvaluationRecord",
@@ -303,4 +304,26 @@ class CertificateRecord(Base):
     private_key: Mapped[str] = mapped_column(Text)
     fingerprint: Mapped[str] = mapped_column(String(128), index=True)
     not_after: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BootstrapTokenRecord(Base):
+    """A one-time token letting a proxy fetch its TLS material.
+
+    Stored as a salted hash, like an API key: a database read yields
+    nothing usable. Short-lived and single-use, because the plaintext
+    travels in cloud-init userdata, which is readable through the
+    CloudStack API.
+    """
+
+    __tablename__ = "aisvc_bootstrap_token"
+
+    token_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    certificate_id: Mapped[str] = mapped_column(String(36), index=True)
+    #: The proxy it was minted for, so a redemption can be traced back.
+    proxy: Mapped[str] = mapped_column(String(255), index=True)
+    salt: Mapped[str] = mapped_column(String(64))
+    hashed: Mapped[str] = mapped_column(String(128))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
