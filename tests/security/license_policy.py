@@ -51,8 +51,12 @@ _CATEGORY_A = (
 #: Packages whose metadata is wrong or absent, with the licence verified by
 #: hand. Each entry needs a reason; this list is reviewed, not grown casually.
 _OVERRIDES: dict[str, tuple[str, str]] = {
-    # LGPL in metadata, but the classifier is the GPL-with-exception text.
-    # (Empty today; kept so an override has an obvious home and a reason.)
+    # Metadata says only "Dual License". Upstream is dual Apache-2.0 and
+    # BSD-3-Clause (LICENSE in the sdist states both); either is Category A.
+    "python-dateutil": (
+        "Apache-2.0 OR BSD-3-Clause",
+        "metadata says 'Dual License'; upstream LICENSE is Apache-2.0 and BSD-3-Clause",
+    ),
 }
 
 

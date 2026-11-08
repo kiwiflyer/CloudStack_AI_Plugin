@@ -19,6 +19,8 @@ dependencies = [
     # Postgres driver. pg8000 (BSD-3-Clause), not psycopg (LGPL-3.0): see
     # docs/third-party-licenses.md. LGPL is Category X for Apache projects.
     "pg8000>=1.31",
+    "boto3>=1.35",
+    "huggingface-hub>=0.26",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +45,8 @@ aisvc = ["templates/**/*.j2", "db/migrations/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# GPU tests need a lab zone; `make test-gpu` opts into them explicitly.
+addopts = "-m 'not gpu'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
@@ -54,7 +58,14 @@ filterwarnings = ["error"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["aisvc", "tests"]
+files = ["aisvc", "tests", "gateway-hooks"]
+mypy_path = "gateway-hooks"
+
+# Third-party packages that ship no type information. Each is used behind
+# a narrow protocol of ours, so the untyped surface is small and contained.
+[[tool.mypy.overrides]]
+module = ["boto3.*", "botocore.*", "huggingface_hub.*", "kubernetes.*", "litellm.*"]
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100

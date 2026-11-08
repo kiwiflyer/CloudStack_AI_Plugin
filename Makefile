@@ -35,7 +35,7 @@ test-security:
 	$(PYTEST) tests/security -q
 
 test-gpu:
-	$(PYTEST) -m gpu -q
+	$(PYTEST) -m gpu -q --override-ini="addopts="
 
 record:
 	@echo "refreshes tests/fixtures/cloudstack against a lab zone; milestone 2"; exit 1

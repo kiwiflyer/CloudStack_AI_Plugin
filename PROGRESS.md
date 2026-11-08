@@ -226,10 +226,66 @@ on them; and **LiteLLM's split licence**, where `enterprise/` is commercial and 
 the MIT side. `licenses.yaml` now separates OSI-approved from restricted entries so the
 distinction is visible at the point of approval.
 
-## Milestone 3 — Serving and sourcing (next)
+## Milestone 3 — Serving and sourcing (mostly done)
 
-`registry`, `hf` search/check/mirror/scan (section 5), `k8s` rendering, `gateway` with hooks,
-`profiles` serving and generation (section 6), one model end to end in a lab zone, cold-start
-target validated. The serving layer is settled by ADR-0001. **Still blocked on** the gateway
-decision (LiteLLM vs Envoy AI Gateway), which ADR-0001 now constrains: it must do weighted
-routing, and it is where canary weights live.
+`registry`, `hf`, `k8s` rendering, `gateway` with hooks, `profiles`. **Not done:** one model
+end to end in a lab zone with the cold-start target validated — that needs GPUs.
+
+**State:** 438 tests pass, `ruff` clean, `mypy --strict` clean, 95% line coverage.
+`profiles` is at 99% and `gateway` at 100%, both above the 90% the spec sets for them.
+
+### What landed
+
+| Module | What it does |
+| --- | --- |
+| `aisvc/profiles` | The seven-level precedence chain with `default` / `clamp` / `locked`. Bounds intersect down the chain so a tenant cannot widen an admin's limit; a lock binds every level below it. Backs both `getAiEffectiveParameters` and the gateway hook |
+| `aisvc/k8s` | Renders `Deployment`, `Service` and `PodDisruptionBudget` per model per colour (ADR-0001). Host anti-affinity, GPU limits from `tensor_parallel`, `hostPath` weight cache, startup probe sized for the three-minute cold start. Serving profile parameters become engine flags |
+| `aisvc/registry` | Content-addressed S3 storage at `<org>/<repo>/<sha>/`, sha256 manifests, verification before load, pickle refusal, per-domain quota accounting. `InMemoryObjectStore` for tests, `S3ObjectStore` for Ceph RGW/MinIO |
+| `aisvc/hf` | Compatibility report (architecture, size, context, licence, gating, remote code) with `capacity` saying which GPU classes and TP widths fit; mirroring that resolves to a commit SHA first, filters by allow-pattern, digests, uploads and re-verifies |
+| `aisvc/gateway` | Key scopes (model, expiry, CIDR), request enforcement through `aisvc.profiles`, metering records with no prompt content, and LiteLLM config generation with canary weights |
+| `gateway-hooks/` | The LiteLLM `async_pre_call_hook` adapter and RFC 9457 error mapping |
+| `tests/gpu/` | The lab tests for serving end to end and the cold-start budget, marked `gpu` and skipped by default |
+
+### Decisions taken, and why
+
+**`EffectiveParams` is one object used twice.** `test_the_hook_and_the_effective_parameters_view_agree`
+asserts the gateway's enforcement and the reporting view produce identical output from the same
+inputs. That test is the executable form of ADR-0002's argument, and it would be impossible to
+write with an ext_proc service in another language.
+
+**Bounds intersect rather than overriding.** SPEC.md section 6 says a more specific level wins,
+but also that users may edit "within bounds". Taken together that has to mean `min`/`max` narrow
+monotonically — otherwise an account profile could widen a domain's limit and escape it.
+
+**`default` policy rejects out-of-range values; `clamp` silently bounds them.** The spec
+distinguishes the two ("client may override within min/max" versus "client value forced into
+range"), so a `default` parameter outside its bounds is a 400 rather than a silent correction.
+
+**Only pickle-*only* repos are refused.** A repo carrying both safetensors and `.bin` mirrors
+fine, because the allow-patterns exclude the pickle files anyway.
+
+**GPU tests are deselected by default** via `addopts = "-m 'not gpu'"`; `make test-gpu`
+overrides it. Running the whole suite on a laptop should not look like a failure.
+
+### Open questions for the next session
+
+1. **LiteLLM is not yet a dependency.** `gateway-hooks/enforcement.py` imports its base class
+   lazily so it works without it, and `build_litellm_config` renders config nobody has fed to a
+   real proxy yet. ADR-0002's action items — pin the version, contract-test the hook signatures,
+   prove content logging is off in the real thing — all still stand.
+
+2. **Server-side apply is not written.** `aisvc/k8s` renders; nothing applies. The `kubernetes`
+   client is in the mypy ignore list but not in `pyproject.toml`.
+
+3. **`architecture_from_config` guesses parameter count from download size** (total bytes / 2,
+   assuming bf16 on the Hub). Good enough to rank GPU classes, wrong for a quantized upload.
+   Read it from safetensors metadata instead.
+
+4. **Nothing wires the modules together yet.** `plan_capacity` still only plans GPU nodes; it
+   does not plan model deployments, so `aisvc apply` will not serve a model. That is the join
+   between milestone 3's pieces and milestone 4's API.
+
+## Milestone 4 — Engine API (next)
+
+FastAPI per section 10, async jobs, caller-context filtering, mTLS, OpenAPI contract tests; CLI
+switched to the API. Nothing blocks it.

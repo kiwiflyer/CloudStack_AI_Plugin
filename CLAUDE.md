@@ -4,15 +4,18 @@ Guidance for Claude Code working in this repository.
 
 ## Current state
 
-**Milestones 1–2 are done; 3–9 are not.** See `PROGRESS.md` for what landed, the decisions
-taken, and the open questions. Working today: `aisvc/spec`, `aisvc/capacity`,
-`aisvc/cloudstack`, `aisvc/inventory`, `aisvc/provision`, `aisvc/db`, `aisvc/reconciler`
-(diff and execute), `aisvc/cli` (`validate`, `plan`, `apply`), plus `templates/packer/`.
+**Milestones 1–2 are done, 3 is all but the GPU-lab work; 4–9 are not.** See `PROGRESS.md`.
+Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`, `db`,
+`reconciler`, `profiles`, `k8s` (renders; does not apply), `registry`, `hf`, `gateway`, the
+`aisvc` CLI (`validate`, `plan`, `apply`), `gateway-hooks/` and `templates/packer/`.
 
-Everything else in the layout below is **planned**, not written: there is no `java-plugin/`,
-`ui/`, `terraform/`, `deploy/`, `gateway-hooks/`, and no `api/`, `hf/`, `registry/`,
-`profiles/`, `gateway/` or `k8s/` module yet. `make test-java`, `test-ui`, `test-tf` and
-`record` deliberately exit 1 with the milestone that will fill them in.
+Not written: `api/` (m4), `autoscale/`, `lifecycle/`, `metering/`, `setup/`, `playground/`,
+all v2 modules, `java-plugin/`, `ui/`, `terraform/`, `deploy/`. `make test-java`, `test-ui`,
+`test-tf` and `record` deliberately exit 1 naming the milestone that fills them in.
+
+**Not yet wired together:** `plan_capacity` plans GPU nodes only, so `aisvc apply` provisions
+hardware but does not serve a model. LiteLLM is not a dependency yet, and `k8s` renders
+manifests nothing applies.
 
 Before claiming a command works, run it. Before referencing a module, confirm the file exists.
 

@@ -18,7 +18,7 @@ from tests.security.license_policy import (
 #: MPL-2.0 dependencies we accept. ASF Category B is allowed as a
 #: dependency with attribution; each is listed in
 #: docs/third-party-licenses.md with why it is acceptable.
-ACCEPTED_CATEGORY_B = frozenset({"certifi", "hypothesis", "pathspec"})
+ACCEPTED_CATEGORY_B = frozenset({"certifi", "hypothesis", "pathspec", "tqdm"})
 
 
 class TestClassify:

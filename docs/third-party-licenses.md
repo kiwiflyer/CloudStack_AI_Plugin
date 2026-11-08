@@ -21,7 +21,13 @@ That rule is stricter than LGPL itself requires, and it is the rule this project
 
 ## Current state
 
-**No Category X dependencies.** 43 Category A, 3 Category B, 0 unclassified.
+**No Category X dependencies.** Category A throughout except the four below, and nothing
+unclassified. Re-checked when `boto3` and `huggingface-hub` were added in milestone 3.
+
+One package needs an override because its metadata is uninformative: **`python-dateutil`**
+publishes only "Dual License", and its upstream LICENSE is Apache-2.0 and BSD-3-Clause —
+Category A either way. The override and its reason are in
+`tests/security/license_policy.py`.
 
 ### Category B — accepted, with reasons
 
@@ -30,6 +36,7 @@ That rule is stricter than LGPL itself requires, and it is the rule this project
 | `certifi` | MPL-2.0 | Runtime, via `httpx`. A CA-certificate bundle, used unmodified as a dependency; no MPL-covered source is bundled into our release. |
 | `hypothesis` | MPL-2.0 | Test-only, never shipped. |
 | `pathspec` | MPL-2.0 | Development-only, via `mypy`. Never shipped. |
+| `tqdm` | MPL-2.0 AND MIT | Runtime, via `huggingface-hub`. Progress bars, used unmodified; the MPL-covered files are not modified or bundled as source. |
 
 MPL-2.0 is file-level copyleft: the obligation attaches to modified MPL files, and we modify
 none of them. Adding a fourth Category B dependency should be a deliberate decision — the
