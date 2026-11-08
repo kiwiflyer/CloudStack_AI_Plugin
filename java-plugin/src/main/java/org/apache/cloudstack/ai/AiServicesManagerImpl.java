@@ -18,6 +18,21 @@ import java.util.ArrayList;
 import java.util.List;
 
 import javax.inject.Inject;
+import com.cloud.host.HostVO;
+import com.cloud.host.dao.HostDao;
+import com.cloud.vm.VMInstanceVO;
+import com.cloud.vm.dao.VMInstanceDao;
+import org.apache.cloudstack.ai.engine.EngineJob;
+import org.apache.cloudstack.ai.engine.EngineJobPoller;
+import org.apache.cloudstack.ai.engine.EngineResponse;
+import org.apache.cloudstack.ai.engine.EngineException;
+import org.apache.cloudstack.ai.maintenance.AiMaintenanceListener;
+import org.apache.cloudstack.ai.maintenance.MaintenanceDrain;
+import org.apache.cloudstack.framework.events.EventBus;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
+import com.cloud.utils.component.ComponentContext;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import org.apache.cloudstack.ai.engine.CallerContext;
 import org.apache.cloudstack.ai.engine.EngineClient;
@@ -37,6 +52,7 @@ import org.apache.cloudstack.ai.api.command.DeployAiModelCmd;
 import org.apache.cloudstack.ai.api.command.DiscoverAiGpuClassesCmd;
 import org.apache.cloudstack.ai.api.command.DrainAiNodeCmd;
 import org.apache.cloudstack.ai.api.command.GetAiEffectiveParametersCmd;
+import org.apache.cloudstack.ai.api.command.ListAiApiKeysCmd;
 import org.apache.cloudstack.ai.api.command.ListAiBudgetsCmd;
 import org.apache.cloudstack.ai.api.command.ListAiEndpointsCmd;
 import org.apache.cloudstack.ai.api.command.ListAiGenerationProfilesCmd;
@@ -87,6 +103,19 @@ public class AiServicesManagerImpl extends ManagerBase
     @Inject
     private AiDeploymentDao deploymentDao;
 
+    private static final Logger LOG = LogManager.getLogger(AiServicesManagerImpl.class);
+
+    /** GPU node VMs are named aisvc-<pool>-<ordinal> (CLAUDE.md). */
+    static final String NODE_NAME_PREFIX = "aisvc-";
+
+    @Inject
+    private VMInstanceDao vmInstanceDao;
+
+    @Inject
+    private HostDao hostDao;
+
+    private AiMaintenanceListener maintenanceListener;
+
     private EngineClient engineClient;
     private EngineTransport transport;
 
@@ -109,6 +138,7 @@ public class AiServicesManagerImpl extends ManagerBase
         commands.add(DiscoverAiGpuClassesCmd.class);
         commands.add(DrainAiNodeCmd.class);
         commands.add(GetAiEffectiveParametersCmd.class);
+        commands.add(ListAiApiKeysCmd.class);
         commands.add(ListAiBudgetsCmd.class);
         commands.add(ListAiEndpointsCmd.class);
         commands.add(ListAiGenerationProfilesCmd.class);
@@ -256,6 +286,101 @@ public class AiServicesManagerImpl extends ManagerBase
             return 0;
         }
         return deploymentDao.removeByAccount(accountId);
+    }
+
+    /**
+     * Which GPU node VMs are running on a host.
+     *
+     * <p>Asked of CloudStack rather than the engine: CloudStack is the
+     * IaaS authority and already knows what runs where, and the naming
+     * scheme {@code aisvc-<pool>-<ordinal>} is what identifies ours
+     * (CLAUDE.md). The engine would have to be told the same thing to
+     * answer it, so there is nothing to gain by routing through it.
+     */
+    List<String> gpuNodesOnHost(long hostId) {
+        if (vmInstanceDao == null) {
+            return new ArrayList<>();
+        }
+        List<String> nodes = new ArrayList<>();
+        for (VMInstanceVO vm : vmInstanceDao.listUpByHostId(hostId)) {
+            if (vm.getInstanceName() != null && vm.getInstanceName().startsWith(NODE_NAME_PREFIX)) {
+                nodes.add(vm.getInstanceName());
+            }
+        }
+        return nodes;
+    }
+
+    /**
+     * Start listening for host maintenance, where the install allows it.
+     *
+     * <p>Returns normally either way: a missing event bus is a
+     * limitation to report, not a reason to refuse to start. See
+     * {@link AiMaintenanceListener} for why this hook and no better one.
+     */
+    @Override
+    public boolean start() {
+        maintenanceListener = new AiMaintenanceListener(
+                new MaintenanceDrain(
+                        this::gpuNodesOnHost,
+                        this::drainNodeForMaintenance,
+                        this::alertForcedDrainNeeded,
+                        AiServicesConfig.MaintenanceDrainTimeout.value()),
+                this::hostIdForUuid);
+        maintenanceListener.subscribe(resolveEventBus());
+        return true;
+    }
+
+    /**
+     * The configured event bus, or null when there is none.
+     *
+     * <p>No event bus plugin is enabled in a default CloudStack install,
+     * so its absence is the normal case and not an error. CloudStack's own
+     * code resolves it this way for the same reason.
+     */
+    private EventBus resolveEventBus() {
+        try {
+            return ComponentContext.getComponent(EventBus.class);
+        } catch (NoSuchBeanDefinitionException | IllegalStateException absent) {
+            return null;
+        }
+    }
+
+    private Long hostIdForUuid(String uuid) {
+        if (hostDao == null || uuid == null) {
+            return null;
+        }
+        HostVO host = hostDao.findByUuid(uuid);
+        return host == null ? null : host.getId();
+    }
+
+    private MaintenanceDrain.Outcome drainNodeForMaintenance(
+            String nodeId, CallerContext caller, int timeoutSeconds) {
+        try {
+            EngineResponse accepted = getEngineClient()
+                    .post("/v1/nodes/" + nodeId + "/drain", caller, "");
+            if (!accepted.isAccepted()) {
+                return MaintenanceDrain.Outcome.TIMED_OUT;
+            }
+            EngineJob started = EngineJob.parse(accepted.getBody());
+            EngineJobPoller poller = new EngineJobPoller(
+                    getEngineClient(), timeoutSeconds * 1000L);
+            EngineJob job = poller.await(started.getJobId(), caller);
+            // A failed drain job is the engine saying there is not enough
+            // capacity elsewhere, which is the operator's call to make.
+            return job.isSuccess()
+                    ? MaintenanceDrain.Outcome.DRAINED
+                    : MaintenanceDrain.Outcome.NEEDS_FORCE;
+        } catch (EngineException e) {
+            LOG.warn("Draining {} failed before maintenance: {}", nodeId, e.getMessage());
+            return MaintenanceDrain.Outcome.TIMED_OUT;
+        }
+    }
+
+    private void alertForcedDrainNeeded(long hostId, String nodeId, String reason) {
+        // Maintenance has no user session behind it, so this is logged
+        // rather than raised through CallContext, which would be null here.
+        LOG.warn("AI Services: host {} needs a forced drain of {} ({}). Event {}.",
+                hostId, nodeId, reason, AiServicesEvents.NODE_DRAIN);
     }
 
     /** Test seam for the DAO, which is otherwise Spring-injected. */

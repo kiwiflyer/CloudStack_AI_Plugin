@@ -4,19 +4,23 @@ Guidance for Claude Code working in this repository.
 
 ## Current state
 
-**Milestones 1–5 are done bar their noted gaps; 7 and 8 are partly done; 6 and 9 are not.**
+**Milestones 1–5 and 8 are done bar their noted gaps; 7 is partly done; 6 and 9 are not.**
 See `PROGRESS.md`.
 Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`, `db`,
-`reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, `setup`, the `aisvc` CLI
+`reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, `setup`, `playground`,
+the `aisvc` CLI
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
-Not written: `playground/`, all v2 modules, `ui/`, `terraform/`, `deploy/`.
-`setup` plans the self-test but cannot run it: the steps need GPU capacity and a
-metering driver, so section 14's first acceptance criterion is not yet met.
-`lifecycle` and `autoscale` are driven by the reconciler. `metering` is not: nothing pulls
-usage or writes usage records yet, and nothing fills in `DeploymentHealth`, so autoscaling
-decides correctly on data no one supplies. `make test-java`, `test-ui`,
-`test-tf` and `record` deliberately exit 1 naming the milestone that fills them in.
+Not written: all v2 modules, `ui/`, `deploy/`. `terraform/` builds and unit-tests but
+its acceptance tests have never run against a live management server.
+`setup` plans the self-test but cannot run it: the steps need GPU capacity, so
+section 14's first acceptance criterion is not yet met. Host maintenance drains
+automatically only where an event bus is configured — CloudStack 4.23 offers no
+synchronous pre-maintenance hook, and no bus is enabled by default.
+`lifecycle` and `autoscale` are driven by the reconciler. `metering` now has a driver:
+the gateway hook's `async_log_success_event` writes usage records. Nothing fills in
+`DeploymentHealth` yet, so autoscaling still decides correctly on data no one supplies.
+`make test-ui` and `record` deliberately exit 1 naming the milestone that fills them in.
 
 `aisvc apply` takes an empty zone to a served model in one run — nodes, then deployments, then
 routes — and a second run plans nothing. **Still missing:** LiteLLM as a real dependency, any

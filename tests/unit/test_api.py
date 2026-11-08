@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -107,6 +108,41 @@ def services(registry: ModelRegistry) -> EngineServices:
 def client(services: EngineServices) -> Iterator[TestClient]:
     with TestClient(create_app(services)) as c:
         yield c
+
+
+def record_usage(
+    client: TestClient,
+    *,
+    account: str = "acme",
+    domain: str = "/Customers/Acme",
+    model: str = "llama-3.3-70b-instruct",
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    per_mtok: float = 0.60,
+) -> None:
+    """Write a real usage row, the way the gateway's meter does."""
+    from aisvc.db import UsageStore
+    from aisvc.metering import UsageRecord
+    from aisvc.spec.models import PriceTier
+
+    app = cast(FastAPI, client.app)
+    session = app.state.services.session_factory()
+    UsageStore(session).record(
+        UsageRecord(
+            account=account,
+            domain=domain,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        ),
+        tier=PriceTier(
+            name="standard",
+            input_per_mtok=per_mtok,
+            output_per_mtok=per_mtok * 3,
+            currency="USD",
+        ),
+    )
+    session.commit()
 
 
 class TestHealth:
@@ -519,50 +555,30 @@ class TestUsageAndBudgets:
 
         assert body["count"] == 0
 
-    def test_usage_is_priced_from_the_catalog_tier(self, services: EngineServices) -> None:
-        from aisvc.metering import UsageRecord
+    def test_usage_is_priced_from_the_catalog_tier(self, client: TestClient) -> None:
+        record_usage(client, input_tokens=1_000_000, output_tokens=1_000_000)
 
-        services.usage = [  # type: ignore[attr-defined]
-            UsageRecord(
-                account="acme",
-                domain="/Customers/Acme",
-                model="llama-3.3-70b-instruct",
-                input_tokens=1_000_000,
-                output_tokens=1_000_000,
-            )
-        ]
-        with TestClient(create_app(services)) as client:
-            body = client.get("/v1/usage", headers=ADMIN).json()
+        body = client.get("/v1/usage", headers=ADMIN).json()
 
         assert body["count"] == 1
         assert body["usage"][0]["cost"] == pytest.approx(2.40)
         assert body["usage"][0]["currency"] == "USD"
 
-    def test_another_tenant_sees_none_of_it(self, services: EngineServices) -> None:
+    def test_another_tenant_sees_none_of_it(self, client: TestClient) -> None:
         """SPEC.md section 14: tenants cannot see each other's usage."""
-        from aisvc.metering import UsageRecord
+        record_usage(client, input_tokens=10)
 
-        services.usage = [  # type: ignore[attr-defined]
-            UsageRecord(
-                account="acme",
-                domain="/Customers/Acme",
-                model="llama-3.3-70b-instruct",
-                input_tokens=10,
-            )
-        ]
-        with TestClient(create_app(services)) as client:
-            body = client.get("/v1/usage", headers=OTHER_TENANT).json()
-
-        assert body["count"] == 0
+        assert client.get("/v1/usage", headers=OTHER_TENANT).json()["count"] == 0
+        assert client.get("/v1/usage", headers=ADMIN).json()["count"] == 1
 
     def test_budgets_report_where_a_tenant_stands(self, registry: ModelRegistry) -> None:
         doc = yaml.safe_load(MINIMAL)
         doc["tenants"][0]["budget"] = {"monthly": 5000, "currency": "USD", "on_exceed": "block"}
         spec = load_spec_from_string(yaml.safe_dump(doc), allowed_licenses=LICENSES)
         services = EngineServices(spec=spec, registry=registry, session_factory=memory_sessions())
-        services.spend = {"acme": 4000.0}  # type: ignore[attr-defined]
 
         with TestClient(create_app(services)) as client:
+            record_usage(client, input_tokens=1_000_000, per_mtok=4000.0)
             body = client.get("/v1/budgets", headers=ADMIN).json()
 
         assert body["count"] == 1
@@ -574,9 +590,9 @@ class TestUsageAndBudgets:
         doc["tenants"][0]["budget"] = {"monthly": 100, "currency": "USD", "on_exceed": "block"}
         spec = load_spec_from_string(yaml.safe_dump(doc), allowed_licenses=LICENSES)
         services = EngineServices(spec=spec, registry=registry, session_factory=memory_sessions())
-        services.spend = {"acme": 100.0}  # type: ignore[attr-defined]
 
         with TestClient(create_app(services)) as client:
+            record_usage(client, input_tokens=1_000_000, per_mtok=100.0)
             body = client.get("/v1/budgets", headers=ADMIN).json()
 
         assert body["budgets"][0]["blocked"] is True
@@ -678,3 +694,257 @@ class TestUnexpectedFailures:
 
         assert "secret" not in text
         assert "5432" not in text
+
+
+class TestApiKeys:
+    """Scoped keys over the API (SPEC.md section 7)."""
+
+    def create(self, client: TestClient, headers: dict[str, str] = TENANT, **body: Any) -> Any:
+        payload = {"name": "ci"}
+        payload.update(body)
+        return client.post("/v1/keys", json=payload, headers=headers)
+
+    def test_a_key_is_created_and_shown_once(self, client: TestClient) -> None:
+        body = self.create(client).json()
+
+        assert body["apikey"].startswith("aisvc-")
+        assert body["id"]
+
+    def test_the_response_says_it_cannot_be_shown_again(self, client: TestClient) -> None:
+        body = self.create(client).json()
+
+        assert "once" in body["warning"].lower()
+
+    def test_listing_never_returns_the_secret(self, client: TestClient) -> None:
+        secret = self.create(client).json()["apikey"]
+
+        listed = client.get("/v1/keys", headers=TENANT).json()
+
+        assert secret not in str(listed)
+
+    def test_listing_shows_the_last_used_time_field(self, client: TestClient) -> None:
+        """SPEC.md section 7: "last-used time visible"."""
+        self.create(client)
+
+        row = client.get("/v1/keys", headers=TENANT).json()["keys"][0]
+
+        assert "lastused" in row
+
+    def test_a_tenant_sees_only_its_own_keys(self, client: TestClient) -> None:
+        self.create(client, headers=TENANT)
+        self.create(client, headers=OTHER_TENANT)
+
+        assert client.get("/v1/keys", headers=TENANT).json()["count"] == 1
+
+    def test_scopes_are_accepted(self, client: TestClient) -> None:
+        body = self.create(
+            client,
+            allowed_models=["llama-3.3-70b-instruct"],
+            cidrs=["10.0.0.0/8"],
+        ).json()
+
+        row = client.get("/v1/keys", headers=TENANT).json()["keys"][0]
+        assert row["allowedmodels"] == ["llama-3.3-70b-instruct"]
+        assert body["id"]
+
+    def test_an_expiry_in_the_past_is_refused(self, client: TestClient) -> None:
+        response = self.create(client, expires_at="2020-01-01T00:00:00Z")
+
+        assert response.status_code == 400
+
+    def test_a_key_can_be_revoked(self, client: TestClient) -> None:
+        key_id = self.create(client).json()["id"]
+
+        assert client.delete(f"/v1/keys/{key_id}", headers=TENANT).status_code == 200
+
+    def test_revoking_an_unknown_key_is_a_404(self, client: TestClient) -> None:
+        assert client.delete("/v1/keys/nope", headers=TENANT).status_code == 404
+
+    def test_a_tenant_cannot_revoke_another_tenants_key(self, client: TestClient) -> None:
+        """Key ids are guessable enough that this must be checked."""
+        key_id = self.create(client, headers=OTHER_TENANT).json()["id"]
+
+        assert client.delete(f"/v1/keys/{key_id}", headers=TENANT).status_code == 404
+
+
+class TestPlaygroundSessions:
+    def test_a_session_key_is_issued(self, client: TestClient) -> None:
+        body = client.post(
+            "/v1/playground/sessions",
+            json={"model": "llama-3.3-70b-instruct"},
+            headers=TENANT,
+        ).json()
+
+        assert body["apikey"].startswith("aisvc-")
+
+    def test_the_session_says_when_it_expires(self, client: TestClient) -> None:
+        body = client.post(
+            "/v1/playground/sessions",
+            json={"model": "llama-3.3-70b-instruct"},
+            headers=TENANT,
+        ).json()
+
+        assert body["expires"]
+
+    def test_the_snippets_come_with_it(self, client: TestClient) -> None:
+        body = client.post(
+            "/v1/playground/sessions",
+            json={"model": "llama-3.3-70b-instruct"},
+            headers=TENANT,
+        ).json()
+
+        assert {s["name"] for s in body["snippets"]} == {
+            "curl",
+            "python",
+            "openai-python",
+            "openai-javascript",
+        }
+
+    def test_no_snippet_carries_the_session_key(self, client: TestClient) -> None:
+        """Snippets get pasted into tickets; a live key must not."""
+        body = client.post(
+            "/v1/playground/sessions",
+            json={"model": "llama-3.3-70b-instruct"},
+            headers=TENANT,
+        ).json()
+
+        assert all(body["apikey"] not in s["code"] for s in body["snippets"])
+
+    def test_an_unknown_model_is_refused(self, client: TestClient) -> None:
+        response = client.post("/v1/playground/sessions", json={"model": "ghost"}, headers=TENANT)
+
+        assert response.status_code == 404
+
+
+class TestBudgetWriting:
+    def test_a_budget_can_be_set(self, client: TestClient) -> None:
+        response = client.post(
+            "/v1/budgets",
+            json={"account": "acme", "monthly": 100, "currency": "USD", "on_exceed": "block"},
+            headers=ADMIN,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["monthly"] == 100
+
+    def test_a_tenant_cannot_set_its_own_budget(self, client: TestClient) -> None:
+        """Otherwise a tenant could lift the limit it is blocked by."""
+        response = client.post(
+            "/v1/budgets",
+            json={"account": "acme", "monthly": 10_000, "currency": "USD", "on_exceed": "alert"},
+            headers=TENANT,
+        )
+
+        assert response.status_code == 403
+
+    def test_a_budget_can_be_updated(self, client: TestClient) -> None:
+        client.post(
+            "/v1/budgets",
+            json={"account": "acme", "monthly": 100, "currency": "USD", "on_exceed": "alert"},
+            headers=ADMIN,
+        )
+
+        response = client.patch("/v1/budgets/acme", json={"monthly": 250}, headers=ADMIN)
+
+        assert response.json()["monthly"] == 250
+
+    def test_a_budget_can_be_deleted(self, client: TestClient) -> None:
+        client.post(
+            "/v1/budgets",
+            json={"account": "acme", "monthly": 100, "currency": "USD", "on_exceed": "alert"},
+            headers=ADMIN,
+        )
+
+        assert client.delete("/v1/budgets/acme", headers=ADMIN).status_code == 200
+
+    def test_deleting_an_unknown_budget_is_a_404(self, client: TestClient) -> None:
+        assert client.delete("/v1/budgets/ghost", headers=ADMIN).status_code == 404
+
+    def test_an_invalid_on_exceed_is_refused(self, client: TestClient) -> None:
+        response = client.post(
+            "/v1/budgets",
+            json={"account": "acme", "monthly": 100, "currency": "USD", "on_exceed": "explode"},
+            headers=ADMIN,
+        )
+
+        assert response.status_code in (400, 422)
+
+
+class TestBudgetsHaveOneSourceOfTruth:
+    """`platform.yaml` declares budgets; the database holds the live one.
+
+    CLAUDE.md puts budgets in both: the spec is desired state, and
+    Postgres holds "runs, actions, usage, budgets". They have to agree on
+    who wins, or an admin raises a limit through the API and the list
+    keeps showing the old one from the spec.
+    """
+
+    def set_budget(self, client: TestClient, monthly: float) -> None:
+        client.post(
+            "/v1/budgets",
+            json={"account": "acme", "monthly": monthly, "currency": "USD", "on_exceed": "alert"},
+            headers=ADMIN,
+        )
+
+    def listed(self, client: TestClient) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = client.get("/v1/budgets", headers=ADMIN).json()["budgets"]
+        return rows
+
+    def test_a_budget_set_through_the_api_is_listed(self, client: TestClient) -> None:
+        self.set_budget(client, 123)
+
+        assert any(row["monthly"] == 123 for row in self.listed(client))
+
+    def test_the_stored_budget_wins_over_the_spec(self, client: TestClient) -> None:
+        """Otherwise raising a limit through the API appears to do nothing."""
+        self.set_budget(client, 999)
+
+        rows = [r for r in self.listed(client) if r["account"] == "acme"]
+        assert rows
+        assert all(r["monthly"] == 999 for r in rows)
+
+    def test_an_account_is_listed_once(self, client: TestClient) -> None:
+        self.set_budget(client, 999)
+
+        accounts = [r["account"] for r in self.listed(client)]
+        assert len(accounts) == len(set(accounts))
+
+    def test_a_spec_budget_with_no_stored_one_is_still_listed(self, client: TestClient) -> None:
+        assert isinstance(self.listed(client), list)
+
+    def test_a_tenant_sees_only_its_own_budget(self, client: TestClient) -> None:
+        self.set_budget(client, 100)
+
+        rows = client.get("/v1/budgets", headers=OTHER_TENANT).json()["budgets"]
+        assert all(r["account"] != "acme" for r in rows)
+
+
+class TestUsageComesFromTheStore:
+    """Nothing populated usage before milestone 8 (PROGRESS.md)."""
+
+    def record_usage(self, client: TestClient) -> None:
+        record_usage(client, input_tokens=1_000_000, output_tokens=0)
+
+    def test_recorded_usage_is_listed(self, client: TestClient) -> None:
+        self.record_usage(client)
+
+        body = client.get("/v1/usage", headers=ADMIN).json()
+
+        assert body["count"] == 1
+        assert body["usage"][0]["input_tokens"] == 1_000_000
+
+    def test_the_cost_is_the_one_that_was_recorded(self, client: TestClient) -> None:
+        """Priced when written, so a tier change cannot rewrite history."""
+        self.record_usage(client)
+
+        assert client.get("/v1/usage", headers=ADMIN).json()["usage"][0]["cost"] == 0.60
+
+    def test_a_tenant_sees_only_its_own_usage(self, client: TestClient) -> None:
+        self.record_usage(client)
+
+        assert client.get("/v1/usage", headers=OTHER_TENANT).json()["count"] == 0
+
+    def test_a_tenant_sees_its_own(self, client: TestClient) -> None:
+        self.record_usage(client)
+
+        assert client.get("/v1/usage", headers=TENANT).json()["count"] == 1

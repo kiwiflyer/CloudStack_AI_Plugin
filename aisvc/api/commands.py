@@ -128,7 +128,10 @@ COMMANDS: tuple[Command, ...] = (
     _c("listAiEndpoints", "GET", "/v1/endpoints", ALL),
     # -- keys -------------------------------------------------------------
     _c("createAiApiKey", "POST", "/v1/keys", ALL),
-    _c("revokeAiApiKey", "DELETE", "/v1/keys/{id}", ALL),
+    # SPEC.md section 9 listed no way to list keys, but section 7 asks
+    # for "last-used time visible", which needs one.
+    _c("listAiApiKeys", "GET", "/v1/keys", ALL),
+    _c("revokeAiApiKey", "DELETE", "/v1/keys/{key_id}", ALL),
     # -- profiles ---------------------------------------------------------
     _c("listAiServingProfiles", "GET", "/v1/profiles/serving", ROOT),
     _c("createAiServingProfile", "POST", "/v1/profiles/serving", ROOT, is_async=True),
@@ -156,8 +159,8 @@ COMMANDS: tuple[Command, ...] = (
     _c("listAiUsage", "GET", "/v1/usage", ALL),
     _c("listAiBudgets", "GET", "/v1/budgets", ALL),
     _c("createAiBudget", "POST", "/v1/budgets", ALL),
-    _c("updateAiBudget", "PATCH", "/v1/budgets/{id}", ALL),
-    _c("deleteAiBudget", "DELETE", "/v1/budgets/{id}", ALL),
+    _c("updateAiBudget", "PATCH", "/v1/budgets/{budget_id}", ALL),
+    _c("deleteAiBudget", "DELETE", "/v1/budgets/{budget_id}", ALL),
     # -- tenant experience ------------------------------------------------
     _c("createAiPlaygroundSession", "POST", "/v1/playground/sessions", ALL),
     # -- operations -------------------------------------------------------

@@ -175,3 +175,52 @@ class TestSchema:
 
         remaining = session.query(ActionRecord).filter_by(run_id=run_id).all()
         assert remaining == []
+
+
+class TestMigrationsMatchTheModels:
+    """A fresh deploy and an upgraded one must end up identical.
+
+    `Base.metadata.create_all` builds the schema in tests, Alembic
+    builds it in production. Nothing checks they agree, so a table added
+    to the models without a migration would pass every test here and
+    fail on the first real deploy.
+    """
+
+    def schemas(self) -> tuple[set[str], set[str]]:
+        import importlib
+        import pathlib
+
+        import sqlalchemy as sa
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+
+        import aisvc.api.jobs
+        import aisvc.db
+
+        folder = pathlib.Path(aisvc.db.__file__).parent / "migrations" / "versions"
+        revisions = sorted(path.stem for path in folder.glob("0*.py"))
+        assert revisions, "no migrations found to compare against"
+
+        engine = sa.create_engine("sqlite+pysqlite:///:memory:")
+        with engine.connect() as conn:
+            ctx = MigrationContext.configure(conn)
+            for revision in revisions:
+                module = importlib.import_module(f"aisvc.db.migrations.versions.{revision}")
+                with Operations.context(ctx):
+                    module.upgrade()
+            migrated = set(sa.inspect(conn).get_table_names())
+
+        declared_engine = sa.create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(declared_engine)
+        declared = set(sa.inspect(declared_engine).get_table_names())
+        return migrated, declared
+
+    def test_no_table_is_declared_without_a_migration(self) -> None:
+        migrated, declared = self.schemas()
+
+        assert declared - migrated == set()
+
+    def test_no_migration_creates_a_table_the_models_do_not_know(self) -> None:
+        migrated, declared = self.schemas()
+
+        assert migrated - declared - {"alembic_version"} == set()

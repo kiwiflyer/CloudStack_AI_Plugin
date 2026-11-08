@@ -10,18 +10,23 @@ with a job id the plugin polls at `/v1/jobs/{id}`.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import FastAPI, Query, Response, status
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from aisvc.api.deps import AdminDep, CallerDep, JobsDep, ServicesDep, SessionDep
 from aisvc.api.errors import ApiError, register_error_handlers
-from aisvc.db import RunLog
+from aisvc.db import BudgetRecord, KeyStore, RunLog, UsageStore
 from aisvc.k8s.client import observe_deployments
 from aisvc.lifecycle import RolloutError, plan_drain, start_rollout
-from aisvc.metering import evaluate_budget, price_usage
+from aisvc.metering import evaluate_budget
+from aisvc.playground import SESSION_KEY_TTL, issue_session_key, snippets_for
 from aisvc.profiles import Level, ProfileLayer, resolve
 from aisvc.setup import discover_gpu_classes, plan_self_test, preflight
+from aisvc.spec.models import Budget
 
 if TYPE_CHECKING:
     from aisvc.api.deps import Services
@@ -42,6 +47,66 @@ Every request carries a caller context in `X-Aisvc-*` headers, asserted
 by the plugin from the CloudStack session, and every response is
 filtered by it. Errors are RFC 9457 problem documents.
 """.strip()
+
+
+class KeyRequest(BaseModel):
+    """What a tenant asks for when creating a scoped key."""
+
+    name: str = Field(min_length=1, max_length=255)
+    allowed_models: list[str] = Field(default_factory=list)
+    cidrs: list[str] = Field(default_factory=list)
+    expires_at: datetime | None = None
+    rate_limit_rpm: int | None = Field(default=None, ge=1)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlaygroundRequest(BaseModel):
+    model: str = Field(min_length=1)
+
+
+class BudgetRequest(BaseModel):
+    account: str = Field(min_length=1)
+    monthly: float = Field(ge=0)
+    currency: str = "USD"
+    on_exceed: Literal["alert", "block"] = "alert"
+
+    def as_budget(self) -> Budget:
+        return Budget(monthly=self.monthly, currency=self.currency, on_exceed=self.on_exceed)
+
+
+class BudgetPatch(BaseModel):
+    """Only the fields given are changed."""
+
+    monthly: float | None = Field(default=None, ge=0)
+    currency: str | None = None
+    on_exceed: Literal["alert", "block"] | None = None
+
+    def applied_to(self, existing: BudgetRecord) -> Budget:
+        return Budget(
+            monthly=self.monthly if self.monthly is not None else existing.monthly,
+            currency=self.currency or existing.currency,
+            on_exceed=self.on_exceed or existing.on_exceed,
+        )
+
+
+def _budget_row(record: BudgetRecord, store: UsageStore) -> dict[str, Any]:
+    state = store.budget_state(record.account)
+    return {
+        "account": record.account,
+        "monthly": record.monthly,
+        "currency": record.currency,
+        "on_exceed": record.on_exceed,
+        "spent": state.spent if state else 0.0,
+        "percent_used": round(state.percent_used, 1) if state else 0.0,
+        "blocked": state.should_block if state else False,
+    }
+
+
+def _all_usage(session: Any) -> list[Any]:
+    """Every usage row, newest last."""
+    from aisvc.db import UsageRow
+
+    return list(session.scalars(select(UsageRow).order_by(UsageRow.recorded_at)))
 
 
 def create_app(services: Services) -> FastAPI:
@@ -409,59 +474,254 @@ def _register_routes(app: FastAPI) -> None:
     # -- usage and budgets ------------------------------------------------
 
     @app.get(f"{PREFIX}/usage", tags=["billing"], summary="List usage")
-    async def list_usage(caller: CallerDep, services: ServicesDep) -> dict[str, Any]:
+    async def list_usage(caller: CallerDep, session: SessionDep) -> dict[str, Any]:
         """Metered usage, priced from the catalog's tiers."""
-        tiers = {t.name: t for t in services.spec.document.price_tiers}
-        records = getattr(services, "usage", None) or []
-
-        rows = []
-        for record in records:
-            if not caller.may_see(account=record.account, domain_path=record.domain):
-                continue
-            model = next(
-                (m for m in services.spec.document.models if m.name == record.model),
-                None,
-            )
-            tier = tiers.get(model.price_tier) if model and model.price_tier else None
-            rows.append(
-                {
-                    "account": record.account,
-                    "model": record.model,
-                    "input_tokens": record.input_tokens,
-                    "output_tokens": record.output_tokens,
-                    "gpu_hours": record.gpu_hours,
-                    "cost": price_usage(record, tier) if tier else None,
-                    "currency": tier.currency if tier else None,
-                }
-            )
+        # Read from the store rather than repricing here: rows were
+        # priced when they were written, and a later change to the
+        # catalog's tiers must not rewrite a past month's bill.
+        rows = [
+            {
+                "account": row.account,
+                "model": row.model,
+                "input_tokens": row.input_tokens,
+                "output_tokens": row.output_tokens,
+                "gpu_hours": row.gpu_hours,
+                "cost": row.cost,
+                "currency": row.currency,
+                "recorded": row.recorded_at.isoformat() if row.recorded_at else None,
+            }
+            for row in _all_usage(session)
+            if caller.may_see(account=row.account, domain_path=row.domain)
+        ]
         return {"count": len(rows), "usage": rows}
 
     @app.get(f"{PREFIX}/budgets", tags=["billing"], summary="List budgets")
-    async def list_budgets(caller: CallerDep, services: ServicesDep) -> dict[str, Any]:
+    async def list_budgets(
+        caller: CallerDep, services: ServicesDep, session: SessionDep
+    ) -> dict[str, Any]:
         """Budgets and where each tenant stands against them."""
-        spend = getattr(services, "spend", None) or {}
-        rows = []
+        store = UsageStore(session)
+
+        # Two places declare a budget: platform.yaml as desired state,
+        # and the database as what is in force. The stored one wins,
+        # otherwise raising a limit through the API would appear to do
+        # nothing while the spec's old number kept being shown.
+        rows: dict[str, dict[str, Any]] = {}
         for tenant in services.spec.document.tenants:
             if tenant.budget is None:
                 continue
-            if not caller.may_see(
-                account=tenant.cloudstack_account, domain_path=tenant.cloudstack_domain
-            ):
-                continue
-            state = evaluate_budget(tenant.budget, spent=float(spend.get(tenant.name, 0.0)))
-            rows.append(
-                {
-                    "id": tenant.name,
-                    "account": tenant.cloudstack_account,
-                    "monthly": state.limit,
-                    "currency": state.currency,
-                    "spent": state.spent,
-                    "on_exceed": state.on_exceed,
-                    "percent_used": round(state.percent_used, 1),
-                    "blocked": state.should_block,
-                }
+            state = evaluate_budget(
+                tenant.budget, spent=store.spent(account=tenant.cloudstack_account)
             )
-        return {"count": len(rows), "budgets": rows}
+            rows[tenant.cloudstack_account] = {
+                "id": tenant.name,
+                "account": tenant.cloudstack_account,
+                "domain": tenant.cloudstack_domain,
+                "monthly": state.limit,
+                "currency": state.currency,
+                "spent": state.spent,
+                "on_exceed": state.on_exceed,
+                "percent_used": round(state.percent_used, 1),
+                "blocked": state.should_block,
+                "source": "spec",
+            }
+
+        for record in session.scalars(select(BudgetRecord)):
+            stored = store.budget_state(record.account)
+            existing = rows.get(record.account, {})
+            rows[record.account] = {
+                "id": existing.get("id", record.account),
+                "account": record.account,
+                "domain": existing.get("domain", "/"),
+                "monthly": record.monthly,
+                "currency": record.currency,
+                "spent": stored.spent if stored else 0.0,
+                "on_exceed": record.on_exceed,
+                "percent_used": round(stored.percent_used, 1) if stored else 0.0,
+                "blocked": stored.should_block if stored else False,
+                "source": "api",
+            }
+
+        visible = [
+            row
+            for row in rows.values()
+            if caller.may_see(account=row["account"], domain_path=row["domain"])
+        ]
+        return {"count": len(visible), "budgets": visible}
+
+    # -- scoped keys ------------------------------------------------------
+
+    @app.post(f"{PREFIX}/keys", tags=["billing"], summary="Create a scoped API key")
+    async def create_key(
+        caller: CallerDep, session: SessionDep, services: ServicesDep, body: KeyRequest
+    ) -> dict[str, Any]:
+        """Mint a key for the caller's own account (SPEC.md section 7).
+
+        The plaintext is in this response and nowhere else, ever: only a
+        per-key salt and hash are stored.
+        """
+        known = {m.name for m in services.spec.document.models}
+        unknown = sorted(set(body.allowed_models) - known)
+        if unknown:
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such model(s): {', '.join(unknown)}",
+                code="model_not_found",
+            )
+
+        try:
+            minted = KeyStore(session).issue(
+                account=caller.account,
+                domain=caller.domain_path,
+                name=body.name,
+                allowed_models=body.allowed_models,
+                cidrs=body.cidrs,
+                expires_at=body.expires_at,
+                rate_limit_rpm=body.rate_limit_rpm,
+                parameters=body.parameters,
+            )
+        except ValueError as exc:
+            raise ApiError(status.HTTP_400_BAD_REQUEST, str(exc), code="invalid_key_scope") from exc
+
+        return {
+            "id": minted.key_id,
+            "name": body.name,
+            "apikey": minted.plaintext,
+            "warning": "This key is shown once and cannot be retrieved again.",
+        }
+
+    @app.get(f"{PREFIX}/keys", tags=["billing"], summary="List scoped API keys")
+    async def list_keys(caller: CallerDep, session: SessionDep) -> dict[str, Any]:
+        """A tenant's keys, with no secrets and the last-used time."""
+        rows = [
+            {
+                "id": record.key_id,
+                "name": record.name,
+                "account": record.account,
+                "allowedmodels": list(record.allowed_models or ()),
+                "cidrs": list(record.cidrs or ()),
+                "ratelimitrpm": record.rate_limit_rpm,
+                "created": record.created_at.isoformat() if record.created_at else None,
+                "lastused": record.last_used_at.isoformat() if record.last_used_at else None,
+                "expires": record.expires_at.isoformat() if record.expires_at else None,
+                "revoked": record.revoked_at is not None,
+            }
+            for record in KeyStore(session).list_for(account=caller.account)
+            if caller.may_see(account=record.account, domain_path=record.domain)
+        ]
+        return {"count": len(rows), "keys": rows}
+
+    @app.delete(f"{PREFIX}/keys/{{key_id}}", tags=["billing"], summary="Revoke a key")
+    async def revoke_key(key_id: str, caller: CallerDep, session: SessionDep) -> dict[str, Any]:
+        """Revoke a key the caller owns.
+
+        Someone else's key answers 404 rather than 403: key ids are short
+        and a 403 would confirm which ones exist.
+        """
+        store = KeyStore(session)
+        try:
+            record = store.record_for(key_id)
+        except KeyError as exc:
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND, f"no such key: {key_id}", code="key_not_found"
+            ) from exc
+
+        if not caller.may_see(account=record.account, domain_path=record.domain):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND, f"no such key: {key_id}", code="key_not_found"
+            )
+
+        store.revoke(key_id)
+        return {"id": key_id, "revoked": True}
+
+    # -- playground -------------------------------------------------------
+
+    @app.post(
+        f"{PREFIX}/playground/sessions",
+        tags=["billing"],
+        summary="Open a playground session",
+    )
+    async def create_playground_session(
+        caller: CallerDep,
+        session: SessionDep,
+        services: ServicesDep,
+        body: PlaygroundRequest,
+    ) -> dict[str, Any]:
+        """A 15-minute, model-scoped key plus copy-ready snippets.
+
+        Short-lived and single-model because this key lives in a browser
+        (SPEC.md section 7); the tenant's real keys never go there.
+        """
+        if not any(m.name == body.model for m in services.spec.document.models):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such model: {body.model}",
+                code="model_not_found",
+            )
+
+        minted = issue_session_key(
+            KeyStore(session),
+            account=caller.account,
+            domain=caller.domain_path,
+            model=body.model,
+            user_id=caller.user_id,
+        )
+        # The same base the endpoints list reports, so a snippet copied
+        # from the playground points where the tenant's own code will.
+        base = getattr(services, "gateway_url", "https://ai.example.invalid")
+        base_url = f"{base.rstrip('/')}/v1"
+        return {
+            "id": minted.key_id,
+            "apikey": minted.plaintext,
+            "model": body.model,
+            "expires": (datetime.now(UTC) + SESSION_KEY_TTL).isoformat(),
+            "snippets": [
+                {"name": s.name, "language": s.language, "code": s.code}
+                for s in snippets_for(base_url=base_url, model=body.model)
+            ],
+        }
+
+    @app.post(f"{PREFIX}/budgets", tags=["billing"], summary="Set a budget")
+    async def set_budget(_: AdminDep, session: SessionDep, body: BudgetRequest) -> dict[str, Any]:
+        """Set or replace an account's monthly budget.
+
+        Admin only: a tenant able to set its own budget could lift the
+        limit that is blocking it.
+        """
+        record = UsageStore(session).set_budget(body.account, body.as_budget())
+        return _budget_row(record, UsageStore(session))
+
+    @app.patch(f"{PREFIX}/budgets/{{budget_id}}", tags=["billing"], summary="Update a budget")
+    async def update_budget(
+        budget_id: str, _: AdminDep, session: SessionDep, body: BudgetPatch
+    ) -> dict[str, Any]:
+        """A budget is identified by the account it belongs to."""
+        account = budget_id
+        store = UsageStore(session)
+        existing = session.get(BudgetRecord, account)
+        if existing is None:
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no budget for account {account}",
+                code="budget_not_found",
+            )
+        record = store.set_budget(account, body.applied_to(existing))
+        return _budget_row(record, store)
+
+    @app.delete(f"{PREFIX}/budgets/{{budget_id}}", tags=["billing"], summary="Delete a budget")
+    async def delete_budget(budget_id: str, _: AdminDep, session: SessionDep) -> dict[str, Any]:
+        """Remove a budget, leaving the account unlimited."""
+        account = budget_id
+        record = session.get(BudgetRecord, account)
+        if record is None:
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no budget for account {account}",
+                code="budget_not_found",
+            )
+        session.delete(record)
+        session.flush()
+        return {"account": account, "deleted": True}
 
     # -- profiles ---------------------------------------------------------
 

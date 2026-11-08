@@ -34,7 +34,7 @@ test-ui:
 	@echo "milestone 6: not scaffolded yet"; exit 1
 
 test-tf:
-	@echo "milestone 8: not scaffolded yet"; exit 1
+	cd terraform && go build ./... && go vet ./... && go test ./...
 
 test-security:
 	$(PYTEST) tests/security -q

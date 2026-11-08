@@ -28,6 +28,7 @@ from aisvc.k8s.client import (
 from aisvc.provision import ClusterJoin, NodeProvisioner
 from aisvc.reconciler import ActualState, Executor, Plan, plan_all
 from aisvc.reconciler.deployer import ServingDeployer
+from aisvc.reconciler.leader import NotLeader, ZoneLeadership
 from aisvc.registry import InMemoryObjectStore, ModelRegistry, S3ObjectStore
 from aisvc.spec import PlatformSpec, SpecError, load_spec
 
@@ -161,15 +162,20 @@ async def _apply(
     namespace = os.environ.get("AISVC_NAMESPACE", DEFAULT_NAMESPACE)
 
     factory = create_session_factory()
-    Base.metadata.create_all(factory.kw["bind"])
+    engine = factory.kw["bind"]
+    Base.metadata.create_all(engine)
 
-    async with CloudStackClient(credentials) as client:
-        provisioner = NodeProvisioner(client, spec, join=join)
-        deployer = ServingDeployer(_cluster(), spec, _registry(), namespace=namespace)
-        with session_scope(factory) as session:
-            executor = Executor(provisioner, RunLog(session), deployer=deployer)
-            run = await executor.execute(computed, zone=zone, dry_run=dry_run)
-            return run.id, run.status.value
+    # A dry run writes nothing, so it neither needs the lock nor should
+    # take it: holding the zone while printing a plan would stop a real
+    # apply from running.
+    with ZoneLeadership(engine, zone=zone, required=not dry_run):
+        async with CloudStackClient(credentials) as client:
+            provisioner = NodeProvisioner(client, spec, join=join)
+            deployer = ServingDeployer(_cluster(), spec, _registry(), namespace=namespace)
+            with session_scope(factory) as session:
+                executor = Executor(provisioner, RunLog(session), deployer=deployer)
+                run = await executor.execute(computed, zone=zone, dry_run=dry_run)
+                return run.id, run.status.value
 
 
 def _observe_or_empty(spec: PlatformSpec, *, observe: bool) -> ActualState:
@@ -263,6 +269,14 @@ def apply(
     zone = loaded.document.zones[0].name if loaded.document.zones else "unknown"
     try:
         run_id, status = asyncio.run(_apply(loaded, computed, zone=zone, dry_run=dry_run))
+    except NotLeader as exc:
+        # Not an error in the zone, just someone else's turn. Saying so
+        # plainly stops an operator debugging a problem that is not one.
+        err.print(
+            f"[bold yellow]Another engine replica is reconciling {zone}.[/bold yellow]\n"
+            "Nothing was changed. Try again once its run finishes."
+        )
+        raise typer.Exit(code=1) from exc
     except CloudStackError as exc:
         err.print(f"[bold red]CloudStack call failed:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc

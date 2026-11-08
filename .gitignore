@@ -13,3 +13,6 @@ target/
 *.egg-info/
 .DS_Store
 .env
+
+# Terraform provider build output
+terraform/terraform-provider-cloudstack-ai

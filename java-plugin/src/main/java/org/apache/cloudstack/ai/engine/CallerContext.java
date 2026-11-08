@@ -33,6 +33,9 @@ public final class CallerContext {
     public static final String DOMAIN_HEADER = "X-Aisvc-Domain";
     public static final String ROLE_HEADER = "X-Aisvc-Role";
 
+    /** The role the engine treats as seeing everything. */
+    public static final String ROLE_ADMIN = "Admin";
+
     private final String userId;
     private final String account;
     private final String domainPath;
@@ -43,6 +46,25 @@ public final class CallerContext {
         this.account = require(account, "account");
         this.domainPath = require(domainPath, "domainPath");
         this.role = require(role, "role");
+    }
+
+    /**
+     * The plugin acting on its own behalf, not for any user.
+     *
+     * <p>Used only where there is no CloudStack session to build a context
+     * from and the work is the platform's own — host maintenance draining a
+     * GPU node, for instance. It is deliberately a separate factory rather
+     * than a default: a context for a tenant request must always come from
+     * {@code CallContext}, never from a fallback, because the engine filters
+     * every response by whatever the plugin asserts here.
+     */
+    public static CallerContext system() {
+        return new CallerContext("system", "system", "/", ROLE_ADMIN);
+    }
+
+    /** Whether this caller sees the whole platform rather than one account. */
+    public boolean isAdmin() {
+        return ROLE_ADMIN.equalsIgnoreCase(role);
     }
 
     private static String require(String value, String field) {

@@ -21,7 +21,10 @@ serving layer.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import ipaddress
+import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -35,13 +38,19 @@ if TYPE_CHECKING:
     from aisvc.spec import PlatformSpec
 
 __all__ = [
+    "KEY_PREFIX",
     "ApiKey",
     "EnforcedRequest",
     "KeyRejected",
+    "KeySecret",
     "RequestContext",
     "build_litellm_config",
     "enforce_request",
+    "hash_secret",
     "key_allows",
+    "mint_key",
+    "parse_presented_key",
+    "verify_secret",
 ]
 
 #: Request fields the gateway governs; everything else passes through.
@@ -79,10 +88,126 @@ class ApiKey:
     expires_at: datetime | None = None
     cidrs: tuple[str, ...] = ()
     rate_limit_rpm: int | None = None
+    #: Key-level profile overrides, merged below the deployment's and
+    #: above the request's (SPEC.md section 6's precedence).
+    parameters: Mapping[str, Any] = field(default_factory=dict)
+    name: str = ""
 
     @property
     def allows_any_model(self) -> bool:
         return not self.allowed_models
+
+
+#: How many random bytes back a key's secret. 32 bytes is 256 bits, which
+#: is why a single salted hash below is enough: the secret is generated,
+#: not chosen, so there is no dictionary to run and nothing to stretch
+#: against. Password hashing would cost milliseconds on every gateway
+#: request to defend against an attack that does not apply.
+SECRET_BYTES = 32
+
+#: Marks our keys in logs and support tickets without revealing anything.
+KEY_PREFIX = "aisvc"
+
+
+@dataclass(frozen=True, slots=True)
+class KeySecret:
+    """A freshly minted key, the only time its plaintext exists.
+
+    SPEC.md section 7: "shown once". Nothing here is persisted but
+    `key` and the salt and hash; the plaintext is handed to the caller
+    and then dropped.
+    """
+
+    key: ApiKey
+    secret: str
+    salt: str
+    hashed: str
+
+    @property
+    def key_id(self) -> str:
+        return self.key.key_id
+
+    @property
+    def plaintext(self) -> str:
+        """What the tenant copies, and what they present on a request."""
+        return f"{KEY_PREFIX}-{self.key.key_id}-{self.secret}"
+
+
+def hash_secret(secret: str, *, salt: str) -> str:
+    """Salted hash of a key's secret.
+
+    HMAC-SHA256 rather than a password KDF, deliberately: the secret is
+    256 random bits, so stretching buys nothing an attacker could use,
+    and the gateway hashes one of these on every single request.
+    """
+    return hmac.new(salt.encode(), secret.encode(), hashlib.sha256).hexdigest()
+
+
+def verify_secret(secret: str, *, salt: str, hashed: str) -> bool:
+    """Constant-time check of a presented secret against its stored hash."""
+    return hmac.compare_digest(hash_secret(secret, salt=salt), hashed)
+
+
+def parse_presented_key(presented: str) -> tuple[str, str]:
+    """Split `aisvc-<key_id>-<secret>` into its parts.
+
+    Raises `KeyRejected` rather than returning None so a malformed key
+    refuses with the same shape as an out-of-scope one. The secret is
+    never named in the error: these get logged.
+    """
+    parts = presented.split("-", 2)
+    if len(parts) != 3 or parts[0] != KEY_PREFIX or not parts[1] or not parts[2]:
+        raise KeyRejected("malformed_key", "the presented API key is not well formed")
+    return parts[1], parts[2]
+
+
+def mint_key(
+    *,
+    account: str,
+    domain: str,
+    name: str,
+    allowed_models: Sequence[str] = (),
+    cidrs: Sequence[str] = (),
+    expires_at: datetime | None = None,
+    rate_limit_rpm: int | None = None,
+    account_quota_rpm: int | None = None,
+    parameters: Mapping[str, Any] | None = None,
+) -> KeySecret:
+    """Create a scoped key (SPEC.md section 7).
+
+    The scopes are validated here rather than at the gateway: a key that
+    cannot be honoured should not exist, and refusing at mint time tells
+    the operator while they are still looking at the form.
+    """
+    if expires_at is not None and expires_at <= datetime.now(UTC):
+        raise ValueError("a key's expiry is in the past; it would never work")
+
+    if (
+        rate_limit_rpm is not None
+        and account_quota_rpm is not None
+        and rate_limit_rpm > account_quota_rpm
+    ):
+        raise ValueError(
+            f"a key's rate limit ({rate_limit_rpm}/min) may not exceed the "
+            f"account quota ({account_quota_rpm}/min)"
+        )
+
+    key_id = secrets.token_hex(8)
+    secret = secrets.token_urlsafe(SECRET_BYTES)
+    salt = secrets.token_hex(16)
+
+    key = ApiKey(
+        key_id=key_id,
+        account=account,
+        domain=domain,
+        name=name,
+        allowed_models=tuple(allowed_models),
+        cidrs=tuple(cidrs),
+        expires_at=expires_at,
+        rate_limit_rpm=rate_limit_rpm,
+        parameters=dict(parameters or {}),
+    )
+    return KeySecret(key=key, secret=secret, salt=salt, hashed=hash_secret(secret, salt=salt))
 
 
 def key_allows(api_key: ApiKey, *, model: str, source_ip: str) -> None:

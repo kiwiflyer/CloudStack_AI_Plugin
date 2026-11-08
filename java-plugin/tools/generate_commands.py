@@ -444,6 +444,10 @@ COMMANDS: tuple[Command, ...] = (
         ),
     ),
     Command(
+        "listAiApiKeys", "Lists the caller's scoped API keys.",
+        "/v1/keys", response="AiApiKeyResponse", items_key="keys",
+    ),
+    Command(
         "revokeAiApiKey", "Revokes an API key.",
         "/v1/keys/{keyId}", method="DELETE", success_response=True,
         params=(p("id", "keyId", "STRING", "the key to revoke", required=True),),

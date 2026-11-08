@@ -734,3 +734,127 @@ on a zone, but cannot take one from empty to serving on its own.
 
 Also outstanding: maintenance integration, playground, scoped keys, budgets,
 engine HA and Terraform.
+
+## Milestone 8 — Tier 1 operability (the rest)
+
+**Status:** all seven of section 7's features now have code and tests.
+Three have limits that are worth stating plainly rather than burying,
+and they are below under "What is still not true".
+
+1020 Python tests, 399 Java, 21 Go. `make test-tf` runs for the first
+time instead of exiting 1.
+
+### What landed
+
+- **Scoped keys.** `mint_key` / `KeyStore`: minted once, stored as a
+  per-key salt and HMAC, verified in one indexed lookup. Scopes are
+  checked at mint time as well as at the gateway, so a key that could
+  never be honoured is refused while the operator is still looking at
+  the form. Rotation is overlapping keys, which falls out of issuing a
+  second one; `/v1/keys` POST, GET and DELETE back it.
+- **Budgets.** `UsageStore` holds usage and budgets, and the gateway
+  hook refuses a blocked account with 402 before the request goes
+  upstream. 402 and not 429: this is not a rate to wait out.
+- **The metering driver.** This was milestone 7's outstanding gap —
+  nothing produced usage records. `AisvcEnforcement.async_log_success_event`
+  now does. That hook rather than `async_post_call_success_hook`
+  because it fires for streaming responses too, and the playground
+  streams; the name was checked against LiteLLM's source, not guessed.
+- **Playground.** A 15-minute, single-model session key plus snippets
+  for curl, httpx and the OpenAI SDK in both languages.
+- **Engine HA.** `ZoneLeadership` takes a Postgres advisory lock per
+  zone, wired into `aisvc apply`. The Java side's multi-URL failover
+  was already there from milestone 5.
+- **Host maintenance.** `MaintenanceDrain` asks the engine to drain
+  each GPU node on a host before it enters maintenance, because
+  passthrough GPUs cannot live-migrate (ADR-0003).
+- **Terraform.** Five resources and a data source in `terraform/`,
+  with import support.
+
+### CloudStack 4.23 has no pre-maintenance hook
+
+Checked rather than assumed, and all three candidates fail:
+
+- `ResourceStateAdapter` covers host create and delete only.
+- The agent `Listener` covers connect, disconnect and removal.
+- `ResourceState` is driven by the older `StateMachine`, which — unlike
+  `StateMachine2` — registers no listeners.
+
+That leaves the event bus, which is asynchronous (the host has already
+begun its transition) and **not enabled in a default install**: no
+event-bus module is in `client/pom.xml` and the in-memory one ships no
+`module.properties`.
+
+So `AiMaintenanceListener` subscribes where it can and, where it cannot,
+logs at startup exactly what is inactive and that `drainAiNode` must be
+run by hand first. A listener that silently never fires would be worse
+than none, because an operator would believe drains were automatic.
+
+This is the same shape as milestone 5's account-cleanup gap, and it
+should go to upstream CloudStack as a feature request rather than be
+worked around here.
+
+### Which GPU nodes are on a host is CloudStack's question
+
+The engine does not track node-to-host — `PoolCapacity` holds node names
+only. Rather than teach it, the plugin asks CloudStack directly
+(`VMInstanceDao.listUpByHostId`, filtered by the `aisvc-` prefix).
+CloudStack is the IaaS authority and already knows what runs where; the
+engine would have to be told the same thing to answer it.
+
+### Usage and budgets were reading stubs
+
+`/v1/usage` and `/v1/budgets` read `getattr(services, "usage")` and
+`getattr(services, "spend")` — attributes nothing ever set. Both read
+from the stores now, and four tests that set those attributes were
+rewritten to write real rows. One of them had been passing for the wrong
+reason: it asserted another tenant saw nothing, which was true because
+*nobody* saw anything.
+
+Budgets now have two declarations — `platform.yaml` as desired state and
+the database as what is in force — so the list endpoint merges them with
+the stored one winning, and reports which it used in `source`. Without
+that, raising a limit through the API would appear to do nothing.
+
+### A path parameter that collided with a header
+
+`PATCH /v1/budgets/{account}` would not register at all: FastAPI matches
+dependency parameters to path placeholders by name, `caller_context`
+takes an `account` header, and so it read that header parameter as a
+path parameter and refused the route for having a default. Renamed to
+`{budget_id}`. Worth knowing before adding `/v1/.../{domain}` or
+`{role}`, which would do the same thing.
+
+### Verified, not assumed
+
+Against `aisvc serve`, after `alembic upgrade head` (0003 applies clean):
+
+- `POST /v1/keys` → the secret, once, with its warning.
+- `GET /v1/keys` → metadata, no secret, `lastused` null until used.
+- `POST /v1/playground/sessions` → a 15-minute key and four snippets,
+  none of which contains the key.
+- `POST /v1/budgets` as admin → 200; as a tenant → 403.
+- `GET /v1/budgets` → the stored budget, `source: api`.
+
+`make test-tf`, `make check` and the Java suite all pass.
+
+### What is still not true
+
+- **The self-test still only plans.** Its five steps need GPU capacity,
+  so section 14's first criterion is not met. The metering step could
+  pass now that there is a driver; the rest cannot without hardware.
+- **Automatic drain is off in a default install**, per above. The
+  DCGM XID/ECC auto-quarantine in section 7 is not written at all —
+  nothing reads DCGM yet.
+- **Budget notifications are half done.** `take_notifications` returns
+  the newly crossed thresholds exactly once, but nothing sends them:
+  no CloudStack event, no email, no HMAC-signed webhook.
+- **The playground console is a UI screen** (milestone 6). The engine
+  side of it is done.
+- **The Terraform acceptance tests have never been run.** They need the
+  simulator from `make test-int`, which is not part of `make check`.
+  Nothing in `terraform/` has touched a live management server, so
+  treat the command and response-key names there as unverified.
+- **Engine HA's operational half** — Postgres in HA, daily backups, a
+  quarterly restore drill — is deployment work, not code, and belongs
+  with `deploy/`.

@@ -371,7 +371,7 @@ A Java API plugin owns auth, RBAC, async jobs, events, usage and limits, and a V
 | `deleteAiModelDeployment` | DELETE `/v1/deployments/{id}` | Yes | All | v1 |
 | `promoteAiRollout`, `rollbackAiRollout` | POST `/v1/deployments/{id}/rollout/...` | Yes | All | v1 |
 | `listAiEndpoints` | GET `/v1/endpoints` | No | All | v1 |
-| `createAiApiKey`, `revokeAiApiKey` | `/v1/keys` | No | All | v1 |
+| `createAiApiKey`, `listAiApiKeys`, `revokeAiApiKey` | `/v1/keys` | No | All | v1 |
 | `list/create/update/deleteAiServingProfile` | `/v1/profiles/serving` | Yes (edits roll out) | Root admin | v1 |
 | `list/create/update/deleteAiGenerationProfile` | `/v1/profiles/generation` | No | All, scoped | v1 |
 | `assignAiTuningProfile` | POST `/v1/profiles/assignments` | Yes for serving | All, scoped | v1 |

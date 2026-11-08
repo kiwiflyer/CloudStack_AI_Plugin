@@ -47,7 +47,7 @@ class CommandRegistrationTest {
             "searchAiHfModels", "checkAiHfModel", "mirrorAiModel", "approveAiModel",
             "publishAiModel", "listAiModels", "deployAiModel", "listAiModelDeployments",
             "updateAiModelDeployment", "deleteAiModelDeployment", "promoteAiRollout",
-            "rollbackAiRollout", "listAiEndpoints", "createAiApiKey", "revokeAiApiKey",
+            "rollbackAiRollout", "listAiEndpoints", "createAiApiKey", "listAiApiKeys", "revokeAiApiKey",
             "listAiServingProfiles", "createAiServingProfile", "updateAiServingProfile",
             "deleteAiServingProfile", "listAiGenerationProfiles",
             "createAiGenerationProfile", "updateAiGenerationProfile",

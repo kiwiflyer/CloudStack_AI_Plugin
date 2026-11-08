@@ -205,13 +205,14 @@ class TestAgainstTheEngine:
         """Fails when an endpoint lands without the count being updated.
 
         Milestone 7 added rollouts, drain, usage and budgets; milestone 8
-        has started with the setup wizard. The rest arrive with the
-        remainder of 8 and with 9.
+        added the setup wizard, scoped keys, budget writing and the
+        playground. What is left is mirroring and profile writing
+        (milestone 3's command surface) and the v2 commands.
         """
         paths = self.engine_paths()
         missing = sorted(c.name for c in V1 if c.path not in paths)
 
-        assert len(missing) == 18, (
+        assert len(missing) == 13, (
             f"{len(missing)} v1 commands still have no engine route: {missing}"
         )
 

@@ -1,0 +1,273 @@
+"""Stored scoped keys and metered usage (SPEC.md sections 4 and 7).
+
+Two stores over the tables in `aisvc.db.models`. They are deliberately
+thin: the policy lives in `aisvc.gateway` (what a key may do) and
+`aisvc.metering` (what usage costs and what a budget means), and these
+only decide what is written down and what is read back.
+
+Both are safe to call from the gateway hot path: verification is one
+indexed primary-key lookup and one HMAC.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import select
+
+from aisvc.db.models import ApiKeyRecord, BudgetRecord, UsageRow, utcnow
+from aisvc.gateway import (
+    ApiKey,
+    KeyRejected,
+    hash_secret,
+    key_allows,
+    mint_key,
+    parse_presented_key,
+    verify_secret,
+)
+from aisvc.metering import (
+    DEFAULT_THRESHOLDS,
+    BudgetState,
+    crossed_thresholds,
+    evaluate_budget,
+    price_usage,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from sqlalchemy.orm import Session
+
+    from aisvc.gateway import KeySecret
+    from aisvc.metering import UsageRecord
+    from aisvc.spec.models import Budget, PriceTier
+
+__all__ = ["KeyStore", "UsageStore"]
+
+
+class KeyStore:
+    """Issue, verify and revoke tenant API keys."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def issue(
+        self,
+        *,
+        account: str,
+        domain: str,
+        name: str,
+        allowed_models: Sequence[str] = (),
+        cidrs: Sequence[str] = (),
+        expires_at: datetime | None = None,
+        rate_limit_rpm: int | None = None,
+        account_quota_rpm: int | None = None,
+        parameters: dict[str, object] | None = None,
+    ) -> KeySecret:
+        """Mint a key and store everything about it but the secret."""
+        minted = mint_key(
+            account=account,
+            domain=domain,
+            name=name,
+            allowed_models=allowed_models,
+            cidrs=cidrs,
+            expires_at=expires_at,
+            rate_limit_rpm=rate_limit_rpm,
+            account_quota_rpm=account_quota_rpm,
+            parameters=parameters,
+        )
+        self.session.add(
+            ApiKeyRecord(
+                key_id=minted.key_id,
+                account=account,
+                domain=domain,
+                name=name,
+                salt=minted.salt,
+                hashed=minted.hashed,
+                allowed_models=list(allowed_models),
+                cidrs=list(cidrs),
+                parameters=dict(parameters or {}),
+                rate_limit_rpm=rate_limit_rpm,
+                expires_at=expires_at,
+            )
+        )
+        self.session.flush()
+        return minted
+
+    def record_for(self, key_id: str) -> ApiKeyRecord:
+        record = self.session.get(ApiKeyRecord, key_id)
+        if record is None:
+            raise KeyError(key_id)
+        return record
+
+    def verify(self, presented: str, *, model: str, source_ip: str) -> ApiKey:
+        """Resolve a presented key, or refuse it with the reason.
+
+        An unknown key id and a wrong secret refuse identically: telling
+        them apart would turn this into an oracle for which ids exist.
+        """
+        key_id, secret = parse_presented_key(presented)
+        record = self.session.get(ApiKeyRecord, key_id)
+
+        if record is None or not verify_secret(secret, salt=record.salt, hashed=record.hashed):
+            raise KeyRejected("invalid_key", "the presented API key is not valid")
+
+        if record.revoked_at is not None:
+            raise KeyRejected("key_revoked", f"key {key_id} was revoked")
+
+        resolved = self._as_api_key(record)
+        key_allows(resolved, model=model, source_ip=source_ip)
+
+        record.last_used_at = utcnow()
+        return resolved
+
+    def revoke(self, key_id: str) -> None:
+        """Stop a key working. Revoking an already-revoked key is a no-op."""
+        record = self.record_for(key_id)
+        if record.revoked_at is None:
+            record.revoked_at = utcnow()
+
+    def list_for(self, *, account: str) -> list[ApiKeyRecord]:
+        """Every key an account holds. Never carries a secret."""
+        return list(
+            self.session.scalars(
+                select(ApiKeyRecord)
+                .where(ApiKeyRecord.account == account)
+                .order_by(ApiKeyRecord.created_at)
+            )
+        )
+
+    @staticmethod
+    def _as_api_key(record: ApiKeyRecord) -> ApiKey:
+        return ApiKey(
+            key_id=record.key_id,
+            account=record.account,
+            domain=record.domain,
+            name=record.name,
+            allowed_models=tuple(record.allowed_models or ()),
+            cidrs=tuple(record.cidrs or ()),
+            expires_at=_aware(record.expires_at),
+            rate_limit_rpm=record.rate_limit_rpm,
+            parameters=dict(record.parameters or {}),
+        )
+
+    @staticmethod
+    def hash_for(secret: str, *, salt: str) -> str:
+        return hash_secret(secret, salt=salt)
+
+
+class UsageStore:
+    """Record what tenants used, and what their budgets say about it."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def record(self, usage: UsageRecord, *, tier: PriceTier) -> UsageRow:
+        """Price one interval of usage and write it down.
+
+        Priced at write time rather than read time: the catalog's tiers
+        change, and a past month's bill must not change with them.
+        """
+        row = UsageRow(
+            account=usage.account,
+            domain=usage.domain,
+            model=usage.model,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            gpu_hours=usage.gpu_hours,
+            cost=price_usage(usage, tier),
+            currency=tier.currency,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def list_for(self, *, account: str, since: datetime | None = None) -> list[UsageRow]:
+        query = select(UsageRow).where(UsageRow.account == account)
+        if since is not None:
+            query = query.where(UsageRow.recorded_at >= since)
+        return list(self.session.scalars(query.order_by(UsageRow.recorded_at)))
+
+    def spent(self, *, account: str, since: datetime | None = None) -> float:
+        """What an account has spent in the current billing period.
+
+        The window matters: a monthly budget that never resets would
+        block a tenant permanently after one expensive month.
+        """
+        window = since if since is not None else _month_start()
+        total = 0.0
+        for row in self.list_for(account=account):
+            recorded = _aware(row.recorded_at)
+            # recorded_at is not nullable, but a row read back mid-flush
+            # can be: count an unstamped row as current rather than
+            # comparing against None and failing the budget check.
+            if recorded is None or recorded >= window:
+                total += row.cost
+        return total
+
+    def set_budget(self, account: str, budget: Budget) -> BudgetRecord:
+        """Set or replace an account's budget, resetting its alerts."""
+        record = self.session.get(BudgetRecord, account)
+        if record is None:
+            record = BudgetRecord(account=account)
+            self.session.add(record)
+        record.monthly = budget.monthly
+        record.currency = budget.currency
+        record.on_exceed = budget.on_exceed
+        record.notified = []
+        record.updated_at = utcnow()
+        self.session.flush()
+        return record
+
+    def budget_state(self, account: str) -> BudgetState | None:
+        """How this account stands against its budget, or None if unlimited."""
+        record = self.session.get(BudgetRecord, account)
+        if record is None:
+            return None
+
+        from aisvc.spec.models import Budget
+
+        return evaluate_budget(
+            Budget(
+                monthly=record.monthly,
+                currency=record.currency,
+                on_exceed=record.on_exceed,
+            ),
+            spent=self.spent(account=account),
+            already_notified=list(record.notified or ()),
+        )
+
+    def take_notifications(self, account: str) -> list[int]:
+        """Thresholds crossed since the last call, and never repeated.
+
+        Taking rather than reading is deliberate: the caller sends the
+        alerts, and a crash between reading and sending should lose an
+        alert rather than send it on every request thereafter.
+        """
+        record = self.session.get(BudgetRecord, account)
+        if record is None:
+            return []
+
+        already = list(record.notified or ())
+        newly = crossed_thresholds(
+            spent=self.spent(account=account),
+            limit=record.monthly,
+            already_notified=already,
+            thresholds=DEFAULT_THRESHOLDS,
+        )
+        if newly:
+            record.notified = sorted(already + newly)
+        return newly
+
+
+def _month_start(now: datetime | None = None) -> datetime:
+    moment = now or datetime.now(UTC)
+    return moment.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    """SQLite hands back naive datetimes; Postgres does not."""
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
