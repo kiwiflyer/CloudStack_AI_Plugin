@@ -1,0 +1,137 @@
+# Prometheus alerting rules for CloudStack AI Services (SPEC.md section 11).
+#
+# Section 11 names seven things to alert on. Six are here. The seventh —
+# budget thresholds — is deliberately not a Prometheus rule: a budget
+# alert has to reach the *tenant* who is spending, not the operator's
+# pager, and it must fire once per threshold rather than for as long as
+# the condition holds. The engine delivers those itself through
+# `aisvc.observability.alerts` (CloudStack events, email and HMAC-signed
+# webhooks, per section 7). They are mentioned here so the absence reads
+# as a decision rather than an oversight.
+#
+# Load with the Prometheus Operator (`kind: PrometheusRule`) or point
+# `rule_files` at this file directly; the `groups` block is the same.
+---
+groups:
+  - name: aisvc-gpu
+    interval: 30s
+    rules:
+      # A GPU reporting XID errors is failing, not busy. Passthrough
+      # GPUs cannot live-migrate (ADR-0003), so the only remedy is to
+      # drain the node and replace it.
+      - alert: AisvcGpuXidErrors
+        expr: increase(DCGM_FI_DEV_XID_ERRORS[10m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: >-
+            GPU {{ $labels.gpu }} on {{ $labels.Hostname }} reported an XID error
+          runbook: >-
+            Drain the GPU node with `aisvc drain <node>` and let the
+            reconciler replace it. Do not stop the node: a stopped node
+            keeps its GPU allocated (ADR-0003). Check `nvidia-smi -q`
+            on the host for the XID code before returning it to service.
+
+      - alert: AisvcGpuEccErrors
+        expr: |
+          increase(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL[1h]) > 0
+          or increase(DCGM_FI_DEV_ECC_SBE_VOL_TOTAL[1h]) > 100
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: >-
+            GPU {{ $labels.gpu }} on {{ $labels.Hostname }} is reporting ECC errors
+          runbook: >-
+            A double-bit error is uncorrectable and the GPU should be
+            drained and replaced immediately. A rising single-bit count
+            usually precedes one. Drain, do not stop (ADR-0003).
+
+      # Hosts running different driver versions serve the same model
+      # inconsistently and fail in ways that look like model bugs.
+      - alert: AisvcGpuDriverDrift
+        expr: count(count by (driver_version) (DCGM_FI_DRIVER_VERSION)) > 1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: GPU hosts are running more than one NVIDIA driver version
+          runbook: >-
+            Compare `DCGM_FI_DRIVER_VERSION` by host. Rebuild the golden
+            image and roll the odd hosts through drain and replace so
+            every host in a GPU class matches.
+
+  - name: aisvc-serving
+    interval: 30s
+    rules:
+      # Section 11: "TTFT p95 over SLO for 10 minutes". Ten minutes
+      # rather than immediately, so a traffic spike the autoscaler is
+      # already handling does not page anyone.
+      - alert: AisvcTtftOverSlo
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (model_name, le) (
+              rate(vllm:time_to_first_token_seconds_bucket[5m])
+            )
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: >-
+            {{ $labels.model_name }} has been over its TTFT p95 SLO for 10 minutes
+          runbook: >-
+            Check whether the autoscaler is already adding replicas
+            (`aisvc status`). If it is at `replicas.max`, raise the
+            ceiling or add GPU capacity. If replicas are not growing,
+            check that Prometheus is reachable from the engine — without
+            it the planner holds every deployment at its floor.
+
+      - alert: AisvcQueueDepthOverTarget
+        expr: avg by (model_name) (vllm:num_requests_waiting) > 8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: >-
+            {{ $labels.model_name }} has a queue depth over target
+          runbook: >-
+            Requests are waiting for a slot. The autoscaler adds a
+            replica after 60s of this; if nothing is happening, check
+            GPU capacity in the pool and the engine's Prometheus URL.
+
+  - name: aisvc-engine
+    interval: 1m
+    rules:
+      # Exported by the engine itself; see aisvc/observability/metrics.py.
+      # Both outcome series are registered at zero on startup so this
+      # can fire on the first failure rather than the second.
+      - alert: AisvcReconcilerFailing
+        expr: |
+          increase(aisvc_reconcile_runs_total{status="failed"}[30m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Reconcile runs are failing in zone {{ $labels.zone }}
+          runbook: >-
+            The platform has stopped converging on platform.yaml. Read
+            the run log (`aisvc status` or the ai_run table) for the
+            failing action. A failed action stops only its dependants,
+            so part of the plan may have applied.
+
+      - alert: AisvcMirrorFailing
+        expr: |
+          increase(aisvc_mirror_requests_total{status="failed"}[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Model mirroring is failing for {{ $labels.repo }}
+          runbook: >-
+            Only the mirror worker has internet egress; check its network
+            policy and the Hugging Face token first. A licence or pickle
+            rejection is deliberate, not a fault — check the engine log
+            before changing anything.

@@ -412,7 +412,16 @@ def plan_routes(
 
 
 def route_config_hash(config: dict[str, object]) -> str:
-    """Digest of a rendered gateway config, used to detect drift."""
+    """Digest of a rendered gateway config, used to detect drift.
+
+    Always given the config rendered at a *normalised* traffic split
+    (`weights=None`), never the one actually written. The split is
+    runtime state — a promotion sets it, the spec never does — so a
+    digest that moved with it would make every promotion look like a
+    spec change, rewrite the routes and revert the promotion. Same
+    reason `config_hash` digests at a normalised replica count
+    (CLAUDE.md). `ServingDeployer.apply_routes` is what holds to this.
+    """
     canonical = json.dumps(config, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
 

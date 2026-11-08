@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol
 
 from aisvc.db import ActionOutcome, ActionRecord, RunLog, RunRecord
+from aisvc.observability.metrics import record_run
 from aisvc.reconciler.plan import Action, ActionKind, Plan
 
 if TYPE_CHECKING:
@@ -104,6 +105,7 @@ class Executor:
             for record in run.actions:
                 self.run_log.action_skipped(record, reason=str(exc))
             self.run_log.finish_run(run, error=str(exc))
+            record_run(zone, failed=True)
             return run
 
         records: dict[str, ActionRecord] = {
@@ -122,6 +124,7 @@ class Executor:
             await self._run_one(action, record, dry_run=dry_run)
 
         self.run_log.finish_run(run)
+        record_run(zone, failed=any(a.outcome is ActionOutcome.FAILED for a in run.actions))
         return run
 
     @staticmethod

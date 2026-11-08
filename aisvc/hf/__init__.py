@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from aisvc.capacity import ModelArchitecture, estimate
+from aisvc.observability.metrics import record_mirror
 from aisvc.registry import PICKLE_SUFFIXES, Manifest, ModelRegistry, RegistryError
 
 if TYPE_CHECKING:
@@ -369,6 +370,34 @@ class ModelSourcing:
         Resolves the revision to a commit SHA first, so what is stored can
         never change underneath us.
         """
+        # Counted either way, so section 11's mirror-failure alert has
+        # something to fire on. A licence or pickle rejection is a
+        # deliberate refusal rather than a fault, but it is still a
+        # mirror that did not happen and an operator wants to know.
+        try:
+            manifest = self._mirror(
+                repo_id,
+                revision,
+                domain=domain,
+                quota_gb=quota_gb,
+                allow_remote_code=allow_remote_code,
+            )
+        except Exception:
+            record_mirror(repo_id, failed=True)
+            raise
+
+        record_mirror(repo_id, failed=False)
+        return manifest
+
+    def _mirror(
+        self,
+        repo_id: str,
+        revision: str,
+        *,
+        domain: str | None = None,
+        quota_gb: int | None = None,
+        allow_remote_code: bool = False,
+    ) -> Manifest:
         sha = self.hub.resolve_revision(repo_id, revision)
 
         if self.registry.has(repo_id, sha):

@@ -7,6 +7,8 @@ lazily so the adapter can be unit-tested without installing LiteLLM.
 
 from __future__ import annotations
 
+import inspect
+import logging
 from typing import Any
 
 from aisvc.gateway import KeyRejected, RequestContext, enforce_request
@@ -20,6 +22,8 @@ except ImportError:  # pragma: no cover - the engine's test environment
     class _Base:  # type: ignore[no-redef]
         """Stand-in so the adapter imports without LiteLLM present."""
 
+
+log = logging.getLogger("aisvc.gateway.hooks")
 
 __all__ = ["AisvcEnforcement", "BudgetExceeded", "HttpError", "to_http_error"]
 
@@ -153,15 +157,23 @@ class AisvcEnforcement(_Base):  # type: ignore[misc]  # base is Any without Lite
 
         context = self._last_context
         self._last_context = None
-        self.meter(
-            UsageRecord(
-                account=context.key.account,
-                domain=context.key.domain,
-                model=context.model,
-                input_tokens=counts[0],
-                output_tokens=counts[1],
-            )
+        record = UsageRecord(
+            account=context.key.account,
+            domain=context.key.domain,
+            model=context.model,
+            input_tokens=counts[0],
+            output_tokens=counts[1],
         )
+
+        try:
+            # The meter writes to Postgres and may raise budget alerts,
+            # so it is allowed to be a coroutine rather than blocking
+            # the proxy's event loop on a write per request.
+            result = self.meter(record)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:  # noqa: BLE001 - the response has already been sent
+            log.exception("failed to meter a served request")
 
     def _context_for(self, user_api_key_dict: Any, data: dict[str, Any]) -> RequestContext:
         if self.resolve_context is None:

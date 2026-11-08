@@ -325,3 +325,51 @@ class TestMeteringDriver:
         hook = AisvcEnforcement(resolve_context=lambda _k, _d: context_for())
 
         await self.log(hook, self.response())  # must not raise
+
+
+class TestAnAsyncMeter:
+    """The meter writes to Postgres and may send alerts, so it has to be
+    allowed to be a coroutine — otherwise the wiring has to block the
+    event loop on a database write for every request served."""
+
+    async def test_an_async_meter_is_awaited(self) -> None:
+        recorded: list[Any] = []
+
+        async def meter(usage: Any) -> None:
+            recorded.append(usage)
+
+        hook = AisvcEnforcement(resolve_context=lambda _k, _d: context_for(), meter=meter)
+        await hook.async_pre_call_hook(
+            None, None, {"model": "llama-3.3-70b-instruct"}, "completion"
+        )
+        await hook.async_log_success_event(
+            {}, {"usage": {"prompt_tokens": 1, "completion_tokens": 1}}, 0.0, 1.0
+        )
+
+        assert len(recorded) == 1
+
+    async def test_a_plain_meter_still_works(self) -> None:
+        recorded: list[Any] = []
+        hook = AisvcEnforcement(resolve_context=lambda _k, _d: context_for(), meter=recorded.append)
+        await hook.async_pre_call_hook(
+            None, None, {"model": "llama-3.3-70b-instruct"}, "completion"
+        )
+        await hook.async_log_success_event(
+            {}, {"usage": {"prompt_tokens": 1, "completion_tokens": 1}}, 0.0, 1.0
+        )
+
+        assert len(recorded) == 1
+
+    async def test_a_failing_meter_does_not_fail_the_request(self) -> None:
+        """The response has already gone to the tenant by this point."""
+
+        async def meter(_: Any) -> None:
+            raise RuntimeError("the database is down")
+
+        hook = AisvcEnforcement(resolve_context=lambda _k, _d: context_for(), meter=meter)
+        await hook.async_pre_call_hook(
+            None, None, {"model": "llama-3.3-70b-instruct"}, "completion"
+        )
+        await hook.async_log_success_event(
+            {}, {"usage": {"prompt_tokens": 1, "completion_tokens": 1}}, 0.0, 1.0
+        )

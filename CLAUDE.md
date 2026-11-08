@@ -4,11 +4,11 @@ Guidance for Claude Code working in this repository.
 
 ## Current state
 
-**Milestones 1–5 and 8 are done bar their noted gaps; 7 is partly done; 6 and 9 are not.**
+**Milestones 1–5, 7 and 8 are done bar their noted gaps; 6 and 9 are not.**
 See `PROGRESS.md`.
 Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`, `db`,
 `reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, `setup`, `playground`,
-the `aisvc` CLI
+`observability`, the `aisvc` CLI
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
 Not written: all v2 modules, `ui/`, `deploy/`. `terraform/` builds and unit-tests but
@@ -17,9 +17,9 @@ its acceptance tests have never run against a live management server.
 section 14's first acceptance criterion is not yet met. Host maintenance drains
 automatically only where an event bus is configured — CloudStack 4.23 offers no
 synchronous pre-maintenance hook, and no bus is enabled by default.
-`lifecycle` and `autoscale` are driven by the reconciler. `metering` now has a driver:
-the gateway hook's `async_log_success_event` writes usage records. Nothing fills in
-`DeploymentHealth` yet, so autoscaling still decides correctly on data no one supplies.
+`lifecycle` and `autoscale` are driven by the reconciler, and `observability` now fills
+`DeploymentHealth` from Prometheus — autoscaling is opt-in on `AISVC_PROMETHEUS_URL` and
+holds at the replica floor without it. The engine exports its own counters on `/metrics`.
 `make test-ui` and `record` deliberately exit 1 naming the milestone that fills them in.
 
 `aisvc apply` takes an empty zone to a served model in one run — nodes, then deployments, then

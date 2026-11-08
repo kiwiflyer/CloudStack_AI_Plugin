@@ -14,17 +14,20 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import FastAPI, Query, Response, status
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from aisvc.api.deps import AdminDep, CallerDep, JobsDep, ServicesDep, SessionDep
 from aisvc.api.errors import ApiError, register_error_handlers
 from aisvc.db import BudgetRecord, KeyStore, RunLog, UsageStore
-from aisvc.k8s.client import observe_deployments
+from aisvc.k8s.client import observe_deployments, observe_weights
 from aisvc.lifecycle import RolloutError, plan_drain, start_rollout
 from aisvc.metering import evaluate_budget
+from aisvc.observability.metrics import REGISTRY, register_zones, render
 from aisvc.playground import SESSION_KEY_TTL, issue_session_key, snippets_for
 from aisvc.profiles import Level, ProfileLayer, resolve
+from aisvc.reconciler.deployer import ServingDeployer
 from aisvc.setup import discover_gpu_classes, plan_self_test, preflight
 from aisvc.spec.models import Budget
 
@@ -119,6 +122,11 @@ def create_app(services: Services) -> FastAPI:
         docs_url=f"{PREFIX}/docs",
     )
     app.state.services = services
+
+    # Declared up front so a freshly started engine already exports a
+    # zero for every zone, and an alert can fire on the first failure.
+    register_zones([zone.name for zone in services.spec.document.zones])
+
     register_error_handlers(app)
     _register_routes(app)
     return app
@@ -277,6 +285,25 @@ def _register_routes(app: FastAPI) -> None:
         ]
         return {"count": len(visible), "endpoints": visible}
 
+    @app.get(
+        "/metrics",
+        tags=["admin"],
+        summary="Prometheus metrics",
+        response_class=PlainTextResponse,
+        include_in_schema=False,
+    )
+    async def metrics() -> PlainTextResponse:
+        """The engine's own counters (SPEC.md section 11).
+
+        Outside the versioned prefix and outside the caller-context
+        requirement: Prometheus cannot assert one, and there is nothing
+        here but counters the engine keeps about itself — no tenant,
+        account or request appears in a label.
+        """
+        return PlainTextResponse(
+            render(REGISTRY), media_type="text/plain; version=0.0.4; charset=utf-8"
+        )
+
     # -- setup ------------------------------------------------------------
 
     @app.get(f"{PREFIX}/setup/preflight", tags=["admin"], summary="Preflight checks")
@@ -385,7 +412,7 @@ def _register_routes(app: FastAPI) -> None:
         response: Response,
     ) -> dict[str, Any]:
         """Send all traffic to the canary and retire the old colour."""
-        return _rollout_job(
+        return await _rollout_job(
             "promoteAiRollout",
             deployment_id,
             caller,
@@ -409,7 +436,7 @@ def _register_routes(app: FastAPI) -> None:
         response: Response,
     ) -> dict[str, Any]:
         """Send all traffic back to the colour that was live."""
-        return _rollout_job(
+        return await _rollout_job(
             "rollbackAiRollout",
             deployment_id,
             caller,
@@ -852,7 +879,7 @@ def _replicas_on(services: Services, node_id: str) -> int:
     )
 
 
-def _rollout_job(
+async def _rollout_job(
     command: str,
     deployment_id: str,
     caller: Any,
@@ -867,18 +894,46 @@ def _rollout_job(
     The weights this produces are what the gateway applies; nothing in
     the serving layer moves traffic (ADR-0001).
     """
-    model, _, colour = deployment_id.rpartition("-")
-    if colour not in {"blue", "green"}:
-        model, colour = deployment_id, "blue"
+    model, _, suffix = deployment_id.rpartition("-")
+    if suffix not in {"blue", "green"}:
+        model = deployment_id
 
+    # Which colour is live is read from the gateway's weights, never
+    # from the id in the URL (CLAUDE.md: it is derived, never stored).
+    # Taking it from the URL meant promoting the deployment you named
+    # actually promoted the other one, because start_rollout's `active`
+    # is the colour currently serving.
+    cluster = getattr(services, "cluster", None)
     job = jobs.create(command, caller)
     response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
 
+    if cluster is None:
+        jobs.fail(
+            job,
+            "the engine has no serving cluster configured, so the traffic split "
+            "could not be applied; set AISVC_KUBECONFIG and retry",
+        )
+        return {"jobid": job.id}
+
+    split = observe_weights(cluster).get(model) or {}
+    live = max(split, key=lambda c: split[c]) if split else "blue"
+
     try:
-        rollout = start_rollout(model, active=colour)
+        rollout = start_rollout(model, active=live)
         settled = rollout.promote() if promote else rollout.rollback()
     except RolloutError as exc:
         jobs.fail(job, str(exc))
+        return {"jobid": job.id}
+
+    # Apply the split before reporting it. Milestone 7 recorded the
+    # weights on the job and stopped there, so a promotion through the
+    # API moved no traffic at all and the next reconcile could not tell
+    # a promotion had happened — live colour is derived from these.
+    try:
+        deployer = ServingDeployer(cluster, services.spec, services.registry)
+        await deployer.apply_routes(weights={settled.model: settled.weights()})
+    except Exception as exc:
+        jobs.fail(job, f"could not apply the traffic split: {exc}")
         return {"jobid": job.id}
 
     jobs.succeed(

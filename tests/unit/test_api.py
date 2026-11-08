@@ -948,3 +948,141 @@ class TestUsageComesFromTheStore:
         self.record_usage(client)
 
         assert client.get("/v1/usage", headers=TENANT).json()["count"] == 1
+
+
+class TestRolloutsApplyTheirWeights:
+    """Promote and rollback must move traffic, not just report a split.
+
+    Milestone 7 left these computing weights and recording them on a
+    job, with nothing applying them — so a promotion through the API
+    changed nothing at the gateway.
+    """
+
+    def cluster_of(self, client: TestClient) -> Any:
+        return cast(FastAPI, client.app).state.services.cluster
+
+    def weights(self, client: TestClient) -> dict[str, dict[str, int]]:
+        from aisvc.k8s.client import observe_weights
+
+        return observe_weights(self.cluster_of(client))
+
+    def test_promoting_sends_traffic_to_the_candidate(self, client: TestClient) -> None:
+        response = client.post(
+            "/v1/deployments/llama-3.3-70b-instruct-green/rollout/promote",
+            headers=ADMIN,
+        )
+
+        assert response.status_code == 202
+        assert self.weights(client)["llama-3.3-70b-instruct"]["green"] == 100
+
+    def test_the_job_still_reports_the_split(self, client: TestClient) -> None:
+        job = client.post(
+            "/v1/deployments/llama-3.3-70b-instruct-green/rollout/promote",
+            headers=ADMIN,
+        ).json()
+
+        result = client.get(f"/v1/jobs/{job['jobid']}", headers=ADMIN).json()
+        assert result["jobresult"]["weights"]["green"] == 100
+
+    def test_rolling_back_a_canary_returns_traffic_to_the_live_colour(
+        self, client: TestClient
+    ) -> None:
+        """Rollback abandons a candidate mid-canary.
+
+        After a *completed* promotion there is nothing to roll back to —
+        the new colour is live and the old one is retired — so the case
+        worth testing is a canary still carrying a slice of traffic.
+        """
+        import asyncio
+
+        from aisvc.reconciler.deployer import ServingDeployer
+
+        services = cast(FastAPI, client.app).state.services
+        asyncio.run(
+            ServingDeployer(services.cluster, services.spec, services.registry).apply_routes(
+                weights={"llama-3.3-70b-instruct": {"blue": 90, "green": 10}}
+            )
+        )
+
+        client.post(
+            "/v1/deployments/llama-3.3-70b-instruct-green/rollout/rollback",
+            headers=ADMIN,
+        )
+
+        split = self.weights(client)["llama-3.3-70b-instruct"]
+        assert split["blue"] == 100
+        assert split.get("green", 0) == 0
+
+    def test_a_tenant_may_promote_its_own_deployment(self, client: TestClient) -> None:
+        """SPEC.md section 9 gives promote to all roles.
+
+        Ownership is the plugin's to enforce — it holds `ai_deployment`
+        so CloudStack can — and the engine trusts what it asserts.
+        """
+        response = client.post(
+            "/v1/deployments/llama-3.3-70b-instruct-green/rollout/promote",
+            headers=TENANT,
+        )
+
+        assert response.status_code == 202
+
+    def test_without_a_cluster_the_job_says_so(self, registry: ModelRegistry) -> None:
+        """The engine can run without cluster access; it must say so
+        rather than report a promotion that moved nothing."""
+        services = EngineServices(
+            spec=spec_with(), registry=registry, session_factory=memory_sessions()
+        )
+        client = TestClient(create_app(services))
+        job = client.post(
+            "/v1/deployments/llama-3.3-70b-instruct-green/rollout/promote",
+            headers=ADMIN,
+        ).json()
+
+        result = client.get(f"/v1/jobs/{job['jobid']}", headers=ADMIN).json()
+        assert result["jobstatus"] == 2
+
+
+class TestMetricsEndpoint:
+    """SPEC.md section 11: the engine's own metrics, for the alert rules."""
+
+    def test_metrics_are_exposed(self, client: TestClient) -> None:
+        response = client.get("/metrics")
+
+        assert response.status_code == 200
+
+    def test_the_content_type_is_the_exposition_format(self, client: TestClient) -> None:
+        """Prometheus refuses a scrape served as application/json."""
+        response = client.get("/metrics")
+
+        assert response.headers["content-type"].startswith("text/plain")
+
+    def test_scraping_needs_no_caller_context(self, client: TestClient) -> None:
+        """Prometheus cannot assert one, and the endpoint exposes no
+        tenant data — only counters the engine keeps about itself."""
+        assert client.get("/metrics").status_code == 200
+
+    def test_a_fresh_engine_already_exports_its_counters(self, client: TestClient) -> None:
+        """The whole point of registering at zero.
+
+        `increase(...{status="failed"}[30m]) > 0` on a series that does
+        not exist yet never fires, so an engine that exported nothing
+        until its first reconcile could not alert on the first failure.
+        """
+        body = client.get("/metrics").text
+
+        assert 'aisvc_reconcile_runs_total{status="failed",zone="zone-east-1"} 0' in body
+        assert 'status="succeeded"' in body
+
+    def test_every_declared_zone_is_registered(self, client: TestClient) -> None:
+        body = client.get("/metrics").text
+
+        assert 'zone="zone-east-1"' in body
+
+    def test_no_tenant_identifiers_are_exported(self, client: TestClient) -> None:
+        from aisvc.observability.metrics import record_run
+
+        record_run("zone-east-1", failed=False)
+        body = client.get("/metrics").text
+
+        assert "acme" not in body
+        assert "aisvc_reconcile_runs_total" in body

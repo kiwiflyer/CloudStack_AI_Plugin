@@ -858,3 +858,135 @@ Against `aisvc serve`, after `alembic upgrade head` (0003 applies clean):
 - **Engine HA's operational half** — Postgres in HA, daily backups, a
   quarterly restore drill — is deployment work, not code, and belongs
   with `deploy/`.
+
+## Milestone 7 — Operations (the gaps closed)
+
+**Status:** all four of milestone 7's recorded gaps are closed. 1122
+Python tests, 399 Java, 21 Go.
+
+Gap 1 (the metering driver) closed with milestone 8. The rest are below.
+
+### Promotion was a no-op, which was worse than the gap said
+
+The recorded gap was "promote and rollback write no weights yet — so a
+real promotion still needs the operator to change the weights". That
+understated it: there was nowhere an operator could change them that
+would survive.
+
+`plan_routes` and `apply_routes` both rendered the gateway config with
+`weights=None`, which defaults every model to `blue: 100`. Since which
+colour is live is *derived* from those weights (CLAUDE.md — there is no
+rollout state), the next reconcile would overwrite any split and send
+traffic back to blue. A promotion could not stick even if applied by
+hand.
+
+Three changes, and they have to be read together:
+
+1. `apply_routes(weights=...)` given a split writes it; given none it
+   reads back what is in force and rewrites that. The executor passes
+   none on every ordinary run, so reconciling preserves a promotion.
+2. The ConfigMap's `route-hash` annotation is now the digest of the
+   config rendered at a **normalised** split, not of the config
+   actually written. The planner computes the same thing, so the two
+   compare equal after a promotion and no route rewrite is planned.
+   This is exactly why `config_hash` digests at a normalised replica
+   count, for the same reason.
+3. Promote and rollback apply the split before reporting it, and fail
+   the job with a clear reason when the engine has no cluster
+   configured rather than reporting a promotion that moved nothing.
+
+A fourth thing turned up on the way: `_rollout_job` took the live
+colour from the id in the URL, and `start_rollout`'s `active` is the
+colour *currently serving* — so promoting `model-green` promoted blue.
+The live colour is now read from the gateway's weights, as everywhere
+else.
+
+### Autoscaling now has data
+
+`aisvc/observability/` reads vLLM and DCGM metrics and fills
+`DeploymentHealth`. The awkward part was the durations: `decide()` asks
+how long a deployment has been breaching, and the reconciler keeps
+nothing between runs.
+
+Rather than add that state, the question goes to Prometheus, which
+already holds the history:
+
+```promql
+time() - max_over_time(timestamp((<condition>) == bool 0)[30m:30s])
+```
+
+"How long since this was last false" — zero while false, growing while
+true, saturating at the window. Nothing to remember here, so nothing to
+fall out of step.
+
+Two decisions worth knowing:
+
+- A model that reports **nothing** is left out, not zeroed. Zeros read
+  as "idle" to the autoscaler, so a Prometheus outage would otherwise
+  scale the whole platform down to its floor. Same for an unreachable
+  Prometheus: it observes nothing rather than an idle platform.
+- A model missing only GPU utilisation still counts, with utilisation
+  zero. DCGM may simply not be installed, and that should not disable
+  scaling *up*, which turns on queue depth and TTFT.
+
+Autoscaling is opt-in on `AISVC_PROMETHEUS_URL`. Without it the planner
+holds every deployment at its declared floor, exactly as before.
+
+### Alerts, and which ones are ours
+
+Section 11 names seven. Six are Prometheus rules in
+`deploy/observability/prometheus-rules.yaml`; a test asserts each still
+exists, that every expression references a metric something actually
+produces, and that every rule carries a runbook line.
+
+The seventh — budget thresholds — is deliberately **not** a Prometheus
+rule. A budget alert has to reach the tenant who is spending, not the
+operator's pager, and must fire once per threshold rather than for as
+long as the condition holds. The engine sends those itself through
+`aisvc/observability/alerts.py`: an HMAC-signed webhook (the signature
+covers `<timestamp>.<body>`, so a captured alert cannot be replayed) and
+a log sink. CloudStack events and email stay with the plugin, which has
+the session and CloudStack's own alert machinery.
+
+`UsageMeter` is what ties metering to alerting: recording usage is what
+notices a threshold being crossed, because nothing else runs often
+enough — a reconcile is minutes apart and a tenant can cross 100% in
+seconds. Usage is recorded first and unconditionally: a row that is
+never written cannot be recovered, while a missed alert is only a
+missed alert.
+
+### The engine exports its own metrics
+
+Two of section 11's alerts — reconciler failures and mirror failures —
+are the engine's own business and invisible to vLLM and DCGM. Without
+an exporter the rules would have pointed at series nothing produced and
+sat green through every outage.
+
+`aisvc/observability/metrics.py` is a hand-written exporter on
+`GET /metrics`, outside the versioned prefix and outside the
+caller-context requirement (Prometheus cannot assert one, and no
+tenant, account or request appears in any label). No
+`prometheus_client` dependency: the exposition format is a few lines
+and the tree stays easier to licence-audit.
+
+Counters register **at zero** when the app is built, for every zone in
+the spec. That is not tidiness: `increase(...{status="failed"}[30m]) > 0`
+on a series that does not exist yet never fires, so an engine that
+exported nothing until its first reconcile could not alert on its first
+failure. Verified against a running `aisvc serve`, which exports both
+outcome series at zero before anything has happened.
+
+### What is still not true
+
+- **DCGM auto-quarantine** (section 7) is still unwritten. The XID and
+  ECC *alerts* exist; nothing acts on them automatically, so a failing
+  GPU pages an operator rather than draining itself.
+- **`DeploymentHealth` has never been filled from a real Prometheus.**
+  The queries are unit-tested against a fake; no live Prometheus has
+  answered them, so treat the metric and label names — particularly
+  DCGM's `model_name` join — as unverified.
+- **Mirror counting is wired but barely exercised**: `mirror` itself is
+  milestone 3 work that is still partly open, so the failure counter is
+  the only path with a test behind it.
+- Milestone 7's **Grafana dashboard** ships one board. Per-tenant usage
+  and budget views belong with the UI work in milestone 6.

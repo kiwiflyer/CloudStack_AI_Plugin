@@ -13,22 +13,29 @@ reads.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from aisvc.spec.models import PriceTier
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
-    from aisvc.spec.models import Budget, PriceTier
+    from aisvc.spec.models import Budget
 
 __all__ = [
     "DEFAULT_THRESHOLDS",
+    "UNPRICED",
     "BudgetState",
+    "UsageMeter",
     "UsageRecord",
     "crossed_thresholds",
     "evaluate_budget",
     "price_usage",
 ]
+
+log = logging.getLogger("aisvc.metering")
 
 #: Budget notification points, as percentages (SPEC.md section 7).
 DEFAULT_THRESHOLDS: tuple[int, ...] = (50, 80, 100)
@@ -152,3 +159,54 @@ def evaluate_budget(
             spent=spent, limit=budget.monthly, already_notified=already_notified
         ),
     )
+
+
+#: A tier of zero, for a model the catalog does not price. Usage is
+#: still recorded: an uncatalogued model is a cataloguing mistake, and
+#: dropping the rows would make it unrecoverable.
+UNPRICED = PriceTier(name="unpriced", input_per_mtok=0.0, output_per_mtok=0.0, currency="USD")
+
+
+class UsageMeter:
+    """Records usage and raises budget alerts as thresholds are crossed.
+
+    This is what the gateway's metering hook calls. The alerting lives
+    here rather than in the reconciler because nothing else runs often
+    enough: a reconcile is minutes apart and a tenant can go from 80% to
+    over budget inside one.
+    """
+
+    def __init__(
+        self,
+        store: Any,
+        *,
+        tier_for: Callable[[str], PriceTier | None],
+        sink: Any,
+    ) -> None:
+        self.store = store
+        self.tier_for = tier_for
+        self.sink = sink
+
+    async def __call__(self, usage: UsageRecord) -> None:
+        # Recorded first and unconditionally. Billing outranks alerting:
+        # a row that is never written cannot be recovered, while a
+        # missed alert is a missed alert.
+        self.store.record(usage, tier=self.tier_for(usage.model) or UNPRICED)
+
+        state = self.store.budget_state(usage.account)
+        if state is None:
+            return
+
+        newly = self.store.take_notifications(usage.account)
+        if not newly:
+            return
+
+        from aisvc.observability.alerts import budget_alerts
+
+        for alert in budget_alerts(
+            usage.account, usage.domain, replace(state, newly_crossed=newly)
+        ):
+            try:
+                await self.sink.send(alert)
+            except Exception:
+                log.exception("could not deliver a budget alert for %s", usage.account)

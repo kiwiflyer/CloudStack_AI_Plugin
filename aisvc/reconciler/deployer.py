@@ -10,6 +10,7 @@ anything else.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -22,7 +23,7 @@ from aisvc.k8s import (
     image_for,
     render,
 )
-from aisvc.k8s.client import Kubernetes, apply_objects, delete_deployment
+from aisvc.k8s.client import Kubernetes, apply_objects, delete_deployment, observe_weights
 from aisvc.reconciler.plan import route_config_hash
 
 if TYPE_CHECKING:
@@ -111,9 +112,28 @@ class ServingDeployer:
         delete_deployment(self.cluster, model, colour, namespace=self.namespace, dry_run=dry_run)
         return [name]
 
-    async def apply_routes(self, _name: str = "litellm", *, dry_run: bool = False) -> list[str]:
-        """Write the gateway's routing config as a ConfigMap."""
-        config = build_litellm_config(self.spec, weights=None, namespace=self.namespace)
+    async def apply_routes(
+        self,
+        _name: str = "litellm",
+        *,
+        weights: Mapping[str, Mapping[str, int]] | None = None,
+        dry_run: bool = False,
+    ) -> list[str]:
+        """Write the gateway's routing config as a ConfigMap.
+
+        `weights` given explicitly is a rollout moving traffic. Left
+        out — which is what the executor does on every ordinary run —
+        it means "keep the split that is in force", read back off the
+        ConfigMap written last time.
+
+        That default is the important one. The split is runtime state
+        that only a rollout changes, so if an ordinary reconcile
+        rendered at a fixed split it would send every model back to
+        blue and silently undo a promotion.
+        """
+        if weights is None:
+            weights = observe_weights(self.cluster, namespace=self.namespace)
+        config = build_litellm_config(self.spec, weights=weights, namespace=self.namespace)
         configmap: dict[str, Any] = {
             "apiVersion": "v1",
             "kind": "ConfigMap",
@@ -124,9 +144,17 @@ class ServingDeployer:
                     "app.kubernetes.io/managed-by": "aisvc",
                     "app.kubernetes.io/component": "gateway",
                 },
-                # Read back by observe_route_hash so a settled platform
-                # does not re-apply its routes on every run.
-                "annotations": {ROUTE_HASH_ANNOTATION: route_config_hash(config)},
+                # The digest of the config rendered at a normalised
+                # split, not of the one written below. Read back by
+                # observe_route_hash and compared against what
+                # plan_routes computes, so a promotion — which changes
+                # the written config but not the spec — does not look
+                # like drift and get reverted on the next run.
+                "annotations": {
+                    ROUTE_HASH_ANNOTATION: route_config_hash(
+                        build_litellm_config(self.spec, weights=None, namespace=self.namespace)
+                    )
+                },
             },
             "data": {"config.yaml": yaml.safe_dump(config, sort_keys=False)},
         }

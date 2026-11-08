@@ -25,10 +25,12 @@ from aisvc.k8s.client import (
     observe_route_hash,
     observe_weights,
 )
+from aisvc.observability import HealthObserver, PrometheusClient
 from aisvc.provision import ClusterJoin, NodeProvisioner
 from aisvc.reconciler import ActualState, Executor, Plan, plan_all
 from aisvc.reconciler.deployer import ServingDeployer
 from aisvc.reconciler.leader import NotLeader, ZoneLeadership
+from aisvc.reconciler.state import DeploymentHealth
 from aisvc.registry import InMemoryObjectStore, ModelRegistry, S3ObjectStore
 from aisvc.spec import PlatformSpec, SpecError, load_spec
 
@@ -145,12 +147,30 @@ async def _observe(spec: PlatformSpec) -> ActualState:
         capacity = await take_snapshot(client, spec)
 
     cluster = _cluster()
+    deployments = observe_deployments(cluster, namespace=namespace)
     return ActualState(
         capacity=capacity,
-        deployments=observe_deployments(cluster, namespace=namespace),
+        deployments=deployments,
         route_hash=observe_route_hash(cluster, namespace=namespace),
         weights=observe_weights(cluster, namespace=namespace),
+        health=await _observe_health({model for model, _ in deployments}),
     )
+
+
+async def _observe_health(models: set[str]) -> dict[str, DeploymentHealth]:
+    """Read autoscaling signals, where Prometheus is configured.
+
+    Without AISVC_PROMETHEUS_URL this returns nothing and the planner
+    holds every deployment at its declared replica floor — which is what
+    it did before anything filled this in. Autoscaling is opt-in on
+    having somewhere to read the metrics from.
+    """
+    url = os.environ.get("AISVC_PROMETHEUS_URL")
+    if not url or not models:
+        return {}
+
+    async with PrometheusClient(url) as prometheus:
+        return await HealthObserver(prometheus).observe(sorted(models))
 
 
 async def _apply(

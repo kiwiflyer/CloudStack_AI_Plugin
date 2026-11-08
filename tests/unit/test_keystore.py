@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from aisvc.db import Base, KeyStore, UsageStore
 from aisvc.gateway import KeyRejected, KeySecret
-from aisvc.metering import UsageRecord
+from aisvc.metering import UsageMeter, UsageRecord
+from aisvc.observability.alerts import Alert, CollectingSink
 from aisvc.spec.models import Budget, PriceTier
 
 STANDARD = PriceTier(name="standard", input_per_mtok=0.60, output_per_mtok=1.80, currency="USD")
@@ -303,3 +304,87 @@ class TestBudgets:
         state = usage.budget_state("acme")
         assert state is not None
         assert state.currency == "EUR"
+
+
+class TestMeteringRaisesBudgetAlerts:
+    """Recording usage is what notices a threshold being crossed.
+
+    Nothing else runs often enough: the reconciler is minutes apart and
+    a tenant can cross 100% in seconds.
+    """
+
+    def meter(self, usage: UsageStore) -> tuple[UsageMeter, CollectingSink]:
+        sink = CollectingSink()
+        return UsageMeter(usage, tier_for=lambda _model: STANDARD, sink=sink), sink
+
+    def spend(self, mtok: int = 1) -> UsageRecord:
+        return UsageRecord(
+            account="acme",
+            domain="/Customers/Acme",
+            model="llama",
+            input_tokens=1_000_000 * mtok,
+        )
+
+    async def test_usage_is_recorded(self, usage: UsageStore) -> None:
+        meter, _ = self.meter(usage)
+
+        await meter(self.spend())
+
+        assert usage.spent(account="acme") == pytest.approx(0.60)
+
+    async def test_no_budget_means_no_alert(self, usage: UsageStore) -> None:
+        meter, sink = self.meter(usage)
+
+        await meter(self.spend())
+
+        assert sink.alerts == []
+
+    async def test_crossing_a_threshold_alerts(self, usage: UsageStore) -> None:
+        usage.set_budget("acme", Budget(monthly=1, currency="USD", on_exceed="alert"))
+        meter, sink = self.meter(usage)
+
+        await meter(self.spend())
+
+        assert [a.detail["threshold"] for a in sink.alerts] == [50]
+
+    async def test_a_threshold_alerts_only_once(self, usage: UsageStore) -> None:
+        usage.set_budget("acme", Budget(monthly=10, currency="USD", on_exceed="alert"))
+        meter, sink = self.meter(usage)
+
+        await meter(self.spend(mtok=9))
+        await meter(self.spend(mtok=1))
+
+        thresholds = [a.detail["threshold"] for a in sink.alerts]
+        assert thresholds == sorted(set(thresholds))
+
+    async def test_staying_under_alerts_nothing(self, usage: UsageStore) -> None:
+        usage.set_budget("acme", Budget(monthly=1000, currency="USD", on_exceed="alert"))
+        meter, sink = self.meter(usage)
+
+        await meter(self.spend())
+
+        assert sink.alerts == []
+
+    async def test_a_failing_sink_does_not_lose_the_usage(self, usage: UsageStore) -> None:
+        """Billing matters more than the alert: the row must be written."""
+
+        class Broken:
+            async def send(self, alert: Alert) -> None:
+                raise RuntimeError("the webhook exploded")
+
+        usage.set_budget("acme", Budget(monthly=1, currency="USD", on_exceed="alert"))
+        meter = UsageMeter(usage, tier_for=lambda _m: STANDARD, sink=Broken())
+
+        await meter(self.spend())
+
+        assert usage.spent(account="acme") > 0
+
+    async def test_a_model_with_no_tier_is_still_recorded(self, usage: UsageStore) -> None:
+        """An uncatalogued model must not drop usage on the floor."""
+        meter = UsageMeter(usage, tier_for=lambda _m: None, sink=CollectingSink())
+
+        await meter(self.spend())
+
+        rows = usage.list_for(account="acme")
+        assert len(rows) == 1
+        assert rows[0].cost == 0.0
