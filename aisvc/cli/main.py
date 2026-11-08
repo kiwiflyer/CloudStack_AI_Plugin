@@ -28,7 +28,9 @@ from aisvc.certificates.bootstrap import BootstrapTokens
 from aisvc.certificates.probe import sweep_endpoint_certificates
 from aisvc.certificates.renewal import sweep_renewals
 from aisvc.cloudstack import CloudStackClient, CloudStackError, Credentials
-from aisvc.db import Base, RunLog, UsageStore, create_session_factory, session_scope
+from aisvc.db import RunLog, UsageStore, create_session_factory, session_scope
+from aisvc.db.migrate import upgrade_to_head
+from aisvc.db.session import database_url
 from aisvc.db.tier2 import (
     AdapterStore,
     BatchStore,
@@ -348,9 +350,9 @@ async def _apply(
     join = _cluster_join()
     namespace = os.environ.get("AISVC_NAMESPACE", DEFAULT_NAMESPACE)
 
+    upgrade_to_head(database_url())
     factory = create_session_factory()
     engine = factory.kw["bind"]
-    Base.metadata.create_all(engine)
 
     # A dry run writes nothing, so it neither needs the lock nor should
     # take it: holding the zone while printing a plan would stop a real
@@ -574,8 +576,8 @@ def _batch_meter(session: Any, spec: PlatformSpec) -> Any:
 
 async def _batch_worker(gateway: str, spec: PlatformSpec, *, once: bool, interval: int) -> None:
     """One pass, or a loop of them."""
+    upgrade_to_head(database_url())
     factory = create_session_factory()
-    Base.metadata.create_all(factory.kw["bind"])
 
     while True:
         health = await _observe_health(set())

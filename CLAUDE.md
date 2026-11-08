@@ -296,6 +296,11 @@ The spec leaves these unresolved. If a task depends on one, ask rather than assu
 
 ## Reference
 
+**The database schema comes from the migrations, never from `create_all`.**
+`aisvc/db/migrate.py` is the only way a long-running command builds one; `create_all`
+skipped `alembic_version` and missed any table whose module that path had not imported
+(`aisvc_job`, on the apply path). A source scan over `aisvc/cli/main.py` guards it.
+
 `docs/installation.md` is the operator-facing install and setup guide: prerequisites,
 the four pieces and their order, every config key and environment variable, and an
 honest list of what has never been run. Keep it current when any of those change.

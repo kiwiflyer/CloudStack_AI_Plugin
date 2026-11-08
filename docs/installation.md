@@ -93,15 +93,37 @@ AISVC_DATABASE_URL="postgresql+pg8000://aisvc:...@db.example/aisvc" .venv/bin/al
 Run it from the repository root — `alembic.ini` uses a relative
 `script_location`, and it fails from anywhere else.
 
-> **Why the order matters.** `aisvc apply` and `aisvc serve` both call
-> `Base.metadata.create_all()` as a convenience. That creates tables
-> without stamping `alembic_version`, so Alembic can no longer manage
-> the database and `alembic upgrade head` afterwards fails with "table
-> already exists". Worse, the schema `apply` creates is **missing
-> `aisvc_job`**, because the module defining it is not imported on that
-> path — so async commands through the API would fail against a
-> database created that way. Migrating first avoids all of it:
-> `create_all` is a no-op once the tables are there.
+> **Why this is a step of its own.** `aisvc apply` and `aisvc batch`
+> will migrate the database themselves if you forget, but `aisvc serve`
+> will not — it is the one command that runs as several replicas, and
+> nothing serialises concurrent DDL, so replicas racing to migrate on
+> startup is a worse failure than this step. Migrate as a deployment
+> step and the auto-migration never fires.
+>
+> If you are upgrading from a build before this one, see
+> [a database built the old way](#a-database-built-the-old-way).
+
+#### A database built the old way
+
+Builds before this one created the schema with
+`Base.metadata.create_all()` instead of the migrations. That left two
+problems, both of which `upgrade head` now refuses rather than papers
+over:
+
+- No `alembic_version` row, so Alembic cannot tell which revision the
+  schema is.
+- **No `aisvc_job` table**, because `create_all` only builds tables
+  whose modules have been imported and the apply path did not import
+  that one. Async commands through the API would fail against it.
+
+Migrating such a database stops with a message naming the fix. Because
+it may genuinely be missing a table, the safe answer is to drop and
+recreate it; only if you have checked it against the migrations and
+know it is current should you stamp it:
+
+```bash
+AISVC_DATABASE_URL=... .venv/bin/alembic stamp head
+```
 
 ### Configure it
 

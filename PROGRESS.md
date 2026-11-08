@@ -2256,3 +2256,73 @@ unnoticed — and asserts the guardrail routes are not admin-only again.
   tenant can set one, as above.
 - None of this has run against a real CloudStack, the same gap every
   milestone-9 entry carries.
+
+## Milestone 9 — the installation guide, and what writing it found
+
+`docs/installation.md`: the four pieces and the order they go in, every
+config key and environment variable, the first zone from `validate`
+through `apply`, and a list of what has never run — which is most of
+it, and belongs at the top rather than in a footnote.
+
+Every command in it was run before it was written. Two of them failed.
+
+### `make install` cannot work on a fresh clone
+
+The Makefile's `PY` is `.venv/bin/python`, so `make install` needs the
+virtualenv it is supposed to populate. The guide creates it first; the
+Makefile is left alone, since a target that silently builds a
+virtualenv somewhere is its own surprise.
+
+### The schema was built two different ways, and one of them was wrong
+
+`aisvc apply` and the batch worker called
+`Base.metadata.create_all()`. Two things were wrong with it, and
+neither had a test because both only appear on the real startup path:
+
+- **It never stamped `alembic_version`.** After it ran, Alembic could
+  not manage that database at all: `alembic upgrade head` failed on
+  tables that already existed, and nothing recorded which revision the
+  schema was.
+- **It built a schema with no `aisvc_job` table.** `create_all` only
+  knows tables whose modules have been imported, and the apply path
+  does not import `aisvc.api.jobs`. So a database created by `aisvc
+  apply` was missing the table every async command writes to — 12
+  tables where the migrations make 13.
+
+The second one had been hiding in plain sight: the drift guard in
+`test_db.py` imports `aisvc.api.jobs` explicitly before calling
+`create_all`, which is exactly the import the production path lacks. It
+was compensating for the bug it was positioned to find.
+
+`aisvc/db/migrate.py` replaces both calls. `upgrade_to_head` runs the
+migrations, from an absolute `script_location` so it does not depend on
+the working directory the way `alembic.ini` does.
+
+**`aisvc serve` deliberately does not migrate.** It is the one command
+that runs as several replicas and nothing here serialises concurrent
+DDL, so replicas racing on startup would be a worse failure than
+telling an operator to migrate first. (It never created the schema
+either, so this is not a behaviour it had.)
+
+**A database built the old way is refused, not repaired.** It has
+tables and no stamp; upgrading would fail partway, and stamping it
+automatically could mark a genuinely old — possibly `aisvc_job`-less —
+schema as current. It stops with the one command that resolves it and
+leaves the decision with whoever knows what that database is. The error
+redacts the password out of the URL, since it reaches logs.
+
+The regression guard is a source scan over `aisvc/cli/main.py` for
+`create_all`. Crude, deliberately: the failure is a call that should
+not exist, on a path no unit test exercises, which is how it went
+unnoticed the first time.
+
+### What is still not true
+
+- **The guide has not been followed on a real system.** It is checked
+  against the code and every command in it runs, which is not the same
+  as a zone having been brought up with it.
+- **`aisvc serve` does not check the schema is current** before
+  accepting requests, so a missing migration still surfaces at the
+  first request rather than at startup.
+- The repository has no root `README.md`, so the guide is reachable
+  from `CLAUDE.md` and the four sub-READMEs and from nowhere obvious.
