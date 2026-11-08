@@ -1091,3 +1091,152 @@ carries the `.mjs` extension instead.
 - **The playground does not stream.** It renders a transcript and the
   token counts beside each turn; opening the session, sending a message
   and consuming the SSE stream are not written.
+
+## Milestone 9 — Tier 2 (v2)
+
+**Status:** all six of SPEC.md section 8's features have tested decision
+logic. One of them — guardrails — also runs on the serving path. The
+rest do not execute yet; see the end, because that distinction is the
+whole of what is and is not delivered here.
+
+1291 Python tests, 399 Java, 21 Go, 86 Vitest.
+
+### The schema was already there
+
+Milestone 1 scaffolded `LoraSettings`, `BatchSettings`,
+`GuardrailProfile` and a `Task` literal covering all four task types, so
+this milestone was about the engine modules rather than the spec. One
+exception, below.
+
+### `GuardrailCheck.value` could not hold a deny-list
+
+Section 8 asks for "topic deny-lists". The v1 schema typed
+`GuardrailCheck.value` as `float | int | str | None`, so the feature it
+was scaffolded for could not be expressed in it. `GenerationValue`
+already allowed `list[str]`; `GuardrailCheck` now matches.
+
+### Multi-LoRA
+
+`aisvc/adapters/` validates what a tenant brings — base served, rank
+within the serving profile's `max_lora_rank`, safetensors not pickle,
+`adapter_config.json` present, count and size limits.
+
+Every one of those is checked at upload because the alternative is
+silent and late. A rank over `max_lora_rank` does not fail on upload,
+it fails when vLLM tries to load the adapter on the first request,
+which the tenant experiences as the endpoint being broken.
+
+A test found a real flaw while being written: ownership compared
+account *names*, and a CloudStack account name is unique only within
+its domain, so `dev` in one domain would have matched `dev` in another.
+It compares the pair now. Domain sharing goes down a domain tree and
+never up — a reseller must not read what their customer built.
+
+### The other three task types
+
+`aisvc/tasks/` holds what each task implies, in one place, because the
+differences land in `capacity`, `gateway` and `metering` alike.
+
+The sizing one matters commercially. An embedding or rerank model runs
+one forward pass per input and keeps no cache across a generation, so
+sizing it with the chat formula reserves memory it will never use.
+`estimate` now scales the cache term by task, which is what makes
+section 8's "small embedding and rerank models can be packed onto L40S,
+vGPU or MIG classes" true: the same 7B model that does not fit a 24 GB
+card as chat does fit as an embedding model. `chat` is 1.0, so v1
+sizing is unchanged.
+
+Metering gained a matching check: a non-generating task reporting
+output tokens means something upstream is metering it as chat, and
+billing those tokens would overcharge for work that never happened.
+
+### Guardrails, and these actually run
+
+`aisvc/guardrails/` is section 6's third profile type with the same
+lock semantics, plus the cheap deterministic checks: input size, topic
+deny-lists with word boundaries (so a deny-list entry cannot fire on a
+substring of an innocent word), and PII patterns.
+
+**A block records the category and nothing else.** Not the prompt, not
+the matched phrase. A guardrail sees exactly the prompts least suited
+to appearing in a log, so `GuardrailDecision` keeps no prompt text and
+its `__repr__` is safe in a traceback. The 403 the tenant receives does
+not echo their prompt either.
+
+These are wired into the LiteLLM hook, after key scopes and before the
+request goes upstream, with redactions rewritten in place. A guardrail
+module nothing called would protect nobody.
+
+The education-safe preset ships locked throughout: a school sets it on
+their domain and an account beneath must not be able to relax it, which
+is the reason they are buying it.
+
+### The evaluation gate
+
+`aisvc/evaluation/` blocks publishing on a regression past the
+threshold. Two judgements are built in, and both cut *against*
+strictness:
+
+- Two points by default, because benchmarks are noisy and a gate that
+  fires on noise is one people learn to override. An override reflex is
+  worse than no gate.
+- Performance does not gate. A revision being slower on one class is a
+  capacity question — those numbers feed `capacity` — not grounds to
+  refuse a model that answers correctly.
+
+An empty evaluation does **not** pass: publishing because nothing ran
+looks identical to publishing because everything passed. A root admin
+may override, but only with a reason, and the reason is recorded.
+
+### Batch
+
+`aisvc/batch/` parses OpenAI-compatible JSONL, with errors that name
+the line — a tenant debugging a 50,000-line file with "invalid JSON"
+and nothing else has no way in. Duplicate `custom_id`s are refused
+because results come back unordered and that id is how a result is
+matched to its request.
+
+Preemption is not a nicety: the discount is defensible precisely
+because batch yields, and a batch that competed with online traffic
+would be cheap traffic degrading the SLO everyone else pays full rate
+for.
+
+### Private endpoints
+
+`aisvc/endpoints/` validates an exposure before anything is built.
+Turning the public address off with nothing private attached would
+leave a deployment nobody can reach, including the tenant who asked.
+A network the tenant does not own is refused with the same message as
+one that does not exist, so the error cannot enumerate other tenants'
+networks. ACME on a private-only endpoint is refused because the
+challenge has to reach the host over the internet — that failure would
+otherwise surface at renewal, long after anyone was watching.
+
+### What is still not true
+
+**Five of the six do not execute.** The decision logic is tested; the
+machinery that acts on it is not written:
+
+- **Adapters** are validated but never served: no multi-LoRA rendering
+  in `k8s`, no registry storage, no `<base>:<adapter>` route at the
+  gateway, no LRU eviction, no adapter premium applied to a bill.
+- **Task types** reach `capacity`. The gateway does not yet render
+  `/v1/embeddings` or a rerank route, and nothing accepts image parts.
+- **The evaluation gate** has nothing that runs a staging deployment
+  or a benchmark; it judges results something else would have to
+  produce, and nothing calls it before `publishAiModel`.
+- **Batch** parses, prices and knows when to yield, but nothing
+  schedules a job, runs one, or writes a result file.
+- **Private endpoints** are validated; no CloudStack VPC tier is
+  attached and no per-tenant proxy is provisioned.
+- **Guardrails** are the exception and do run — but the guard model in
+  section 8 is not called, so only the deterministic checks fire, and
+  the 150 ms p95 target is unmeasured.
+
+**No v2 feature has an engine endpoint or a CloudStack command.** The
+v2 commands in `aisvc/api/commands.py` still point at routes that do
+not exist, which is why the drift guard's count of unimplemented
+commands is unchanged at 13. Nothing in the UI section exposes any of
+this either; SPEC.md section 9's v2 screens remain unbuilt.
+
+So: v2's thinking is done and tested, and v2 does not work yet.

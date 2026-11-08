@@ -1045,6 +1045,15 @@ class TestRolloutsApplyTheirWeights:
 class TestMetricsEndpoint:
     """SPEC.md section 11: the engine's own metrics, for the alert rules."""
 
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self) -> Iterator[None]:
+        """The registry is process-wide, so other tests' runs leak in."""
+        from aisvc.observability.metrics import REGISTRY
+
+        REGISTRY.clear()
+        yield
+        REGISTRY.clear()
+
     def test_metrics_are_exposed(self, client: TestClient) -> None:
         response = client.get("/metrics")
 

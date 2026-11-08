@@ -187,7 +187,9 @@ class GenerationProfile(Base):
 class GuardrailCheck(Base):
     action: Literal["block", "redact", "flag"] | None = None
     policy: Policy = "default"
-    value: float | int | str | None = None
+    #: A threshold for a sized check, or the entries of a topic
+    #: deny-list (SPEC.md section 8), which is why a list belongs here.
+    value: float | int | str | list[str] | None = None
 
 
 class GuardrailProfile(Base):

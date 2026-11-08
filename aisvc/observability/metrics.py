@@ -125,6 +125,15 @@ class MetricsRegistry:
                 metric.series[key] = series
             return series
 
+    def clear(self) -> None:
+        """Forget every series.
+
+        For tests: the process-wide REGISTRY is shared, so one test's
+        counters otherwise leak into the next one's assertions.
+        """
+        with self._lock:
+            self._metrics.clear()
+
     def metrics(self) -> list[_Metric]:
         with self._lock:
             return list(self._metrics.values())

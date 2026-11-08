@@ -4,14 +4,18 @@ Guidance for Claude Code working in this repository.
 
 ## Current state
 
-**Milestones 1–8 are done bar their noted gaps; 9 is not.**
+**Milestones 1–8 are done bar their noted gaps. Milestone 9 (v2) has tested
+decision logic for all six features; only guardrails execute.**
 See `PROGRESS.md`.
 Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`, `db`,
 `reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, `setup`, `playground`,
 `observability`, the `aisvc` CLI
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
-Not written: all v2 modules. `ui/` has the section, screens and strings but has
+v2 modules (`adapters`, `tasks`, `guardrails`, `evaluation`, `batch`, `endpoints`)
+decide but, guardrails aside, do not execute: nothing serves a LoRA, runs a batch,
+evaluates a revision or attaches a VPC tier, and none has an engine endpoint or a
+CloudStack command. `ui/` has the section, screens and strings but has
 never been loaded by a real CloudStack UI, and its Playwright specs have never run. `terraform/` builds and unit-tests but
 its acceptance tests have never run against a live management server.
 `setup` plans the self-test but cannot run it: the steps need GPU capacity, so

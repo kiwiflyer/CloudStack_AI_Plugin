@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from aisvc.tasks import kv_cache_multiplier
+
 __all__ = [
     "DEFAULT_UTILIZATION",
     "HEADROOM_FRACTION",
@@ -160,18 +162,26 @@ def estimate(
     tensor_parallel: int,
     gpu_mem_gb: float,
     utilization: float = DEFAULT_UTILIZATION,
+    task: str = "chat",
 ) -> GpuRequirement:
     """Size one replica: weights + KV cache for one full-length sequence + 10%.
 
     This is the deploy-feasibility gate of SPEC.md section 3: a model that
     cannot hold a single `max_model_len` sequence cannot serve at all.
     Concurrency is sized separately by `kv_budget`.
+
+    `task` scales the cache term (SPEC.md section 8). An embedding or
+    rerank model runs one forward pass per input and keeps no cache
+    across a generation, so sizing it like chat reserves memory it will
+    never use — and that overestimate is what would otherwise keep a
+    small embedding model off an L40S or a MIG slice. `chat` is 1.0, so
+    v1 behaviour is unchanged.
     """
     if max_model_len <= 0:
         raise ValueError("max_model_len must be positive")
 
     weights = arch.weights_gb(quantization)
-    kv = arch.kv_bytes_per_token(kv_cache_dtype) * max_model_len / GIB
+    kv = arch.kv_bytes_per_token(kv_cache_dtype) * max_model_len * kv_cache_multiplier(task) / GIB
     headroom = HEADROOM_FRACTION * (weights + kv)
     total = weights + kv + headroom
     available = _available_gb(tensor_parallel, gpu_mem_gb, utilization)

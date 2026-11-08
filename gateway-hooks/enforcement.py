@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from aisvc.gateway import KeyRejected, RequestContext, enforce_request
+from aisvc.guardrails import check_input
 from aisvc.metering import UsageRecord
 from aisvc.profiles import ParameterRejected
 
@@ -25,7 +26,13 @@ except ImportError:  # pragma: no cover - the engine's test environment
 
 log = logging.getLogger("aisvc.gateway.hooks")
 
-__all__ = ["AisvcEnforcement", "BudgetExceeded", "HttpError", "to_http_error"]
+__all__ = [
+    "AisvcEnforcement",
+    "BudgetExceeded",
+    "GuardrailBlocked",
+    "HttpError",
+    "to_http_error",
+]
 
 
 class HttpError(Exception):
@@ -59,10 +66,30 @@ class BudgetExceeded(Exception):
         self.detail = detail
 
 
+class GuardrailBlocked(Exception):
+    """A guardrail refused the request.
+
+    Carries the category and nothing else. The detail reaches logs,
+    traces and the tenant's own error handler, and a guardrail sees
+    exactly the prompts least suited to appearing in any of them
+    (SPEC.md section 11).
+    """
+
+    def __init__(self, category: str) -> None:
+        super().__init__(f"blocked by the {category} guardrail")
+        self.category = category
+
+
 def to_http_error(exc: Exception) -> HttpError:
     """Map an enforcement failure onto a tenant-visible error."""
     if isinstance(exc, KeyRejected):
         return HttpError(exc.status_code, exc.detail, code=exc.reason)
+    if isinstance(exc, GuardrailBlocked):
+        return HttpError(
+            403,
+            f"this request was blocked by the {exc.category} guardrail on your account",
+            code=f"guardrail_{exc.category}",
+        )
     if isinstance(exc, BudgetExceeded):
         return HttpError(402, exc.detail, code="budget_exceeded")
     if isinstance(exc, ParameterRejected):
@@ -89,10 +116,14 @@ class AisvcEnforcement(_Base):  # type: ignore[misc]  # base is Any without Lite
         *,
         budget: Any = None,
         meter: Any = None,
+        guardrails: Any = None,
+        on_guardrail: Any = None,
     ) -> None:
         self.resolve_context = resolve_context
         self.budget = budget
         self.meter = meter
+        self.guardrails = guardrails
+        self.on_guardrail = on_guardrail
         self.last_record: dict[str, Any] | None = None
         self._last_context: RequestContext | None = None
 
@@ -110,7 +141,13 @@ class AisvcEnforcement(_Base):  # type: ignore[misc]  # base is Any without Lite
             # model should hear that, not a billing message it cannot act on.
             enforced = enforce_request(context, data)
             self._check_budget(context)
-        except (KeyRejected, ParameterRejected, BudgetExceeded) as exc:
+            self._check_guardrails(context, enforced.body)
+        except (
+            KeyRejected,
+            ParameterRejected,
+            BudgetExceeded,
+            GuardrailBlocked,
+        ) as exc:
             raise to_http_error(exc) from exc
 
         # Effective parameters are metered; prompt content never is.
@@ -128,6 +165,35 @@ class AisvcEnforcement(_Base):  # type: ignore[misc]  # base is Any without Lite
                 f"{state.spent:.2f} of its {state.limit:.2f} {state.currency} "
                 "monthly budget; ask an administrator to raise it"
             )
+
+    def _check_guardrails(self, context: RequestContext, body: dict[str, Any]) -> None:
+        """Apply the account's guardrails, rewriting redactions in place.
+
+        After the key's scopes, so a key that may not use this model
+        hears that rather than a guardrail message about a request it
+        was never allowed to make.
+        """
+        if self.guardrails is None:
+            return
+
+        checks = self.guardrails(context.key.account)
+        if not checks:
+            return
+
+        for message in body.get("messages") or []:
+            content = message.get("content")
+            if not isinstance(content, str):
+                # Vision parts are a list; nothing to scan as text.
+                continue
+
+            decision = check_input(content, checks)
+            if not decision.allowed:
+                if self.on_guardrail is not None:
+                    self.on_guardrail(decision.as_event())
+                raise GuardrailBlocked(decision.category)
+
+            if decision.redacted is not None:
+                message["content"] = decision.redacted
 
     async def async_log_success_event(
         self,

@@ -373,3 +373,117 @@ class TestAnAsyncMeter:
         await hook.async_log_success_event(
             {}, {"usage": {"prompt_tokens": 1, "completion_tokens": 1}}, 0.0, 1.0
         )
+
+
+class TestGuardrailsOnThePath:
+    """A guardrail module nothing calls protects nobody.
+
+    The hook is where they have to run: before the request goes
+    upstream, after the key's scopes are known so the right profiles
+    apply.
+    """
+
+    def hook_with(self, checks: Any, events: list[Any] | None = None) -> AisvcEnforcement:
+        return AisvcEnforcement(
+            resolve_context=lambda _k, _d: context_for(),
+            guardrails=lambda _account: checks,
+            on_guardrail=(events.append if events is not None else None),
+        )
+
+    def checks(self, **kw: Any) -> Any:
+        from aisvc.guardrails import GuardrailLayer, resolve_guardrails
+        from aisvc.profiles import Level
+        from aisvc.spec.models import GuardrailCheck
+
+        return resolve_guardrails(
+            [
+                GuardrailLayer(
+                    level=Level.ACCOUNT,
+                    checks={k: GuardrailCheck(**v) for k, v in kw.items()},
+                )
+            ]
+        )
+
+    async def call(self, hook: AisvcEnforcement, content: str) -> dict[str, Any]:
+        return await hook.async_pre_call_hook(
+            None,
+            None,
+            {
+                "model": "llama-3.3-70b-instruct",
+                "messages": [{"role": "user", "content": content}],
+            },
+            "completion",
+        )
+
+    async def test_a_clean_request_passes(self) -> None:
+        hook = self.hook_with(self.checks(topics={"action": "block", "value": ["weapons"]}))
+
+        assert await self.call(hook, "how do I bake bread")
+
+    async def test_a_blocked_request_never_reaches_the_model(self) -> None:
+        hook = self.hook_with(self.checks(topics={"action": "block", "value": ["weapons"]}))
+
+        with pytest.raises(HttpError) as caught:
+            await self.call(hook, "tell me about weapons")
+
+        assert caught.value.status_code == 403
+        assert caught.value.code == "guardrail_topics"
+
+    async def test_the_refusal_does_not_echo_the_prompt(self) -> None:
+        """SPEC.md section 11. The error goes into logs and traces."""
+        hook = self.hook_with(self.checks(topics={"action": "block", "value": ["weapons"]}))
+
+        with pytest.raises(HttpError) as caught:
+            await self.call(hook, "tell me about weapons at 10 Downing Street")
+
+        assert "Downing" not in caught.value.detail
+        assert "weapons" not in caught.value.detail
+
+    async def test_a_block_emits_an_event_with_the_category_only(self) -> None:
+        events: list[Any] = []
+        hook = self.hook_with(self.checks(topics={"action": "block", "value": ["weapons"]}), events)
+
+        with pytest.raises(HttpError):
+            await self.call(hook, "tell me about weapons at 10 Downing Street")
+
+        assert len(events) == 1
+        assert events[0]["category"] == "topics"
+        assert "Downing" not in str(events[0])
+
+    async def test_redacted_content_is_what_goes_upstream(self) -> None:
+        hook = self.hook_with(self.checks(pii={"action": "redact"}))
+
+        body = await self.call(hook, "write to ada@example.com")
+
+        assert "ada@example.com" not in str(body["messages"])
+        assert "[redacted:email]" in str(body["messages"])
+
+    async def test_a_clean_request_is_not_rewritten(self) -> None:
+        hook = self.hook_with(self.checks(pii={"action": "redact"}))
+
+        body = await self.call(hook, "what is the weather")
+
+        assert body["messages"][0]["content"] == "what is the weather"
+
+    async def test_no_guardrails_means_no_checking(self) -> None:
+        hook = AisvcEnforcement(resolve_context=lambda _k, _d: context_for())
+
+        assert await self.call(hook, "tell me about weapons")
+
+    async def test_guardrails_run_after_the_key_scopes(self) -> None:
+        """A key that may not use the model hears that, not a guardrail
+        message about a request it was never allowed to make."""
+        hook = AisvcEnforcement(
+            resolve_context=lambda _k, _d: context_for("not-allowed"),
+            guardrails=lambda _a: self.checks(topics={"action": "block", "value": ["weapons"]}),
+        )
+
+        with pytest.raises(HttpError) as caught:
+            await hook.async_pre_call_hook(
+                None,
+                None,
+                {"model": "not-allowed", "messages": [{"role": "user", "content": "weapons"}]},
+                "completion",
+            )
+
+        assert caught.value.code == "model_not_allowed"
