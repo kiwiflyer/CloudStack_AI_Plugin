@@ -94,6 +94,7 @@ models:
     slo: {ttft_p95_ms: 800, queue_depth_target: 8}
     rollout: {strategy: bluegreen, canary_percent: 10}
     serving_profile: h100-throughput
+    concurrency: {working_context_tokens: 1536}   # what max_num_seqs is checked against
     visibility: {domains: ["/Customers"]}
     price_tier: standard
     lora: {enabled: true, max_adapters_per_account: 20}     # v2
@@ -141,7 +142,9 @@ Prices in the example are placeholders, not recommendations.
 
 - `tensor_parallel` ≤ the referenced class's `gpus_per_node`, and is a power of two.
 - `capacity.estimate()` must fit weights + KV cache for `max_model_len` within `tensor_parallel × gpu_mem_gb × 0.9`; otherwise the spec is rejected with the shortfall in GB.
-- Serving profile parameters must be on the per-engine allow-list, and `max_model_len` × `max_num_seqs` must fit the class's KV cache budget.
+- Serving profile parameters must be on the per-engine allow-list, and the engine's concurrency cap (`max_num_seqs` on vLLM) must fit the class's KV cache budget at the model's declared `concurrency.working_context_tokens`. A cap too small to be given one KV block per sequence is rejected outright. Where no working context is declared, the spec reports the average sequence length at which the cap is reachable instead of failing.
+
+  *Amended Nov 2026, milestone 1.* This rule originally read `max_model_len` × `max_num_seqs`, which treats the cap as a reservation. A paged engine never makes that reservation: KV blocks are allocated per token as sequences grow, and the scheduler queues whatever does not fit. vLLM's own startup assertion is only that the cache hold one `max_model_len` sequence — which is the separate feasibility gate above. Read literally the original rule rejected this document's own example by roughly 16x, so it is expressed against a declared workload instead.
 - Generation profile values must respect model limits (for example `max_tokens` ≤ context length).
 - Every model's `license` must appear in `licenses.yaml`; `source` must pin a commit SHA.
 - A `dedicated` tenant needs its own `nodePools` entry; `shared` tenants reference shared pools only.

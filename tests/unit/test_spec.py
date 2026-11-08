@@ -237,10 +237,58 @@ class TestServingProfiles:
         doc["tuningProfiles"]["serving"][0]["params"]["make_it_fast"] = True
         assert any("make_it_fast" in p for p in problems_of(yaml.safe_dump(doc)))
 
-    def test_concurrency_beyond_the_kv_budget_is_a_warning_not_an_error(self) -> None:
-        """SPEC.md's own example exceeds a literal reading of this rule."""
+    def test_declared_working_context_beyond_the_budget_is_an_error(self) -> None:
+        """max_num_seqs x working_context_tokens must fit the KV budget."""
+        doc = yaml.safe_load(MINIMAL)
+        doc["models"][0]["concurrency"] = {"working_context_tokens": 8192}
+        found = problems_of(yaml.safe_dump(doc))
+        assert any("max_num_seqs" in p and "working_context_tokens" in p for p in found)
+
+    def test_declared_working_context_within_the_budget_is_allowed(self) -> None:
+        doc = yaml.safe_load(MINIMAL)
+        doc["models"][0]["concurrency"] = {"working_context_tokens": 1024}
+        spec = load(yaml.safe_dump(doc))
+        assert not any("max_num_seqs" in n for n in spec.notes)
+
+    def test_the_error_says_what_would_fit(self) -> None:
+        doc = yaml.safe_load(MINIMAL)
+        doc["models"][0]["concurrency"] = {"working_context_tokens": 8192}
+        message = next(p for p in problems_of(yaml.safe_dump(doc)) if "max_num_seqs" in p)
+        assert "tokens" in message
+
+    def test_undeclared_working_context_reports_reachable_concurrency(self) -> None:
+        """Without a declared workload there is nothing to fail, so note it."""
         spec = load(MINIMAL)
-        assert any("max_num_seqs" in w for w in spec.warnings)
+        assert not spec.warnings or all("max_num_seqs" not in w for w in spec.warnings)
+        assert any("max_num_seqs" in n and "reachable" in n for n in spec.notes)
+
+    def test_absurd_concurrency_is_an_error_even_undeclared(self) -> None:
+        """Not even one KV block each: the cap can never be approached."""
+        doc = yaml.safe_load(MINIMAL)
+        doc["tuningProfiles"]["serving"][0]["params"]["max_num_seqs"] = 1_000_000
+        assert any("max_num_seqs" in p for p in problems_of(yaml.safe_dump(doc)))
+
+    def test_non_numeric_concurrency_cap_is_an_error(self) -> None:
+        doc = yaml.safe_load(MINIMAL)
+        doc["tuningProfiles"]["serving"][0]["params"]["max_num_seqs"] = "lots"
+        assert any("whole number" in p for p in problems_of(yaml.safe_dump(doc)))
+
+    def test_zero_concurrency_cap_is_an_error(self) -> None:
+        doc = yaml.safe_load(MINIMAL)
+        doc["tuningProfiles"]["serving"][0]["params"]["max_num_seqs"] = 0
+        assert any("at least 1" in p for p in problems_of(yaml.safe_dump(doc)))
+
+    def test_model_without_a_serving_profile_skips_the_concurrency_check(self) -> None:
+        doc = yaml.safe_load(MINIMAL)
+        del doc["models"][0]["serving_profile"]
+        doc["assignments"] = []
+        spec = load(yaml.safe_dump(doc))
+        assert not any("max_num_seqs" in n for n in spec.notes)
+
+    def test_full_context_concurrency_is_never_an_error_by_itself(self) -> None:
+        """A paged engine queues past the budget; it does not fail to boot."""
+        spec = load(MINIMAL)
+        assert spec.models[0].max_model_len == 32768
 
 
 class TestGenerationProfiles:

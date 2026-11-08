@@ -4,6 +4,11 @@
 # `architecture` blocks are filled in automatically when a model is
 # mirrored; they are written out here so `aisvc plan` can size the model
 # before anything has been mirrored.
+#
+# `concurrency.working_context_tokens` is the average sequence length the
+# deployment is planned for. It is what the engine's concurrency cap is
+# validated against; leave it out and the spec only reports the cap that
+# is reachable rather than failing.
 apiVersion: aisvc/v1
 
 zones:
@@ -65,6 +70,10 @@ models:
     visibility: {domains: ["/Customers"]}
     price_tier: standard
     architecture: {params_b: 70.6, num_layers: 80, num_kv_heads: 8, head_dim: 128}
+    # A typical chat turn, prompt plus completion. max_num_seqs is checked
+    # against this, not against the full 32768-token context: a paged engine
+    # allocates KV cache per token and queues whatever does not fit.
+    concurrency: {working_context_tokens: 1536}
     lora: {enabled: true, max_adapters_per_account: 20}      # v2
     batch: {enabled: true, discount: 0.5}                     # v2
 
@@ -83,6 +92,8 @@ models:
     visibility: {domains: ["/Customers"]}
     price_tier: embedding
     architecture: {params_b: 0.57, num_layers: 24, num_kv_heads: 16, head_dim: 64}
+    # Embedding inputs are short; 64 of them at once is comfortable here.
+    concurrency: {working_context_tokens: 512}
 
 tuningProfiles:
   serving:

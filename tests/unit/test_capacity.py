@@ -217,6 +217,29 @@ class TestKvBudget:
         # 160 KiB/token; 32768-token sequences cost 5 GiB each
         assert budget.max_full_context_seqs(32768) == int(budget.kv_cache_gb // 5.0)
 
+    def test_context_for_seqs_inverts_the_concurrency_question(self) -> None:
+        budget = kv_budget(
+            LLAMA_70B,
+            quantization="fp8",
+            kv_cache_dtype="fp8",
+            tensor_parallel=2,
+            gpu_mem_gb=80,
+        )
+        # The average context at which max_num_seqs becomes reachable.
+        assert budget.context_for_seqs(256) == budget.max_tokens() // 256
+        assert budget.context_for_seqs(1) == budget.max_tokens()
+
+    def test_context_for_seqs_rejects_non_positive_concurrency(self) -> None:
+        budget = kv_budget(
+            LLAMA_8B,
+            quantization="bf16",
+            kv_cache_dtype="fp16",
+            tensor_parallel=1,
+            gpu_mem_gb=48,
+        )
+        with pytest.raises(ValueError, match="seqs must be positive"):
+            budget.context_for_seqs(0)
+
     def test_no_budget_when_weights_do_not_fit(self) -> None:
         budget = kv_budget(
             LLAMA_70B,

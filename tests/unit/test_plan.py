@@ -68,10 +68,10 @@ class TestPlanCapacity:
         assert any("not observed" in w for w in plan.warnings)
         assert not plan.has_changes
 
-    def test_plan_carries_the_spec_warnings(self) -> None:
+    def test_plan_carries_the_spec_notes(self) -> None:
         spec = spec_with(min_nodes=2)
         plan = plan_capacity(spec, snapshot_with(nodes_total=2))
-        assert any("max_num_seqs" in w for w in plan.warnings)
+        assert any("max_num_seqs" in n for n in plan.notes)
 
     def test_second_plan_against_the_resulting_state_is_empty(self) -> None:
         """The reconciler must converge: SPEC.md section 12."""

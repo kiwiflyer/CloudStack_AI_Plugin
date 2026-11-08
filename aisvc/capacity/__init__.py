@@ -11,6 +11,7 @@ from dataclasses import dataclass
 __all__ = [
     "DEFAULT_UTILIZATION",
     "HEADROOM_FRACTION",
+    "MIN_BLOCK_TOKENS",
     "GpuRequirement",
     "KvBudget",
     "ModelArchitecture",
@@ -26,6 +27,10 @@ DEFAULT_UTILIZATION = 0.9
 
 #: Safety margin on top of weights and KV cache (SPEC.md section 4).
 HEADROOM_FRACTION = 0.10
+
+#: Paged KV cache block size, in tokens. A sequence costs at least one block,
+#: so this is the floor on what any concurrency cap can consume.
+MIN_BLOCK_TOKENS = 16
 
 _BYTES_PER_PARAM: dict[str, float] = {
     "fp32": 4.0,
@@ -124,6 +129,16 @@ class KvBudget:
         if max_model_len <= 0:
             raise ValueError("max_model_len must be positive")
         return self.max_tokens() // max_model_len
+
+    def context_for_seqs(self, seqs: int) -> int:
+        """The average context length at which `seqs` sequences fit at once.
+
+        The inverse of `max_full_context_seqs`: answers "how short do
+        requests have to run for this concurrency cap to be reachable?"
+        """
+        if seqs <= 0:
+            raise ValueError("seqs must be positive")
+        return self.max_tokens() // seqs
 
 
 def _available_gb(tensor_parallel: int, gpu_mem_gb: float, utilization: float) -> float:

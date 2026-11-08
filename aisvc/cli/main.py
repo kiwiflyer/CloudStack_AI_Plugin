@@ -50,9 +50,11 @@ def _load(spec_path: Path, licenses_path: Path | None) -> PlatformSpec:
         raise typer.Exit(code=1) from exc
 
 
-def _show_warnings(spec: PlatformSpec) -> None:
+def _show_findings(spec: PlatformSpec) -> None:
     for warning in spec.warnings:
         err.print(f"[yellow]warning:[/yellow] {warning}")
+    for note in spec.notes:
+        err.print(f"[dim]note:[/dim] {note}")
 
 
 def _credentials() -> Credentials:
@@ -88,7 +90,7 @@ async def _observe(spec: PlatformSpec) -> CapacitySnapshot:
 def validate(spec: SpecOption = Path("platform.yaml"), licenses: LicensesOption = None) -> None:
     """Check platform.yaml against every rule in SPEC.md section 3."""
     loaded = _load(spec, licenses)
-    _show_warnings(loaded)
+    _show_findings(loaded)
     out.print(
         f"[green]{spec} is valid[/green]: "
         f"{len(loaded.document.zones)} zone(s), "

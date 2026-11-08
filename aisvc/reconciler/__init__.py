@@ -53,6 +53,7 @@ class Plan:
 
     actions: list[Action] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
     @property
     def has_changes(self) -> bool:
@@ -71,6 +72,10 @@ class Plan:
         if self.warnings:
             lines.append("Warnings:")
             lines.extend(f"  ! {w}" for w in self.warnings)
+            lines.append("")
+        if self.notes:
+            lines.append("Notes:")
+            lines.extend(f"  - {n}" for n in self.notes)
             lines.append("")
 
         if not self.actions:
@@ -93,6 +98,7 @@ def plan_capacity(spec: PlatformSpec, snapshot: CapacitySnapshot) -> Plan:
     """
     actions: list[Action] = []
     warnings: list[str] = list(spec.warnings)
+    notes: list[str] = list(spec.notes)
 
     classes = {c.name: c for c in spec.document.gpu_classes}
 
@@ -135,4 +141,4 @@ def plan_capacity(spec: PlatformSpec, snapshot: CapacitySnapshot) -> Plan:
                 )
             )
 
-    return Plan(actions=actions, warnings=warnings)
+    return Plan(actions=actions, warnings=warnings, notes=notes)

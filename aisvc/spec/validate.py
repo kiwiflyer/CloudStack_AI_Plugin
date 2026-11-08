@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from aisvc.capacity import (
     DEFAULT_UTILIZATION,
+    MIN_BLOCK_TOKENS,
     ModelArchitecture,
     estimate,
     kv_budget,
@@ -52,6 +53,8 @@ class PlatformSpec:
 
     document: PlatformDocument
     warnings: list[str] = field(default_factory=list)
+    #: Informational findings: true, worth printing, but nothing to fix.
+    notes: list[str] = field(default_factory=list)
 
     @property
     def api_version(self) -> str:
@@ -112,6 +115,7 @@ class _Validator:
         self.allowed_licenses = {lic.lower() for lic in allowed_licenses}
         self.problems: list[Problem] = []
         self.warnings: list[str] = []
+        self.notes: list[str] = []
 
         self.zones = {z.name for z in doc.zones}
         self.classes = {c.name: c for c in doc.gpu_classes}
@@ -282,15 +286,34 @@ class _Validator:
         kv_dtype: str,
         utilization: float,
     ) -> None:
-        """SPEC.md section 3 asks that max_model_len x max_num_seqs fit the KV
-        budget. Read literally that rejects the spec's own example, because a
-        paged engine admits sequences as they fit rather than reserving full
-        context for each. Reported as a warning until that is settled.
+        """Check the concurrency cap against the KV budget.
+
+        SPEC.md section 3 asks that `max_model_len x max_num_seqs` fit the
+        budget. That reads the cap as a reservation, which a paged engine
+        never makes: KV blocks are allocated per token as sequences grow,
+        and the scheduler queues whatever does not fit. Taken literally the
+        rule rejects SPEC.md's own example, so it is applied in two parts:
+
+        * a hard floor, since a cap that cannot be given one block per
+          sequence can never be approached at any request length; and
+        * the declared workload, `concurrency.working_context_tokens`,
+          which turns the cap into something checkable. Undeclared, the
+          spec reports the context length at which the cap is reachable
+          rather than guessing one.
         """
         key = engines.CONCURRENCY_KEY.get(model.engine)
         if key is None or key not in params:
             return
-        requested = int(params[key])  # type: ignore[call-overload]
+
+        try:
+            requested = int(params[key])  # type: ignore[call-overload]
+        except (TypeError, ValueError):
+            self.fail(f"{path}.{key}", f"{params[key]!r} is not a whole number")
+            return
+        if requested < 1:
+            self.fail(f"{path}.{key}", f"{requested} must be at least 1")
+            return
+
         budget = kv_budget(
             arch,
             quantization=model.quantization,
@@ -299,12 +322,38 @@ class _Validator:
             gpu_mem_gb=gpu_class.gpu_mem_gb,
             utilization=utilization,
         )
-        affordable = budget.max_full_context_seqs(model.max_model_len)
-        if requested > affordable:
-            self.warnings.append(
-                f"{path}: {key} {requested} exceeds the {affordable} sequences the "
-                f"KV budget holds at the full {model.max_model_len}-token context "
-                f"({budget.kv_cache_gb:.1f} GiB); the engine will queue beyond that"
+        available = budget.max_tokens()
+
+        if requested * MIN_BLOCK_TOKENS > available:
+            self.fail(
+                path,
+                f"{key} {requested} can never be approached: the KV budget holds "
+                f"{available} tokens ({budget.kv_cache_gb:.1f} GiB), fewer than one "
+                f"{MIN_BLOCK_TOKENS}-token block per sequence; lower it to at most "
+                f"{available // MIN_BLOCK_TOKENS}",
+            )
+            return
+
+        declared = model.concurrency.working_context_tokens
+        if declared is None:
+            self.notes.append(
+                f"{path}: {key} {requested} is reachable while sequences average "
+                f"{budget.context_for_seqs(requested)} tokens or fewer "
+                f"({budget.max_full_context_seqs(model.max_model_len)} at the full "
+                f"{model.max_model_len}-token context); set "
+                f"concurrency.working_context_tokens to have this checked"
+            )
+            return
+
+        needed = requested * declared
+        if needed > available:
+            self.fail(
+                path,
+                f"{key} {requested} x working_context_tokens {declared} needs "
+                f"{needed} tokens of KV cache but only {available} are available "
+                f"({budget.kv_cache_gb:.1f} GiB); lower {key} to "
+                f"{available // declared} or working_context_tokens to "
+                f"{budget.context_for_seqs(requested)}",
             )
 
     def check_serving_profiles(self) -> None:
@@ -430,7 +479,7 @@ class _Validator:
         self.check_tenants()
         if self.problems:
             raise SpecError(self.problems)
-        return PlatformSpec(document=self.doc, warnings=self.warnings)
+        return PlatformSpec(document=self.doc, warnings=self.warnings, notes=self.notes)
 
 
 def validate(doc: PlatformDocument, *, allowed_licenses: list[str]) -> PlatformSpec:

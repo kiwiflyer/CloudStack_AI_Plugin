@@ -5,7 +5,7 @@
 Scaffold, CI, `spec` models and validation, CloudStack client with recorded responses,
 `inventory`, `capacity`, `aisvc plan`.
 
-**State:** 121 tests pass, `ruff` clean, `mypy --strict` clean, 95% line coverage.
+**State:** 131 tests pass, `ruff` clean, `mypy --strict` clean, 95% line coverage.
 
 ```
 make check      # lint + types + unit + contract
@@ -48,26 +48,43 @@ reserves it; a shared tenant using a model on someone else's dedicated pool is a
 **`--no-observe` plans against a zero snapshot** of everything the spec declares, so it shows
 what building the platform from nothing would take without calling CloudStack.
 
+### Settled: the concurrency rule (SPEC.md section 3, amended)
+
+The original rule — `max_model_len` x `max_num_seqs` must fit the KV budget — treats the
+concurrency cap as a reservation. A paged engine never makes that reservation: KV blocks are
+allocated per token as sequences grow, and the scheduler queues whatever does not fit. vLLM's
+own startup assertion is only that the cache hold **one** `max_model_len` sequence, which is
+the separate feasibility gate `capacity.estimate()` already enforces. Read literally the rule
+rejected SPEC.md's own example by about 16x.
+
+Replaced with a declared-assumption rule, in two parts:
+
+- **Hard floor.** A cap that cannot be given one 16-token KV block per sequence can never be
+  approached at any request length, so it is rejected outright. This catches nonsense like
+  `max_num_seqs: 1000000` without any false positives.
+- **Declared workload.** Models gained `concurrency.working_context_tokens`: the average
+  sequence length the deployment is planned for. When set, `max_num_seqs x
+  working_context_tokens` must fit the KV budget, and the error names both numbers that would
+  fit. When unset there is no workload to check against, so the spec reports the average
+  context at which the cap becomes reachable rather than guessing one.
+
+The example's `max_num_seqs: 256` turns out to be entirely reasonable: it is reachable
+whenever sequences average 1742 tokens or fewer, an ordinary chat turn. `examples/platform.yaml`
+now declares 1536 for the 70B and 512 for the embedding model. SPEC.md section 3 carries the
+amended rule and a note recording why.
+
 ### Open questions for the next session
 
-1. **The `max_model_len x max_num_seqs` rule rejects SPEC.md's own example.** Read literally
-   (section 3, serving profile validation), `h100-throughput` with `max_num_seqs: 256` against
-   `llama-3.3-70b-instruct` at 32768 context needs ~8.4M tokens of KV cache; two H100s hold
-   about 13 full-context sequences. A paged engine admits sequences as they fit rather than
-   reserving full context for each, so the literal rule would block every realistic config.
-   Implemented as a **warning**, not an error. Needs a decision: drop the rule, re-express it
-   against an average context fraction, or keep it strict and lower the example's `max_num_seqs`.
-
-2. **Request signing uses `quote_plus`** (spaces as `+`), matching CloudStack's Java
+1. **Request signing uses `quote_plus`** (spaces as `+`), matching CloudStack's Java
    `URLEncoder`. Worth confirming against the target release before milestone 2, since
    `quote` (spaces as `%20`) appears in some clients. Also unverified against a live
    management server — only against the shape pinned in `tests/fixtures/cloudstack/`.
 
-3. **Node allocation is counted per host, not per GPU.** A host counts as allocated when it
+2. **Node allocation is counted per host, not per GPU.** A host counts as allocated when it
    runs a VM with the class's service offering. That holds for passthrough; `vgpu` and `mig`
    classes will need per-GPU accounting.
 
-4. The eight open decisions in SPEC.md section 14 are untouched. None blocked milestone 1;
+3. The eight open decisions in SPEC.md section 14 are untouched. None blocked milestone 1;
    the serving-layer and gateway choices will block milestone 3.
 
 ## Milestone 2 — Provisioning (next)

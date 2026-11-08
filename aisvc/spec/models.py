@@ -79,6 +79,18 @@ class Architecture(Base):
     head_dim: int = Field(gt=0)
 
 
+class Concurrency(Base):
+    """The workload assumption concurrency is checked against.
+
+    `max_num_seqs` is a scheduler cap, not a reservation: a paged engine
+    allocates KV cache per token as sequences grow. Declaring the context
+    length requests actually run at makes the cap checkable; leaving it
+    unset means the spec only reports what is reachable.
+    """
+
+    working_context_tokens: int | None = Field(default=None, gt=0)
+
+
 class Replicas(Base):
     min: int = Field(ge=0)
     max: int = Field(gt=0)
@@ -126,6 +138,7 @@ class Model(Base):
     visibility: Visibility = Field(default_factory=Visibility)
     price_tier: str | None = None
     architecture: Architecture | None = None
+    concurrency: Concurrency = Field(default_factory=Concurrency)
     lora: LoraSettings = Field(default_factory=LoraSettings)
     batch: BatchSettings = Field(default_factory=BatchSettings)
 
