@@ -421,11 +421,52 @@ model". The catalog still lists during an outage, with `mirrored: false`.
 4. **mTLS is configured but never exercised.** `uvicorn_options` is unit-tested; no test has
    completed a handshake with a client certificate.
 
-## Milestone 5 — Native API plugin (next)
+## Milestone 5 — Native API plugin (started, blocked on a build environment)
 
-`plugins/ai-services` with the v1 commands from section 9, ConfigKeys, ownership table, async
-bridge, events, role permissions, usage types, deletion hooks; JUnit and Marvin tests.
-Unblocked by [ADR-0003](docs/adr/0003-cloudstack-release.md): **CloudStack 4.23.0.0**.
+**Toolchain:** JDK 17.0.21 and Maven 3.10.0 are now installed (`brew install openjdk@17
+maven`). Note `openjdk@17` is keg-only, so `JAVA_HOME` and `PATH` need
+`/opt/homebrew/opt/openjdk@17`.
 
-Needs a Java toolchain and a CloudStack source checkout or published artifacts to build
-against — neither is set up in this repo yet, and `make test-java` still exits 1.
+**The blocker: CloudStack publishes no Maven artifacts.** `org.apache.cloudstack` is absent
+from Maven Central and from the ASF release and public repositories — all probes return 404.
+There is nothing to put on a `pom.xml` dependency list. Compiling `plugins/ai-services`
+therefore needs a CloudStack source checkout at the 4.23.0.0 tag and a local `mvn install` to
+populate `~/.m2`, which is a few hundred MB of clone plus a long first build. That is a big
+enough commitment to the machine that it should be a deliberate choice rather than something
+a session starts on its own, so it is where milestone 5 stands.
+
+SPEC.md section 13 anticipates this — milestone 5 is described as happening "in a CloudStack
+source checkout of the target release".
+
+### What landed without a compiler
+
+The part of milestone 5 that is not Java: **section 9's command map, encoded as data** in
+`aisvc/api/commands.py`, with 46 commands across v1 and v2.
+
+It exists so three things cannot drift apart: the plugin's `getCommands()` registration and
+default role permissions, both now **generated** from the map rather than hand-maintained;
+the engine's `/v1` routes; and the tests that check one against the other. The same argument
+as ADR-0002's for profile precedence — one source, no second copy to fall out of step.
+
+What the tests assert:
+
+- Every engine route maps to a CloudStack command, so no endpoint is unreachable from the
+  plugin. Three engine-only paths (`health`, `ready`, `jobs/{id}`) are excluded by name.
+- **25 v1 commands still have no engine route**, asserted as an exact number so the count
+  cannot quietly drift as milestones 7–9 land.
+- Admin-only commands are never granted to tenant roles, stated as the rule section 9 states.
+  Serving profiles are root-admin-only; generation profiles are open to tenants, matching
+  section 6's "who can edit" row.
+- Async commands are never GETs, and the eight the spec names as async are.
+- The three Hugging Face commands are the only ones gated per domain by
+  `ai.services.hf.require.approval`.
+
+### What milestone 5 still needs
+
+1. A CloudStack 4.23.0.0 source checkout and `mvn install`, as above.
+2. `java-plugin/` Maven module, the command classes, response objects, ConfigKeys, the
+   `ai_deployment` ownership table and its schema upgrade, the async bridge polling
+   `/v1/jobs/{id}`, events, usage types, deletion hooks and the host-maintenance listener.
+3. JUnit tests to 70% line coverage, and Marvin tests per default role, allowed and denied.
+4. A CI job compiling against 4.22 LTS as well, per [ADR-0003](docs/adr/0003-cloudstack-release.md).
+5. `make test-java` still exits 1.
