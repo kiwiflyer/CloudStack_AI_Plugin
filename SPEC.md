@@ -640,9 +640,9 @@ aisvc/
 **Open decisions**
 
 - [x] ~~Serving layer: KServe vs the vLLM production stack (or llm-d).~~ **Decided Nov 2026: plain Kubernetes Deployments rendered by `k8s`, with blue/green canary weighting at the gateway. See [ADR-0001](docs/adr/0001-serving-layer.md).** llm-d's features are all multi-node, which is a non-goal; KServe's canary needs Knative and Istio upstream; and routing, autoscaling and rollouts already belong to modules in section 4. Revisit if the one-host replica cap is lifted.
-- [ ] Gateway: LiteLLM vs Envoy AI Gateway for multi-tenant routing, enforcement and metering at scale.
+- [x] ~~Gateway: LiteLLM vs Envoy AI Gateway for multi-tenant routing, enforcement and metering at scale.~~ **Decided Nov 2026: LiteLLM Proxy, with hooks importing `aisvc.profiles` directly. See [ADR-0002](docs/adr/0002-gateway.md).** Envoy AI Gateway became Agent Router under the Agentic AI Foundation in Sept 2026; its throughput advantage is real but spent on a bottleneck we do not have, since the GPU fleet saturates an order of magnitude before the gateway does, while its ext_proc model would force a second implementation of profile precedence. Revisit if one zone needs >200 RPS sustained, or if the platform starts fronting third-party hosted models.
 - [ ] Target CloudStack release, and whether its GPU/vGPU offerings, GPU resource limits and Extensions framework cover part of the plugin.
-- [ ] Upstream a generic `ai-services` plugin (including setup wizard and maintenance integration), keeping metering, guardrails, evaluation and LoRA management as the commercial layer.
+- [ ] Upstream a generic `ai-services` plugin (including setup wizard and maintenance integration), keeping metering, guardrails, evaluation and LoRA management as the commercial layer. *The Python dependency tree is already held to the ASF third-party licensing policy so this stays possible; see [docs/third-party-licenses.md](docs/third-party-licenses.md), enforced by `make test-security`.*
 - [ ] Whether reseller domain admins can mirror from Hugging Face directly or only request it.
 - [ ] Public Hugging Face Hub vs a private mirror or Enterprise Hub as the source.
 - [ ] Whether dedicated-tier tenants may choose serving profiles for their own node pools.

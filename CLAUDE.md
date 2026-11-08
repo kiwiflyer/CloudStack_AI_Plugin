@@ -63,13 +63,14 @@ examples/platform.yaml
 
 ```
 make install        # editable install into .venv
-make check          # lint + types + unit + contract: run this before every commit
+make check          # lint + types + unit + contract + integration + security
 make test-unit      # pytest, no GPU, no network
 make test-contract  # schemathesis + recorded CloudStack responses
 make test-int       # docker compose: CloudStack simulator, kind, MinIO, Postgres, LiteLLM, mocks
 make test-java      # JUnit 5 + Mockito + Marvin
 make test-ui        # Vitest + Playwright
 make test-tf        # Terraform acceptance against the simulator
+make test-security  # licence policy; add pip-audit, bandit, semgrep later
 make test-gpu       # GPU lab only, not in CI
 make record         # refresh recorded fixtures against a lab zone — only deliberately
 ```
@@ -183,12 +184,24 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
   No KServe, llm-d or vLLM production stack in v1. Blue/green canary weighting lives at the
   gateway, not in the serving layer. Revisit only if the one-replica-per-host cap is lifted.
 
+- **ADR-0002 — gateway:** LiteLLM Proxy. Enforcement hooks live in `gateway-hooks/` and
+  **import `aisvc.profiles` directly** — never reimplement profile precedence, in any
+  language. Stay on LiteLLM's MIT side: nothing from `enterprise/`, no licence-gated features.
+
+## Licensing — enforced, not advisory
+
+This is an Apache CloudStack plugin, so the dependency tree follows the ASF Category A/B/X
+policy: **GPL, LGPL and AGPL are prohibited**, including for Python imports. `make
+test-security` fails CI on any Category X dependency, any licence it cannot classify, and any
+new Category B package not already listed. Before adding a dependency, check its licence;
+`pg8000` is the Postgres driver because `psycopg` is LGPL. See `docs/third-party-licenses.md`,
+which also covers what the scan cannot see: the NVIDIA driver EULA on the golden image, model
+licences (`llama3.x`, `gemma`, `qwen`, `openrail` are open-weight with use restrictions, not
+open source), and LiteLLM's commercial `enterprise/` directory.
+
 ## Open decisions — do not silently pick one
 
 The spec leaves these unresolved. If a task depends on one, ask rather than assume:
-
-- Gateway: LiteLLM vs Envoy AI Gateway. ADR-0001 adds a requirement: it must support weighted
-  routing between blue and green backends.
 - Target CloudStack release, and how much its GPU offerings, resource limits and Extensions
   framework already cover
 - Whether reseller domain admins mirror from Hugging Face directly or only request it

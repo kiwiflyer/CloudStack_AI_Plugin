@@ -168,6 +168,7 @@ bare 5xx with no CloudStack error in it.
 | ADR | Decision | Status |
 | --- | --- | --- |
 | [0001](docs/adr/0001-serving-layer.md) | Serving layer: plain Kubernetes Deployments rendered by `k8s`; no KServe, llm-d or vLLM production stack in v1 | Accepted 2026-11-07 |
+| [0002](docs/adr/0002-gateway.md) | Gateway: LiteLLM Proxy, with hooks importing `aisvc.profiles` rather than reimplementing precedence | Accepted 2026-11-07 |
 
 ### ADR-0001 in one paragraph
 
@@ -185,7 +186,45 @@ KServe's per-pod `storageUri` pull works against. Rendering stays behind Jinja t
 later move to `LLMInferenceService` is contained.
 
 **One consequence to carry forward:** the gateway must support weighted routing between blue
-and green backends. That is now a requirement on ADR-0002.
+and green backends. ADR-0002 confirms LiteLLM does this with weighted model-group entries.
+
+### ADR-0002 in one paragraph
+
+Section 14 framed the gateway choice as being about scale, and that is the one dimension where
+Envoy wins — but the arithmetic says we are not at that scale by an order of magnitude. A 70B
+replica on two H100s completes a few requests per second; ten replicas perhaps thirty; the
+spec's own example tenant quota is `rpm: 600`, which is ten. LiteLLM's reported few-hundred-RPS
+ceiling sits well above anything our GPU capacity can absorb, and we would buy GPUs long before
+the gateway became the constraint. Against that, Envoy's ext_proc model forces our enforcement
+logic into a separate gRPC service — in Python, giving back the throughput we adopted Envoy
+for; in Go, implementing seven-level profile precedence with `clamp` and `locked` semantics a
+second time, where the two copies must agree forever. Section 6 precedence is the most
+correctness-critical logic in the platform, and LiteLLM's Python hooks let the gateway call the
+same `aisvc.profiles.resolve()` that `getAiEffectiveParameters` calls. Note also that Envoy AI
+Gateway was renamed Agent Router and moved from CNCF to the Agentic AI Foundation in September
+2026 — not disqualifying, but the spec's name for it is already stale.
+
+## Licensing
+
+`docs/third-party-licenses.md` records the policy and the inventory; `make test-security`
+enforces it in CI. Because this is an Apache CloudStack plugin and section 14 keeps open the
+option of upstreaming, the dependency tree is held to the ASF Category A/B/X policy, under
+which **LGPL is prohibited outright** — even for dynamically linked Python imports.
+
+**One conflict was found and fixed:** `psycopg` 3.x, the Postgres driver added in milestone 2,
+is LGPL-3.0-only. Replaced with `pg8000` (BSD-3-Clause), which SQLAlchemy supports as
+`postgresql+pg8000://`; the run log is synchronous, so nothing was lost. The tree is now 43
+Category A, 3 Category B (`certifi`, `hypothesis`, `pathspec`, all MPL-2.0 and all acceptable),
+and nothing in Category X.
+
+Three obligations sit outside a metadata scan and need legal review before anything ships:
+the **NVIDIA driver EULA** on the Packer golden image (a redistribution question, not a code
+conflict — shipping the `.pkr.hcl` for operators to build is the conservative path we take
+today); the **model licences**, where `llama3.x`, `gemma`, `qwen` and `openrail` are open-weight
+with use restrictions rather than open source, which matters because tenants pay for inference
+on them; and **LiteLLM's split licence**, where `enterprise/` is commercial and we must stay on
+the MIT side. `licenses.yaml` now separates OSI-approved from restricted entries so the
+distinction is visible at the point of approval.
 
 ## Milestone 3 — Serving and sourcing (next)
 

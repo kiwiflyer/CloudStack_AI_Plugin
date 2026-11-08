@@ -21,8 +21,8 @@ class TestDatabaseUrl:
         assert database_url().startswith("postgresql")
 
     def test_the_environment_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("AISVC_DATABASE_URL", "postgresql+psycopg://elsewhere/db")
-        assert database_url() == "postgresql+psycopg://elsewhere/db"
+        monkeypatch.setenv("AISVC_DATABASE_URL", "postgresql+pg8000://elsewhere/db")
+        assert database_url() == "postgresql+pg8000://elsewhere/db"
 
 
 class TestSessionScope:

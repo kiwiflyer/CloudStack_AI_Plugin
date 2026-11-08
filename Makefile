@@ -1,7 +1,7 @@
 PY := .venv/bin/python
 PYTEST := .venv/bin/pytest
 
-.PHONY: install lint types test-unit test-contract test-int test-java test-ui test-tf test-gpu record check
+.PHONY: install lint types test-unit test-contract test-int test-java test-ui test-tf test-security test-gpu record check
 
 install:
 	$(PY) -m pip install -q -e ".[dev]"
@@ -31,10 +31,13 @@ test-ui:
 test-tf:
 	@echo "milestone 8: not scaffolded yet"; exit 1
 
+test-security:
+	$(PYTEST) tests/security -q
+
 test-gpu:
 	$(PYTEST) -m gpu -q
 
 record:
 	@echo "refreshes tests/fixtures/cloudstack against a lab zone; milestone 2"; exit 1
 
-check: lint types test-unit test-contract test-int
+check: lint types test-unit test-contract test-int test-security

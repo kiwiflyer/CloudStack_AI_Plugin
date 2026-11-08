@@ -19,6 +19,8 @@ jobs:
       - run: ruff format --check aisvc tests
       - run: mypy
       - run: pytest tests/unit -q --cov --cov-report=term-missing
+      - name: Licence policy (no GPL/LGPL/AGPL in the tree)
+        run: pytest tests/security -q
 
   contract:
     name: Contract and integration

@@ -12,7 +12,9 @@ from sqlalchemy.orm import Session, sessionmaker
 __all__ = ["DEFAULT_DATABASE_URL", "create_session_factory", "database_url", "session_scope"]
 
 #: Overridden by AISVC_DATABASE_URL; Postgres in every real deployment.
-DEFAULT_DATABASE_URL = "postgresql+psycopg://aisvc@localhost:5432/aisvc"
+#: pg8000 rather than psycopg: BSD-3-Clause instead of LGPL-3.0, which keeps
+#: the dependency tree Apache-2.0 clean (docs/third-party-licenses.md).
+DEFAULT_DATABASE_URL = "postgresql+pg8000://aisvc@localhost:5432/aisvc"
 
 
 def database_url() -> str:
