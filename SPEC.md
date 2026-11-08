@@ -160,7 +160,7 @@ The engine is Python 3.12, fully typed (mypy strict), async where it talks to ex
 | `inventory` | Live GPU capacity per zone and class | `listHosts`, `listVirtualMachines`, `listServiceOfferings` → `CapacitySnapshot` | v1 |
 | `capacity` | Sizes models, profiles and pools | `estimate(model, profile) -> GpuRequirement`: weights + KV cache + 10% headroom | v1 |
 | `provision` | Creates and removes GPU nodes | `deployVirtualMachine` (offering, template, anti-affinity, cloud-init), `scaleKubernetesCluster`, `destroyVirtualMachine` | v1 |
-| `k8s` | Applies serving workloads | Renders KServe `InferenceService` or vLLM Deployment from Jinja templates with serving profile arguments; server-side apply | v1 |
+| `k8s` | Applies serving workloads | Renders a `Deployment`, `Service` and `PodDisruptionBudget` from Jinja templates with serving profile arguments as engine command-line flags; server-side apply ([ADR-0001](docs/adr/0001-serving-layer.md)) | v1 |
 | `hf` | Hugging Face search, check, mirror | `huggingface_hub` `list_models`, `model_info`, `snapshot_download` in the mirror Job (section 5) | v1 |
 | `registry` | Model artifacts | S3 (boto3) to Ceph RGW/MinIO; manifests, sha256 verification, license and metadata | v1 |
 | `profiles` | Profile storage and resolution | `resolve(deployment, account, key) -> EffectiveParams` with source level per value (section 6) | v1 |
@@ -639,7 +639,7 @@ aisvc/
 
 **Open decisions**
 
-- [ ] Serving layer: KServe vs the vLLM production stack (or llm-d).
+- [x] ~~Serving layer: KServe vs the vLLM production stack (or llm-d).~~ **Decided Nov 2026: plain Kubernetes Deployments rendered by `k8s`, with blue/green canary weighting at the gateway. See [ADR-0001](docs/adr/0001-serving-layer.md).** llm-d's features are all multi-node, which is a non-goal; KServe's canary needs Knative and Istio upstream; and routing, autoscaling and rollouts already belong to modules in section 4. Revisit if the one-host replica cap is lifted.
 - [ ] Gateway: LiteLLM vs Envoy AI Gateway for multi-tenant routing, enforcement and metering at scale.
 - [ ] Target CloudStack release, and whether its GPU/vGPU offerings, GPU resource limits and Extensions framework cover part of the plugin.
 - [ ] Upstream a generic `ai-services` plugin (including setup wizard and maintenance integration), keeping metering, guardrails, evaluation and LoRA management as the commercial layer.

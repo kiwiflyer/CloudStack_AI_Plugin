@@ -163,9 +163,34 @@ bare 5xx with no CloudStack error in it.
 4. **The weight-cache device is hardcoded to `/dev/nvme1n1`.** It should come from the GPU
    class or be discovered on the node.
 
+## Decisions
+
+| ADR | Decision | Status |
+| --- | --- | --- |
+| [0001](docs/adr/0001-serving-layer.md) | Serving layer: plain Kubernetes Deployments rendered by `k8s`; no KServe, llm-d or vLLM production stack in v1 | Accepted 2026-11-07 |
+
+### ADR-0001 in one paragraph
+
+llm-d and KServe's `LLMInferenceService` (which is built on llm-d) earn their complexity
+through multi-node features — disaggregated prefill/decode, expert parallelism, RDMA KV
+transfer — and multi-node is an explicit non-goal here: a replica is capped at one 8-GPU host.
+The remaining case for KServe was canary and readiness gating, but upstream `canaryTrafficPercent`
+is silently ignored in RawDeployment ([kserve#5335](https://github.com/kserve/kserve/issues/5335)),
+so canary means Knative plus Istio on CKS — a large dependency for one feature that `lifecycle`
+owns anyway. The vLLM production stack is vLLM-only, which conflicts with
+`engine: vllm | sglang | trtllm`. Meanwhile routing, autoscaling and rollouts are already
+assigned to our own modules in section 4, so every candidate duplicates three or four of them.
+Plain Deployments also let the node-local NVMe weight cache work as section 11 describes, which
+KServe's per-pod `storageUri` pull works against. Rendering stays behind Jinja templates so a
+later move to `LLMInferenceService` is contained.
+
+**One consequence to carry forward:** the gateway must support weighted routing between blue
+and green backends. That is now a requirement on ADR-0002.
+
 ## Milestone 3 — Serving and sourcing (next)
 
 `registry`, `hf` search/check/mirror/scan (section 5), `k8s` rendering, `gateway` with hooks,
 `profiles` serving and generation (section 6), one model end to end in a lab zone, cold-start
-target validated. **Blocked on** two of SPEC.md section 14's open decisions: the serving layer
-(KServe vs the vLLM production stack) and the gateway (LiteLLM vs Envoy AI Gateway).
+target validated. The serving layer is settled by ADR-0001. **Still blocked on** the gateway
+decision (LiteLLM vs Envoy AI Gateway), which ADR-0001 now constrains: it must do weighted
+routing, and it is where canary weights live.

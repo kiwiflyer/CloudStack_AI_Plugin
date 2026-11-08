@@ -175,12 +175,20 @@ the previous. 1–8 are v1 GA; 9 is v2.
 Work from the spec's section numbers; require `aisvc plan --dry-run` output against
 `examples/platform.yaml` before any apply logic merges.
 
+## Decisions already made
+
+Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR first.
+
+- **ADR-0001 — serving layer:** plain Kubernetes `Deployment`s rendered from Jinja by `k8s`.
+  No KServe, llm-d or vLLM production stack in v1. Blue/green canary weighting lives at the
+  gateway, not in the serving layer. Revisit only if the one-replica-per-host cap is lifted.
+
 ## Open decisions — do not silently pick one
 
 The spec leaves these unresolved. If a task depends on one, ask rather than assume:
 
-- Serving layer: KServe vs the vLLM production stack (or llm-d)
-- Gateway: LiteLLM vs Envoy AI Gateway
+- Gateway: LiteLLM vs Envoy AI Gateway. ADR-0001 adds a requirement: it must support weighted
+  routing between blue and green backends.
 - Target CloudStack release, and how much its GPU offerings, resource limits and Extensions
   framework already cover
 - Whether reseller domain admins mirror from Hugging Face directly or only request it
