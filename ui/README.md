@@ -1,5 +1,8 @@
 # AI Services UI section (SPEC.md section 9)
 
+Installing this is one part of standing the product up; see
+[docs/installation.md](../docs/installation.md) for the whole sequence.
+
 The `aiservices` section for the CloudStack `ui/` tree.
 
 ## What goes where

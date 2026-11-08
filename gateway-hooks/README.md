@@ -1,5 +1,7 @@
 # gateway-hooks
 
+For the whole install, see [docs/installation.md](../docs/installation.md).
+
 LiteLLM custom handlers (SPEC.md section 13, [ADR-0002](../docs/adr/0002-gateway.md)).
 
 This is **not a Python package** — the directory name has a hyphen, and the modules are

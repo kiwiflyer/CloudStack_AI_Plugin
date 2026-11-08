@@ -296,6 +296,11 @@ The spec leaves these unresolved. If a task depends on one, ask rather than assu
 
 ## Reference
 
+`docs/installation.md` is the operator-facing install and setup guide: prerequisites,
+the four pieces and their order, every config key and environment variable, and an
+honest list of what has never been run. Keep it current when any of those change.
+
+
 Section numbers in the spec: 3 spec schema and validation rules · 4 engine modules · 5 Hugging Face
 sourcing · 6 tuning profiles · 7 Tier 1 operability · 8 Tier 2 · 9 CloudStack integration and the
 command map · 10 engine REST contract · 11 non-functional requirements · 12 test framework ·

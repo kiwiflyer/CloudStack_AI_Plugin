@@ -1,5 +1,7 @@
 # Terraform support (SPEC.md section 7)
 
+For the whole install, see [docs/installation.md](../docs/installation.md).
+
 The AI Services resources for the CloudStack Terraform provider.
 
 These are meant to land in `terraform-provider-cloudstack` upstream.

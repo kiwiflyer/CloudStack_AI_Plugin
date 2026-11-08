@@ -1,5 +1,8 @@
 # cloud-plugin-api-ai-services
 
+Building and deploying this is one part of standing the product up; see
+[docs/installation.md](../docs/installation.md) for the whole sequence.
+
 The native CloudStack API plugin (SPEC.md section 9), targeting
 **CloudStack 4.23.0.0** ([ADR-0003](../docs/adr/0003-cloudstack-release.md)).
 
