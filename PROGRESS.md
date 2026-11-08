@@ -421,10 +421,10 @@ model". The catalog still lists during an outage, with `mirrored: false`.
 4. **mTLS is configured but never exercised.** `uvicorn_options` is unit-tested; no test has
    completed a handshake with a client certificate.
 
-## Milestone 5 — Native API plugin (foundation done)
+## Milestone 5 — Native API plugin (mostly done)
 
-**State:** 68 JUnit tests pass against real CloudStack 4.23.0.0 classes, 67% line coverage.
-730 Python tests still pass.
+**State:** 133 JUnit tests pass against real CloudStack 4.23.0.0 classes, **73% line
+coverage** — past the 70% the spec sets for the Java plugin. 730 Python tests still pass.
 
 ```
 make test-java
@@ -449,7 +449,11 @@ what 4.23 sets as `cs.jdk.version`.
 | `EngineClient` | Calls the engine, failing over across replicas |
 | `HttpEngineTransport` / `MutualTls` | The mTLS transport |
 | `CallerContext` | The identity the engine filters every response by |
-| `ListAiModelsCmd`, `AiModelResponse` | The first command, end to end |
+| `EngineJob` / `EngineJobPoller` | The async bridge: polls `/v1/jobs/{id}` until the engine job leaves pending |
+| `AiServicesAsyncCmd` | Base class turning a CloudStack async job into an engine job |
+| `AiServicesEvents` / `AiServicesUsageTypes` | Section 9's thirteen action events and five usage types |
+| `AiDeploymentVO` / `AiDeploymentDao` | The ownership row and its DAO |
+| `ListAiModelsCmd`, `DeployAiModelCmd`, `DeleteAiModelDeploymentCmd` | Three commands, sync and async |
 | `schema-ai-services.sql` | The `ai_deployment` ownership table |
 
 ### Decisions taken, and why
@@ -477,6 +481,30 @@ usual `<parent>` block.
 state. The engine stays the source of truth for runtime state; this exists only so CloudStack
 can enforce ownership, filter lists and clean up on deletion.
 
+### More decisions
+
+**A 202 is the contract for an async command.** Anything else means the engine did not accept
+it, and treating a 200 as success would report work that never started.
+
+**A poll timeout is never reported as success.** The engine job may still be running, and
+calling it done is a lie the operator would act on.
+
+**Engine errors map onto CloudStack error codes rather than collapsing to one.** A 403 is a
+permission decision, and surfacing it as an internal error would hide from the tenant why
+their call failed.
+
+**Usage type ids start at 100.** CloudStack's own stop well below that, so a provider's
+billing pipeline can tell ours apart without ambiguity.
+
+**`cleanupAccount` removes only ownership rows.** The engine owns the running workloads and
+removes them when it next reconciles, because the spec they came from no longer lists them;
+deleting in both places would race.
+
+**The domain path is resolved from the domain DAO** — the placeholder is gone. The engine
+decides domain-admin visibility by prefix-matching it, so a partial path would hide a domain's
+own resources or expose a sibling's. An unresolvable domain now refuses rather than guessing,
+and CloudStack's trailing slash is stripped because the engine compares prefixes.
+
 ### Two things the compiler caught
 
 Worth recording, because both would have shipped as plausible-looking nonsense had the plugin
@@ -486,16 +514,19 @@ not through the `Map` supertype.
 
 ### What milestone 5 still needs
 
-1. The remaining 25 v1 commands, their responses, and the async bridge that polls
-   `/v1/jobs/{id}` and maps engine job states onto CloudStack async jobs.
-2. The `ai_deployment` DAO and VO, and wiring the SQL into a schema upgrade.
-3. Events (`AI.MODEL.MIRROR` and the rest), usage types, deletion hooks, and the host
-   maintenance listener that triggers a drain.
-4. `AiServicesManagerImpl.currentCaller()` resolves the domain path as `/<domainId>`, which is
-   a placeholder: it needs the domain DAO to produce a real path, and the engine's
-   domain-prefix matching depends on it.
-5. Marvin tests per default role, allowed and denied.
-6. The 4.22 LTS compile job from [ADR-0003](docs/adr/0003-cloudstack-release.md), which needs
-   a second CloudStack build.
-7. Coverage is 67% against the spec's 70% target; `AiServicesManagerImpl` is the gap, and
-   needs `CallContext` mocking.
+1. **22 more v1 commands.** Three of the 25 are written; the rest are mechanical now that
+   `AiServicesAsyncCmd` and the response-mapping pattern exist. `aisvc/api/commands.py` is the
+   list, and the Python tests track how many lack an engine route.
+2. **The account deletion hook is not wired.** `cleanupAccount` works and is tested, but
+   CloudStack 4.23 exposes no plugin-facing account-cleanup interface — `AccountCleanupTask`
+   is internal to `AccountManagerImpl` in the `server` module. This needs either an upstream
+   extension point or an event listener, and it is the one place where "deleting an account
+   removes its deployments" (section 14) is not yet true.
+3. **The host maintenance listener.** Section 7's drain-before-maintenance flow.
+4. **The schema upgrade is not wired.** `schema-ai-services.sql` exists but nothing applies it.
+5. **Marvin tests** per default role, allowed and denied. These need a running CloudStack, so
+   they belong with a simulator environment rather than this repo's unit suite.
+6. The **4.22 LTS compile job** from [ADR-0003](docs/adr/0003-cloudstack-release.md), which
+   needs a second CloudStack build.
+7. `AiDeploymentDaoImpl` is untested — CloudStack's `GenericDaoBase` needs a database, so it
+   wants the integration environment rather than JUnit.

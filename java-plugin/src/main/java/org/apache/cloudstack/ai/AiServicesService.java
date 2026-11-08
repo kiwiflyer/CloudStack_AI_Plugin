@@ -35,4 +35,11 @@ public interface AiServicesService extends PluggableService {
 
     /** The caller context for the current CloudStack session. */
     CallerContext currentCaller();
+
+    /**
+     * Remove every AI resource an account owns (SPEC.md section 9).
+     *
+     * @return how many ownership rows were removed.
+     */
+    int cleanupAccount(long accountId);
 }

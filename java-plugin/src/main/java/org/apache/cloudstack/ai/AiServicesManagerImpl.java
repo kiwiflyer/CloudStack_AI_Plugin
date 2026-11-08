@@ -19,15 +19,20 @@ import java.util.List;
 
 import javax.inject.Inject;
 
+import org.apache.cloudstack.ai.api.command.DeleteAiModelDeploymentCmd;
+import org.apache.cloudstack.ai.api.command.DeployAiModelCmd;
 import org.apache.cloudstack.ai.api.command.ListAiModelsCmd;
 import org.apache.cloudstack.ai.engine.CallerContext;
 import org.apache.cloudstack.ai.engine.EngineClient;
+import org.apache.cloudstack.ai.dao.AiDeploymentDao;
 import org.apache.cloudstack.ai.engine.EngineTransport;
 import org.apache.cloudstack.ai.engine.HttpEngineTransport;
 import org.apache.cloudstack.context.CallContext;
 import org.apache.cloudstack.framework.config.ConfigKey;
 import org.apache.cloudstack.framework.config.Configurable;
 
+import com.cloud.domain.Domain;
+import com.cloud.domain.dao.DomainDao;
 import com.cloud.user.Account;
 import com.cloud.user.User;
 import com.cloud.utils.component.ManagerBase;
@@ -42,6 +47,12 @@ import com.cloud.utils.component.ManagerBase;
 public class AiServicesManagerImpl extends ManagerBase
         implements AiServicesService, Configurable {
 
+    @Inject
+    private DomainDao domainDao;
+
+    @Inject
+    private AiDeploymentDao deploymentDao;
+
     private EngineClient engineClient;
     private EngineTransport transport;
 
@@ -49,6 +60,8 @@ public class AiServicesManagerImpl extends ManagerBase
     public List<Class<?>> getCommands() {
         List<Class<?>> commands = new ArrayList<>();
         commands.add(ListAiModelsCmd.class);
+        commands.add(DeployAiModelCmd.class);
+        commands.add(DeleteAiModelDeploymentCmd.class);
         // Milestones 7-9 add the remaining section 9 commands; the full
         // list and its role permissions are generated from
         // aisvc/api/commands.py.
@@ -114,15 +127,35 @@ public class AiServicesManagerImpl extends ManagerBase
         return new CallerContext(
                 String.valueOf(user.getUuid()),
                 account.getAccountName(),
-                context.getCallingAccount().getDomainId() == 1L ? "/" : domainPathOf(account),
+                domainPathOf(account.getDomainId()),
                 roleNameOf(account));
     }
 
-    private String domainPathOf(Account account) {
-        // The domain path is resolved by the caller's domain, which
-        // CloudStack exposes through the domain DAO. Populated when the
-        // ownership table lands with the remaining commands.
-        return "/" + account.getDomainId();
+    /**
+     * The caller's full domain path, for example /Customers/Acme.
+     *
+     * The engine decides domain-admin visibility by prefix-matching this
+     * against a resource's domain, so a wrong or partial path either
+     * hides a domain's own resources or exposes a sibling's. Resolved
+     * from the domain DAO rather than assembled from an id.
+     */
+    String domainPathOf(long domainId) {
+        Domain domain = domainDao == null ? null : domainDao.findById(domainId);
+        if (domain == null || domain.getPath() == null || domain.getPath().isEmpty()) {
+            throw new IllegalStateException(
+                    "cannot resolve the path of domain " + domainId
+                            + "; refusing to call the engine with an unknown domain");
+        }
+        String path = domain.getPath();
+        if (!path.startsWith("/")) {
+            path = "/" + path;
+        }
+        // CloudStack stores paths with a trailing slash; the engine
+        // compares them as prefixes, where a trailing slash would make
+        // /Customers/Acme/ fail to match /Customers/Acme.
+        return path.length() > 1 && path.endsWith("/")
+                ? path.substring(0, path.length() - 1)
+                : path;
     }
 
     private String roleNameOf(Account account) {
@@ -137,8 +170,33 @@ public class AiServicesManagerImpl extends ManagerBase
         }
     }
 
-    @Inject
-    public void setEngineClientForTesting(EngineClient client) {
-        this.engineClient = client;
+    /**
+     * Remove an account's deployments (SPEC.md section 9).
+     *
+     * Only the ownership rows: the engine owns the running workloads and
+     * removes them when it next reconciles, because the spec they were
+     * deployed from no longer lists them. Deleting here and there would
+     * race.
+     *
+     * NOTE: CloudStack 4.23 exposes no plugin-facing account-cleanup
+     * interface — AccountCleanupTask is internal to AccountManagerImpl —
+     * so this is not yet wired to account deletion. See PROGRESS.md.
+     */
+    @Override
+    public int cleanupAccount(long accountId) {
+        if (deploymentDao == null) {
+            return 0;
+        }
+        return deploymentDao.removeByAccount(accountId);
+    }
+
+    /** Test seam for the DAO, which is otherwise Spring-injected. */
+    void setDeploymentDao(AiDeploymentDao dao) {
+        this.deploymentDao = dao;
+    }
+
+    /** Test seam for the domain DAO. */
+    void setDomainDao(DomainDao dao) {
+        this.domainDao = dao;
     }
 }
