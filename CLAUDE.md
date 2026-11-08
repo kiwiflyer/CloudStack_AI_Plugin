@@ -5,8 +5,8 @@ Guidance for Claude Code working in this repository.
 ## Current state
 
 **Milestones 1–8 are done bar their noted gaps. Milestone 9 (v2) serves adapters,
-embeddings and rerank, runs guardrails and batches, and gates publishing; private
-endpoints are recorded but not attached.**
+embeddings and rerank, runs guardrails and batches, gates publishing, and takes a
+deployment off the public gateway; the proxy VM is built but nothing provisions it.**
 See `PROGRESS.md`.
 Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`, `db`,
 `reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, `setup`, `playground`,
@@ -14,9 +14,14 @@ Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`,
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
 v2 is reachable through the engine API and the CLI, not through CloudStack: its
-commands are `Release.V2` and the Java generator emits V1 only. Nothing attaches a VPC tier, fetches an
+commands are `Release.V2` and the Java generator emits V1 only. Nothing calls `ProxyProvisioner`, fetches an
 adapter's artefacts, produces an evaluation or calls the guard model. The batch
-worker (`aisvc batch`) has no leader election, so run one. `ui/` has the section, screens and strings but has
+worker (`aisvc batch`) has no leader election, so run one.
+
+**A Kubernetes LoadBalancer Service cannot be placed on a chosen network.** The
+CloudStack cloud-controller-manager takes a service's network from the nodes' first
+NIC; `loadBalancerIP` only picks among public IPs the account already holds. That is
+why a private endpoint is a proxy VM on the tenant's tier and not a Service. `ui/` has the section, screens and strings but has
 never been loaded by a real CloudStack UI, and its Playwright specs have never run. `terraform/` builds and unit-tests but
 its acceptance tests have never run against a live management server.
 `setup` plans the self-test but cannot run it: the steps need GPU capacity, so

@@ -325,6 +325,7 @@ def build_litellm_config(
     *,
     weights: Mapping[str, Mapping[str, int]] | None = None,
     adapters: Sequence[Any] = (),
+    exposures: Sequence[Any] = (),
     namespace: str = DEFAULT_NAMESPACE,
 ) -> dict[str, Any]:
     """Render the LiteLLM proxy config from `platform.yaml`.
@@ -340,12 +341,18 @@ def build_litellm_config(
     every `--lora-modules` entry as a served model under its own name.
     """
     weights = weights or {}
+    # A deployment whose public endpoint is switched off is left out of
+    # the shared gateway entirely (SPEC.md section 8). Otherwise
+    # "private" is a label on something anyone can still call.
+    private_only = {exposure.deployment for exposure in exposures if not exposure.public_enabled}
     model_list: list[dict[str, Any]] = []
     #: Where each base ended up, so adapters can follow it rather than
     #: pointing at a colour that may since have been retired.
     base_routes: dict[str, list[tuple[dict[str, Any], str]]] = {}
 
     for model in spec.document.models:
+        if model.name in private_only:
+            continue
         split = weights.get(model.name) or {"blue": 100}
         for colour in ("blue", "green"):
             weight = split.get(colour, 0)
@@ -375,6 +382,8 @@ def build_litellm_config(
             base_routes.setdefault(model.name, []).append((params, colour))
 
     for adapter in adapters:
+        # No base route means the base is private or undeployed; either
+        # way an adapter on it must not be publicly addressable.
         routes = base_routes.get(adapter.base_model)
         if not routes:
             # Registering a route to a base that is not deployed would

@@ -1430,3 +1430,84 @@ reach either.
 - **Batches run one at a time, in one process.** There is no leader
   election on the worker as there is for the reconciler, so two
   workers would both pick up the same job.
+
+## Milestone 9 — private endpoints
+
+**Status:** a deployment can be taken off the public gateway and
+fronted by a proxy with an address on the tenant's own VPC tier. The
+proxy is planned, its cloud-init rendered and its VM provisioned and
+destroyed idempotently. What is not written is below.
+
+1472 Python tests, 399 Java, 21 Go, 86 Vitest.
+
+### A Kubernetes Service cannot do this
+
+The obvious implementation is a `LoadBalancer` Service annotated onto
+the tenant's tier. It does not work, and the reason is worth recording
+because the design turns on it:
+
+CloudStack's cloud-controller-manager **derives a service's network
+from the nodes' first NIC** and exposes no annotation to choose one.
+`spec.loadBalancerIP` only selects among public IPs the account can
+already see. Neither can reach an arbitrary VPC tier. Checked against
+the provider's own documentation rather than assumed.
+
+So the proxy is a small VM with a NIC on that tier, forwarding to the
+in-cluster gateway — which is what SPEC's "per-tenant gateway proxy"
+meant all along.
+
+### Private means private
+
+`build_litellm_config` now leaves out any deployment whose public
+endpoint is switched off, and the deployer passes the stored exposures
+in on every run. Without that, "private" would be a label on something
+anyone could still call.
+
+An adapter follows its base off the public gateway. A private base with
+a publicly addressable adapter would be a hole straight through the
+control, and adapters are published as `<base>:<adapter>` on the same
+config.
+
+### The certificate is not in the userdata
+
+Userdata is readable through the CloudStack API by anyone who can see
+the VM, so an uploaded certificate is fetched at boot by id, over mTLS,
+and never written into the document. A test asserts no private key
+appears there; verified by rendering a real one and checking.
+
+ACME is only configured where the endpoint is still publicly
+reachable — the challenge has to arrive over the internet, and that
+failure would otherwise surface at renewal, months later.
+
+The proxy fronts **one deployment**. A per-tenant proxy that forwarded
+anything would be a second, unaudited route to the whole platform.
+
+### Ownership is CloudStack's answer
+
+`owned_networks` asks `listNetworks` for the account and domain. The
+engine has no view of a tenant's tiers, and a guess would let one
+tenant name another's network and get an address inside it. A refusal
+reads the same whether the network is someone else's or does not
+exist.
+
+Destroying a proxy expunges it: a VM in the recycle bin keeps its NIC
+on the tenant's tier, which is precisely what removing the endpoint was
+meant to take away.
+
+### What is still not true
+
+- **Nothing calls `ProxyProvisioner`.** It is tested against a fake
+  CloudStack and is correct in isolation, but the reconciler does not
+  yet plan proxies, so creating an exposure through the API records it
+  and takes the deployment off the public gateway without bringing up
+  the VM. The template and service offering it needs are also
+  unconfigured — there is no `proxy_template` in `platform.yaml`.
+- **`aisvc-fetch-cert` does not exist.** The userdata calls it; nothing
+  implements it, and there is no endpoint serving certificate material
+  by id.
+- **No certificate is stored.** `certificate_id` is accepted and passed
+  through; nothing uploads, validates or renews one.
+- **Adapter artefacts are not fetched**, evaluations are judged rather
+  than produced, and the guard model is not called.
+- **No v2 command reaches CloudStack**, and the batch worker still has
+  no leader election.

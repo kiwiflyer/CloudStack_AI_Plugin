@@ -57,6 +57,7 @@ class ServingDeployer:
         *,
         namespace: str = DEFAULT_NAMESPACE,
         adapters_for: Callable[[str], Sequence[Mapping[str, str]]] | None = None,
+        exposures_for: Callable[[], Sequence[Any]] | None = None,
     ) -> None:
         self.cluster = cluster
         self.spec = spec
@@ -67,6 +68,10 @@ class ServingDeployer:
         # and a gateway route to an adapter the engine never loaded
         # answers with a 404 the tenant cannot explain.
         self.adapters_for = adapters_for
+        # Supplied by the caller, which has the database. Without it
+        # every deployment stays public, which is the safe default
+        # for an engine that cannot see the exposures.
+        self.exposures_for = exposures_for
 
     def _target_for(self, name: str) -> DeploymentTarget:
         """Resolve an action name like `my-model-blue` back to a target."""
@@ -144,7 +149,12 @@ class ServingDeployer:
         """
         if weights is None:
             weights = observe_weights(self.cluster, namespace=self.namespace)
-        config = build_litellm_config(self.spec, weights=weights, namespace=self.namespace)
+        config = build_litellm_config(
+            self.spec,
+            weights=weights,
+            exposures=self.exposures_for() if self.exposures_for else (),
+            namespace=self.namespace,
+        )
         configmap: dict[str, Any] = {
             "apiVersion": "v1",
             "kind": "ConfigMap",

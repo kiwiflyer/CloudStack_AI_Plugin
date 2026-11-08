@@ -259,6 +259,13 @@ class ExposureStore:
     def get(self, exposure_id: str) -> PrivateEndpointRecord | None:
         return self.session.get(PrivateEndpointRecord, exposure_id)
 
+    def all(self) -> list[PrivateEndpointRecord]:
+        return list(
+            self.session.scalars(
+                select(PrivateEndpointRecord).order_by(PrivateEndpointRecord.created_at)
+            )
+        )
+
     def delete(self, record: PrivateEndpointRecord) -> None:
         self.session.delete(record)
         self.session.flush()

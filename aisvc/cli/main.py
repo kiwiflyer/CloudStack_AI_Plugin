@@ -26,7 +26,7 @@ from aisvc.batch.runner import (
 )
 from aisvc.cloudstack import CloudStackClient, CloudStackError, Credentials
 from aisvc.db import Base, RunLog, UsageStore, create_session_factory, session_scope
-from aisvc.db.tier2 import AdapterStore, BatchStore
+from aisvc.db.tier2 import AdapterStore, BatchStore, ExposureStore
 from aisvc.inventory import take_snapshot
 from aisvc.k8s import DEFAULT_NAMESPACE
 from aisvc.k8s.client import (
@@ -169,6 +169,20 @@ async def _observe(spec: PlatformSpec) -> ActualState:
     )
 
 
+def _exposures_for(session: Any) -> Callable[[], list[Any]]:
+    """How each deployment is exposed (SPEC.md section 8).
+
+    Without this every deployment stays in the public gateway, so a
+    tenant could switch public off and still be reachable.
+    """
+    store = ExposureStore(session)
+
+    def lookup() -> list[Any]:
+        return store.all()
+
+    return lookup
+
+
 def _adapters_for(session: Any) -> Callable[[str], list[dict[str, str]]]:
     """Which adapters each base should load (SPEC.md section 8)."""
     store = AdapterStore(session)
@@ -228,6 +242,7 @@ async def _apply(
                     _registry(),
                     namespace=namespace,
                     adapters_for=_adapters_for(session),
+                    exposures_for=_exposures_for(session),
                 )
                 executor = Executor(provisioner, RunLog(session), deployer=deployer)
                 run = await executor.execute(computed, zone=zone, dry_run=dry_run)

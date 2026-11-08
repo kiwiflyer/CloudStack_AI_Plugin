@@ -406,3 +406,52 @@ class TestBatchInputAndResults:
         response = client.get(f"/v1/batches/{batch_id}/results", headers=TENANT)
 
         assert response.headers["content-type"].startswith("application/x-ndjson")
+
+
+class TestNetworkOwnershipComesFromCloudStack:
+    """The engine must not guess at a tenant's VPC tiers.
+
+    Which networks an account holds is CloudStack's to answer; a guess
+    here would let one tenant name another's network and get an address
+    inside it.
+    """
+
+    def client_with(self, networks: Any) -> Any:
+        from fastapi.testclient import TestClient
+
+        from aisvc.api.app import create_app
+        from aisvc.registry import InMemoryObjectStore, ModelRegistry
+        from tests.unit.conftest import EngineServices, memory_sessions, spec_with
+
+        services = EngineServices(
+            spec=spec_with(),
+            registry=ModelRegistry(InMemoryObjectStore(), bucket="models"),
+            session_factory=memory_sessions(),
+            networks=networks,
+        )
+        return TestClient(create_app(services))
+
+    def attach(self, client: Any, network_id: str = "net-1") -> Any:
+        return client.post(
+            "/v1/endpoints/private",
+            json={
+                "deployment": "llama-3.3-70b-instruct",
+                "network_id": network_id,
+                "public_enabled": False,
+            },
+            headers=TENANT,
+        )
+
+    def test_a_network_the_account_holds_is_accepted(self) -> None:
+        assert self.attach(self.client_with(("net-1",))).status_code == 200
+
+    def test_one_it_does_not_hold_is_refused(self) -> None:
+        assert self.attach(self.client_with(("net-9",))).status_code == 400
+
+    def test_an_account_with_no_networks_can_attach_to_none(self) -> None:
+        assert self.attach(self.client_with(())).status_code == 400
+
+    def test_the_refusal_does_not_name_the_others(self) -> None:
+        response = self.attach(self.client_with(("net-7", "net-8")))
+
+        assert "net-7" not in response.text
