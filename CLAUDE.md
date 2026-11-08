@@ -13,8 +13,16 @@ Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`,
 `observability`, the `aisvc` CLI
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
-v2 is reachable through the engine API and the CLI, not through CloudStack: its
-commands are `Release.V2` and the Java generator emits V1 only. No CloudStack has run the proxy provisioner and no
+v2 is reachable through the engine API, the CLI and now CloudStack: the Java
+plugin generates all nineteen `Release.V2` commands, but registers them only when
+`ai.services.v2.enabled` is on (global, default false), so a GA install does not
+advertise an API for features it does not run. The UI has the v2 screens — adapters, batches, certificates,
+private endpoints, guardrails and an evaluations tab — gated by nothing of their own:
+CloudStack drops a route whose `permission` is missing from `listApis`, so the
+plugin's setting is the only switch. Terraform has the five v2 resources and an
+evaluations data source, declared unconditionally — a v1 install fails at apply with
+an error naming the setting, because Terraform cannot ask CloudStack what is
+registered before a plan. No CloudStack has run the proxy provisioner and no
 proxy has booted. Uploaded certificates are watched and can be
 replaced, but renewing one replaces its proxy VM — downtime, because a proxy fetches
 its material once at boot. ACME endpoints are probed on each apply, so a
@@ -27,7 +35,7 @@ worker (`aisvc batch`) has no leader election, so run one.
 CloudStack cloud-controller-manager takes a service's network from the nodes' first
 NIC; `loadBalancerIP` only picks among public IPs the account already holds. That is
 why a private endpoint is a proxy VM on the tenant's tier and not a Service. `ui/` has the section, screens and strings but has
-never been loaded by a real CloudStack UI, and its Playwright specs have never run. `terraform/` builds and unit-tests but
+never been loaded by a real CloudStack UI, and its Playwright specs have never run. `terraform/` builds and unit-tests (v1 and v2) but
 its acceptance tests have never run against a live management server.
 `setup` plans the self-test but cannot run it: the steps need GPU capacity, so
 section 14's first acceptance criterion is not yet met. Host maintenance drains
@@ -241,6 +249,23 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
 - **ADR-0002 — gateway:** LiteLLM Proxy. Enforcement hooks live in `gateway-hooks/` and
   **import `aisvc.profiles` directly** — never reimplement profile precedence, in any
   language. Stay on LiteLLM's MIT side: nothing from `enterprise/`, no licence-gated features.
+
+**Guardrail profiles are scoped to the caller**, not to a role: a caller writes at
+their own level and no higher (`aisvc/guardrails/authority.py`), so a tenant tightens
+their own account and cannot reach the platform profile. Deployment scope stays root
+admin's until there is a deployment-ownership lookup. A check `locked` at a higher
+scope is refused at authoring time, not merely ignored at resolution.
+
+**One command still promises more than the engine serves:** `createAiBudget` is
+granted to every role and served `AdminDep`. Here the engine is right — a tenant who
+could set their own budget could lift the limit blocking them — so the map is the side
+to narrow, which changes a published grant. `TestTheGrantMatchesTheEngine` pins it;
+do not add a second without deciding which side moves.
+
+**The Java generator's command table is a second copy** of `aisvc/api/commands.py` —
+it needs parameter types, response classes and event names the engine's map does not
+model. `tests/unit/test_commands.py` compares them, and parses SPEC section 9's table
+against the map as well. Add a command in one place and those guards name the others.
 
 **In the Java plugin:** build the caller context from `CallContext`, never from request
 parameters — the engine filters every response by what the plugin asserts. Never weaken the

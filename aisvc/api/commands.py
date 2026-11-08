@@ -248,6 +248,7 @@ COMMANDS: tuple[Command, ...] = (
         ALL,
         release=Release.V2,
     ),
+    _c("listAiPrivateEndpoints", "GET", "/v1/endpoints/private", ALL, release=Release.V2),
     _c(
         "createAiPrivateEndpoint",
         "POST",

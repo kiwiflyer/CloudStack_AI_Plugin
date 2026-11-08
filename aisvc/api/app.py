@@ -335,6 +335,65 @@ class CertificateBody(BaseModel):
     private_key: str = Field(min_length=1)
 
 
+def _guardrails_above(session: Any, caller: Any, scope: str) -> dict[Any, dict[str, Any]]:
+    """The checks already bound above the scope being written.
+
+    Only profiles that cover this caller: a lock at another account's
+    scope is above nobody. Used to refuse a check that is locked higher
+    up, rather than storing one `resolve_guardrails` would then ignore.
+    """
+    from aisvc.guardrails.authority import author_level, profile_applies_to
+
+    mine = author_level(scope)
+    above: dict[Any, dict[str, Any]] = {}
+    for record in GuardrailStore(session).all():
+        if not profile_applies_to(record, caller):
+            continue
+        try:
+            level = author_level(record.scope)
+        except Exception:
+            # A row stored before a scope was renamed cannot bind
+            # anything; it is not a reason to refuse this write.
+            continue
+        if level >= mine:
+            continue
+        above.setdefault(level, {}).update(record.checks or {})
+    return above
+
+
+def _exposure_row(record: Any) -> dict[str, Any]:
+    """One private endpoint, as the UI needs to read it.
+
+    `exposure` is the same phrase the create call returns, rebuilt from
+    the stored row rather than stored alongside it: two spellings of
+    one fact drift, and this one is shown to a buyer checking that an
+    endpoint really is private.
+    """
+    return {
+        "id": record.id,
+        "deployment": record.deployment,
+        "network": record.network_id,
+        "publicenabled": record.public_enabled,
+        "customdomain": record.custom_domain,
+        "tls": record.tls,
+        "certificate": record.certificate_id,
+        "account": record.account,
+        "created": record.created_at.isoformat() if record.created_at else None,
+        "exposure": describe_exposure(
+            EndpointExposure(
+                deployment=record.deployment,
+                account=record.account,
+                domain=record.domain,
+                public_enabled=record.public_enabled,
+                network_id=record.network_id,
+                custom_domain=record.custom_domain,
+                tls=TlsSource(record.tls),
+                certificate_id=record.certificate_id,
+            )
+        ),
+    }
+
+
 def _certificate_row(record: Any) -> dict[str, Any]:
     """Metadata only: no certificate body, and no key, ever."""
     return {
@@ -1155,9 +1214,32 @@ def _register_routes(app: FastAPI) -> None:
         summary="Create a guardrail profile",
     )
     async def create_guardrail_profile(
-        _: AdminDep, session: SessionDep, body: GuardrailBody
+        caller: CallerDep, session: SessionDep, body: GuardrailBody
     ) -> dict[str, Any]:
-        """Admin only: a guardrail an account can remove is not one."""
+        """Scoped to the caller (SPEC.md sections 6, 8).
+
+        Not admin-only. The objection that made it so — a guardrail an
+        account can remove is not one — is answered by the scope rule
+        rather than by shutting tenants out: they may write at their
+        own level and no higher, so tightening their own account is
+        theirs and the platform profile screening them is untouchable.
+        """
+        from aisvc.guardrails.authority import (
+            GuardrailRejected,
+            check_may_author,
+            check_not_locked_above,
+        )
+
+        try:
+            check_may_author(caller, scope=body.scope, target=body.target)
+            check_not_locked_above(
+                body.checks,
+                scope=body.scope,
+                higher=_guardrails_above(session, caller, body.scope),
+            )
+        except GuardrailRejected as exc:
+            raise ApiError(exc.status_code, exc.detail, code=exc.reason) from exc
+
         checks = body.checks
         if body.preset:
             available = presets()
@@ -1178,8 +1260,20 @@ def _register_routes(app: FastAPI) -> None:
         return _guardrail_row(record)
 
     @app.get(f"{PREFIX}/profiles/guardrail", tags=["profiles"], summary="List guardrail profiles")
-    async def list_guardrail_profiles(_: AdminDep, session: SessionDep) -> dict[str, Any]:
-        rows = [_guardrail_row(r) for r in GuardrailStore(session).all()]
+    async def list_guardrail_profiles(caller: CallerDep, session: SessionDep) -> dict[str, Any]:
+        """What screens this caller, plus what is theirs to change.
+
+        Deliberately wider than what they may edit: a tenant who
+        cannot read the platform profile cannot explain a block to
+        their own customer.
+        """
+        from aisvc.guardrails.authority import profile_applies_to
+
+        rows = [
+            _guardrail_row(record)
+            for record in GuardrailStore(session).all()
+            if profile_applies_to(record, caller)
+        ]
         return {"count": len(rows), "profiles": rows}
 
     @app.patch(
@@ -1188,16 +1282,40 @@ def _register_routes(app: FastAPI) -> None:
         summary="Update a guardrail profile",
     )
     async def update_guardrail_profile(
-        profile_id: str, _: AdminDep, session: SessionDep, body: GuardrailPatch
+        profile_id: str, caller: CallerDep, session: SessionDep, body: GuardrailPatch
     ) -> dict[str, Any]:
+        from aisvc.guardrails.authority import (
+            GuardrailRejected,
+            check_may_author,
+            check_not_locked_above,
+            profile_applies_to,
+        )
+
         store = GuardrailStore(session)
         record = store.get(profile_id)
-        if record is None:
+        if record is None or not profile_applies_to(record, caller):
+            # Not found rather than forbidden for one they cannot see:
+            # otherwise this says which profile ids exist.
             raise ApiError(
                 status.HTTP_404_NOT_FOUND,
                 f"no such guardrail profile: {profile_id}",
                 code="profile_not_found",
             )
+
+        try:
+            check_may_author(caller, scope=record.scope, target=record.target)
+            if body.target is not None and body.target != record.target:
+                # Checked at the new target too, or the account rule
+                # would be a formality: create it for yourself, move it.
+                check_may_author(caller, scope=record.scope, target=body.target)
+            check_not_locked_above(
+                body.checks,
+                scope=record.scope,
+                higher=_guardrails_above(session, caller, record.scope),
+            )
+        except GuardrailRejected as exc:
+            raise ApiError(exc.status_code, exc.detail, code=exc.reason) from exc
+
         store.update(record, checks=body.checks, target=body.target)
         return _guardrail_row(record)
 
@@ -1207,11 +1325,22 @@ def _register_routes(app: FastAPI) -> None:
         summary="Delete a guardrail profile",
     )
     async def delete_guardrail_profile(
-        profile_id: str, _: AdminDep, session: SessionDep
+        profile_id: str, caller: CallerDep, session: SessionDep
     ) -> dict[str, Any]:
+        from aisvc.guardrails.authority import (
+            GuardrailRejected,
+            check_may_author,
+            profile_applies_to,
+        )
+
         store = GuardrailStore(session)
         record = store.get(profile_id)
-        if record is None:
+        if record is not None and profile_applies_to(record, caller):
+            try:
+                check_may_author(caller, scope=record.scope, target=record.target)
+            except GuardrailRejected as exc:
+                raise ApiError(exc.status_code, exc.detail, code=exc.reason) from exc
+        if record is None or not profile_applies_to(record, caller):
             raise ApiError(
                 status.HTTP_404_NOT_FOUND,
                 f"no such guardrail profile: {profile_id}",
@@ -1556,6 +1685,25 @@ def _register_routes(app: FastAPI) -> None:
             "deployment": record.deployment,
             "exposure": describe_exposure(exposure),
         }
+
+    @app.get(
+        f"{PREFIX}/endpoints/private",
+        tags=["deployments"],
+        summary="List private endpoints",
+    )
+    async def list_private_endpoints(caller: CallerDep, session: SessionDep) -> dict[str, Any]:
+        """Which deployments are exposed, and how.
+
+        Create and delete shipped without this, so a tenant had no way
+        to learn the id delete wants, and no screen could show what
+        they had. Filtered by the caller like every other list.
+        """
+        rows = [
+            _exposure_row(record)
+            for record in ExposureStore(session).all()
+            if caller.may_see(account=record.account, domain_path=record.domain)
+        ]
+        return {"count": len(rows), "endpoints": rows}
 
     @app.delete(
         f"{PREFIX}/endpoints/private/{{exposure_id}}",

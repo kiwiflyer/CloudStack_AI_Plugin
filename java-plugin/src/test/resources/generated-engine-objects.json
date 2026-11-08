@@ -1,4 +1,14 @@
 {
+  "AiAdapterResponse": {
+    "account": "sample",
+    "basemodel": "sample",
+    "id": "sample",
+    "name": "sample",
+    "rank": 7,
+    "servedmodelname": "sample",
+    "shared": true,
+    "sizebytes": 1234
+  },
   "AiApiKeyResponse": {
     "allowed_models": "sample",
     "expires_at": "sample",
@@ -7,6 +17,15 @@
     "name": "sample",
     "secret": "sample"
   },
+  "AiBatchResponse": {
+    "account": "sample",
+    "created": "sample",
+    "finished": "sample",
+    "id": "sample",
+    "model": "sample",
+    "requestcount": 7,
+    "status": "sample"
+  },
   "AiBudgetResponse": {
     "account": "sample",
     "currency": "sample",
@@ -14,6 +33,14 @@
     "monthly": 1.5,
     "on_exceed": "sample",
     "spent": 1.5
+  },
+  "AiCertificateResponse": {
+    "account": "sample",
+    "customdomain": "sample",
+    "expires": "sample",
+    "fingerprint": "sample",
+    "id": "sample",
+    "serial": 7
   },
   "AiEffectiveParameterResponse": {
     "locked": true,
@@ -29,6 +56,14 @@
     "price_tier": "sample",
     "task": "sample"
   },
+  "AiEvaluationResponse": {
+    "id": "sample",
+    "model": "sample",
+    "overridden": true,
+    "passed": true,
+    "revision": "sample",
+    "summary": "sample"
+  },
   "AiGpuCapacityResponse": {
     "gpu_class": "sample",
     "gpus_free": 7,
@@ -41,6 +76,12 @@
     "host_tag": "sample",
     "hosts": 7,
     "suggested_name": "sample"
+  },
+  "AiGuardrailProfileResponse": {
+    "id": "sample",
+    "name": "sample",
+    "scope": "sample",
+    "target": "sample"
   },
   "AiHfCheckResponse": {
     "architecture": "sample",
@@ -64,6 +105,17 @@
     "expires_at": "sample",
     "model": "sample",
     "session_key": "sample"
+  },
+  "AiPrivateEndpointResponse": {
+    "account": "sample",
+    "certificate": "sample",
+    "customdomain": "sample",
+    "deployment": "sample",
+    "exposure": "sample",
+    "id": "sample",
+    "network": "sample",
+    "publicenabled": true,
+    "tls": "sample"
   },
   "AiProfileResponse": {
     "id": "sample",

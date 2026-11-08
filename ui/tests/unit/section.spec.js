@@ -70,10 +70,91 @@ describe('SPEC.md section 9 screens', () => {
     expect(names.indexOf('aimodelcatalog')).toBeLessThan(names.indexOf('aisetup'))
   })
 
-  it('ships no v2 screen yet', () => {
-    const names = screens().map((s) => s.name)
-    for (const v2 of ['aiadapter', 'aibatch', 'aiguardrail', 'aievaluation']) {
-      expect(names).not.toContain(v2)
+  it.each([
+    'aiadapter',
+    'aibatch',
+    'aicertificate',
+    'aiprivateendpoint',
+    'aiguardrail'
+  ])('has the v2 screen %s', (name) => {
+    expect(byName(name)).toBeTruthy()
+  })
+})
+
+// CloudStack's own gate. `filterAsyncRouter` drops any route whose
+// `permission` entries are not in the account's `listApis` answer, and
+// `hasAccessToSection` then drops a section left with no children. So
+// a v2 screen disappears on its own when ai.services.v2.enabled is
+// off: the plugin stops registering listAiAdapters, listApis stops
+// naming it, and the route never reaches the menu.
+//
+// This is why no v2 screen carries a `show` flag of its own. A second
+// switch is a switch that disagrees with the first one.
+function reachable (availableApis) {
+  const apis = new Set(availableApis)
+  return screens()
+    .filter((screen) => (screen.permission ?? []).every((api) => apis.has(api)))
+    .map((screen) => screen.name)
+}
+
+const V1_APIS = [
+  'listAiModels', 'listAiEndpoints', 'createAiPlaygroundSession',
+  'listAiGenerationProfiles', 'getAiEffectiveParameters', 'listAiUsage',
+  'listAiSetupChecks', 'searchAiHfModels', 'listAiGpuCapacity',
+  'listAiModelDeployments', 'listAiServingProfiles', 'listAiReconcilerRuns'
+]
+const V2_APIS = [
+  'listAiAdapters', 'listAiBatches', 'listAiCertificates',
+  'listAiPrivateEndpoints', 'listAiGuardrailProfiles'
+]
+
+describe('v2 screens follow the plugin, not a flag of their own', () => {
+  beforeEach(() => asRole('Admin'))
+
+  it('declares no v2 screen with its own show flag', () => {
+    // Visibility is the permission; a `show` here could contradict the
+    // setting the plugin registers by.
+    // aiguardrail included: the engine scopes guardrails per caller
+    // now, so the UI has nothing left to compensate for.
+    for (const name of ['aiadapter', 'aibatch', 'aicertificate', 'aiprivateendpoint', 'aiguardrail']) {
+      expect(byName(name).show, `${name} second-guesses the plugin`).toBeUndefined()
+    }
+  })
+
+  it('hides every v2 screen on a v1 install', () => {
+    const visible = reachable(V1_APIS)
+    for (const v2 of ['aiadapter', 'aibatch', 'aicertificate', 'aiprivateendpoint', 'aiguardrail']) {
+      expect(visible, `${v2} showed up without its command`).not.toContain(v2)
+    }
+  })
+
+  it('leaves the v1 screens alone on a v1 install', () => {
+    const visible = reachable(V1_APIS)
+    expect(visible).toContain('aimodelcatalog')
+    expect(visible).toContain('aiendpoint')
+  })
+
+  it('shows them once the plugin registers v2', () => {
+    const visible = reachable([...V1_APIS, ...V2_APIS])
+    for (const v2 of ['aiadapter', 'aibatch', 'aicertificate', 'aiprivateendpoint', 'aiguardrail']) {
+      expect(visible).toContain(v2)
+    }
+  })
+
+  it('offers guardrails to a tenant', () => {
+    // SPEC.md section 9's UI table lists Guardrails as a tenant
+    // screen. It was admin-only while the engine's routes were, and
+    // the engine scopes them per caller now.
+    asRole('User')
+    expect(byName('aiguardrail').show).toBeUndefined()
+  })
+
+  it('keeps every v2 screen behind a v2 command', () => {
+    // The gate only works if the permission is one the plugin holds
+    // back. A v2 screen permitted by a v1 command would always show.
+    const v2 = new Set(V2_APIS)
+    for (const name of ['aiadapter', 'aibatch', 'aicertificate', 'aiprivateendpoint', 'aiguardrail']) {
+      expect(byName(name).permission.some((api) => v2.has(api)), name).toBe(true)
     }
   })
 })

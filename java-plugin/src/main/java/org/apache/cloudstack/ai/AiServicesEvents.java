@@ -39,6 +39,12 @@ public final class AiServicesEvents {
     public static final String KEY_REVOKE = "AI.KEY.REVOKE";
     public static final String BUDGET_THRESHOLD = "AI.BUDGET.THRESHOLD";
     public static final String NODE_DRAIN = "AI.NODE.DRAIN";
+
+    // Tier 2 (SPEC.md section 8).
+    public static final String ADAPTER_UPLOAD = "AI.ADAPTER.UPLOAD";
+    public static final String ADAPTER_DELETE = "AI.ADAPTER.DELETE";
+    public static final String BATCH_CREATE = "AI.BATCH.CREATE";
+    public static final String BATCH_CANCEL = "AI.BATCH.CANCEL";
     /** v2, with the guardrail profiles of section 8. */
     public static final String GUARDRAIL_BLOCK = "AI.GUARDRAIL.BLOCK";
 

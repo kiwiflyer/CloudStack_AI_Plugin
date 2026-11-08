@@ -372,12 +372,12 @@ A Java API plugin owns auth, RBAC, async jobs, events, usage and limits, and a V
 | `promoteAiRollout`, `rollbackAiRollout` | POST `/v1/deployments/{id}/rollout/...` | Yes | All | v1 |
 | `listAiEndpoints` | GET `/v1/endpoints` | No | All | v1 |
 | `createAiApiKey`, `listAiApiKeys`, `revokeAiApiKey` | `/v1/keys` | No | All | v1 |
-| `list/create/update/deleteAiServingProfile` | `/v1/profiles/serving` | Yes (edits roll out) | Root admin | v1 |
-| `list/create/update/deleteAiGenerationProfile` | `/v1/profiles/generation` | No | All, scoped | v1 |
+| `listAiServingProfiles`, `createAiServingProfile`, `updateAiServingProfile`, `deleteAiServingProfile` | `/v1/profiles/serving` | Yes (edits roll out) | Root admin | v1 |
+| `listAiGenerationProfiles`, `createAiGenerationProfile`, `updateAiGenerationProfile`, `deleteAiGenerationProfile` | `/v1/profiles/generation` | No | All, scoped | v1 |
 | `assignAiTuningProfile` | POST `/v1/profiles/assignments` | Yes for serving | All, scoped | v1 |
 | `getAiEffectiveParameters` | GET `/v1/profiles/effective` | No | All | v1 |
 | `listAiUsage` | GET `/v1/usage` | No | All | v1 |
-| `list/create/update/deleteAiBudget` | `/v1/budgets` | No | All, scoped | v1 |
+| `listAiBudgets`, `createAiBudget`, `updateAiBudget`, `deleteAiBudget` | `/v1/budgets` | No | All, scoped | v1 |
 | `createAiPlaygroundSession` | POST `/v1/playground/sessions` | No | All | v1 |
 | `listAiSetupChecks` | GET `/v1/setup/preflight` | No | Root admin | v1 |
 | `discoverAiGpuClasses` | GET `/v1/setup/gpu-discovery` | No | Root admin | v1 |
@@ -385,11 +385,13 @@ A Java API plugin owns auth, RBAC, async jobs, events, usage and limits, and a V
 | `listAiGpuCapacity` | GET `/v1/capacity` | No | Admin | v1 |
 | `drainAiNode` | POST `/v1/nodes/{id}/drain` | Yes | Admin | v1 |
 | `listAiReconcilerRuns` | GET `/v1/runs` | No | Admin | v1 |
-| `list/upload/deleteAiAdapter` | `/v1/adapters` | Yes for upload | All, scoped | v2 |
-| `create/list/cancelAiBatch` | `/v1/batches` | Yes | All | v2 |
-| `list/create/update/deleteAiGuardrailProfile` | `/v1/profiles/guardrail` | No | All, scoped | v2 |
+| `listAiAdapters`, `uploadAiAdapter`, `deleteAiAdapter` | `/v1/adapters` | Yes for upload | All, scoped | v2 |
+| `createAiBatch`, `listAiBatches`, `cancelAiBatch` | `/v1/batches` | Yes for create | All | v2 |
+| `getAiBatchResults` | GET `/v1/batches/{id}/results` | No | All | v2 |
+| `listAiGuardrailProfiles`, `createAiGuardrailProfile`, `updateAiGuardrailProfile`, `deleteAiGuardrailProfile` | `/v1/profiles/guardrail` | No | All, scoped | v2 |
 | `runAiModelEvaluation`, `listAiEvaluations` | `/v1/models/{id}/evaluations` | Yes | Admin | v2 |
-| `create/deleteAiPrivateEndpoint` | `/v1/endpoints/private` | Yes | All, where enabled | v2 |
+| `uploadAiCertificate`, `listAiCertificates`, `replaceAiCertificate`, `deleteAiCertificate` | `/v1/certificates` | Yes for upload, replace, delete | All, scoped | v2 |
+| `listAiPrivateEndpoints`, `createAiPrivateEndpoint`, `deleteAiPrivateEndpoint` | `/v1/endpoints/private` | Yes for create, delete | All, where enabled | v2 |
 
 **UI section**
 

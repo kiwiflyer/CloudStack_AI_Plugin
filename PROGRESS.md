@@ -1954,3 +1954,305 @@ second sweep was silent.
   downtime; adapter artefacts are not fetched; evaluations are judged
   rather than produced; the guard model is not called; no v2 command
   reaches CloudStack; and the batch worker has no leader election.
+
+## Milestone 9 — v2 in CloudStack
+
+The nineteen Tier 2 commands existed in `aisvc/api/commands.py` marked
+`Release.V2`, and the Java generator emitted V1 only. So v2 was
+reachable through the engine API and the operator CLI, and through
+nothing a tenant or an operator actually uses. It is now generated:
+nineteen command classes, six response types, four Tier 2 event
+constants, and registration in `AiServicesManagerImpl`.
+
+### Generated, but not registered by default
+
+A GA install should not advertise an API for features it does not run,
+and the engine already draws that line with `Release.V2`. The plugin
+draws it in the same place: the classes ship, and
+`ai.services.v2.enabled` (global, default false) decides whether
+`getCommands()` returns them. Turning it on is how an operator exercises
+v2 without a separate build.
+
+`getCommands()` reads it through `v2Enabled()`, its own method so the
+split can be tested without a `ConfigDepot` — in a unit test the key
+falls back to its default, which is the production answer anyway.
+
+### The generator's table was an unguarded copy
+
+`java-plugin/tools/generate_commands.py` carries a second description of
+the same commands, because it needs parameter types, response classes
+and event names that `commands.py` does not model. Nothing compared the
+two. A v2 command added to `commands.py` would simply never reach
+CloudStack — silently, with every test still green, which is exactly how
+v2 came to be absent in the first place.
+
+`TestTheGeneratorAgrees` now compares them by name, method, async flag,
+release and path, normalising the placeholder names (the generator
+substitutes the Java field, so `{model_name}` against `{modelId}` is not
+drift). Three of its tests feed it a deliberately drifted table and
+assert it complains, because a guard nobody has seen fail is not a
+guard. Two commands are exempt and listed by name: `deployAiModel` and
+`deleteAiModelDeployment` own the `ai_deployment` row CloudStack uses for
+ownership and cleanup, which the generator does not model, so they stay
+hand-written.
+
+### SPEC section 9's table had lost five commands
+
+Parsing the table against the command map found `getAiBatchResults` and
+all four certificate commands missing from it — the second time this
+table has fallen behind, after three v1 commands earlier in the
+milestone. Both times it was found by reading, not by a test.
+
+The cause was the table's own shorthand. `list/upload/deleteAiAdapter`
+cannot spell `listAiAdapters`, so a row that looked complete named a
+command that does not exist and omitted one that does. Every grouped row
+now names its commands in full, and `TestTheSpecTable` parses the table
+and fails on a command missing from it or invented by it.
+
+### What is still not true
+
+- **No CloudStack has loaded these classes.** They compile, and 423
+  Java tests pass against them, but the plugin has never been deployed
+  to a management server — the same gap milestones 5 and 6 carry.
+- **There is no v2 UI and no v2 Terraform.** `ui/src/views/aiservices/`
+  has no adapter, batch, guardrail, certificate or private-endpoint
+  screen, and `terraform/` has no v2 resource. CLAUDE.md's rule that
+  everything in the UI also works through CloudMonkey holds trivially:
+  with the setting on, CloudMonkey gets all nineteen verbs, and the UI
+  gets none of them.
+- **Default role permissions are computed and never emitted.**
+  `role_permissions_rules()` produces the lines, and nothing writes them
+  into the schema SQL or a `commands.properties`, for v1 either. How
+  CloudStack 4.23 dynamic roles should be seeded is an open question,
+  not an oversight to patch quietly.
+- Everything the previous entries list as untrue remains so: adapter
+  artefacts are not fetched, evaluations are judged rather than
+  produced, the guard model is not called, uploaded-certificate renewal
+  replaces the proxy, and the batch worker has no leader election.
+
+## Milestone 9 — the v2 UI
+
+Five screens and a tab, so the Tier 2 commands registered last entry
+have somewhere to be used: Adapters, Batch jobs, Certificates and
+Private endpoints for a tenant, Guardrail profiles for an admin, and an
+Evaluations tab on the registry.
+
+### The gate is CloudStack's, not a flag of ours
+
+None of the v2 screens carries a `show` of its own. CloudStack's
+`filterAsyncRouter` drops a route whose `permission` entries are absent
+from the account's `listApis` answer, and `hasAccessToSection` then
+drops a section left with no children. So when `ai.services.v2.enabled`
+is off the plugin does not register `listAiAdapters`, `listApis` does
+not name it, and the screen is not in the menu — without the UI knowing
+the setting exists. A second switch here could only disagree with the
+first one.
+
+That is asserted rather than assumed: `section.spec.js` reimplements
+CloudStack's filter and checks that a v1 API list hides every v2 screen,
+leaves the v1 screens alone, and that each v2 screen is permitted by a
+command the plugin actually holds back — a v2 screen permitted by a v1
+command would always show.
+
+### Private endpoints had no list
+
+`createAiPrivateEndpoint` and `deleteAiPrivateEndpoint` shipped; nothing
+listed them. A tenant could create an exposure and then had no way to
+learn the id that delete wants, and no screen could draw anything. So
+`GET /v1/endpoints/private` and `listAiPrivateEndpoints` are new, with
+the row carrying the same `exposure` phrase the create call returns —
+rebuilt from the stored row rather than stored beside it, because two
+spellings of one fact drift, and this is the sentence a regulated buyer
+reads to check an endpoint really is private.
+
+The drift guard added in the previous entry caught the new command
+immediately: it failed on `ListAiPrivateEndpointsCmd` being registered
+but absent from the pinned list, which is what it is for.
+
+### Evaluations are a tab, not a screen
+
+`listAiEvaluations` is `GET /v1/models/{model_name}/evaluations` — it
+has no model-less form, so there is no list to draw. It belongs on the
+registry row, which is the model. The tab shows the gate's verdict
+rather than the score, and shows an override as its own state: "blocked"
+and "blocked, published anyway by a root admin" mean very different
+things to whoever reviews the catalog.
+
+### Guardrails are admin-only here, and the map disagrees
+
+The command map grants `list/create/update/deleteAiGuardrailProfile` to
+every role; all four engine routes take `AdminDep`. A tenant offered the
+screen would get a 403 from the engine with nothing to explain it, so
+the screen is `show: isAdmin` — the same compensation the budgets screen
+already makes, for the same reason.
+
+Checking the map against the engine's route dependencies found three
+such disagreements in all: `createAiBudget`, `listAiGuardrailProfiles`
+and `createAiGuardrailProfile`. None is a security hole — the engine is
+the authority and it is the stricter side — but each means CloudStack
+accepts a call it will not honour.
+
+**Which side should move is an open question, not an oversight.**
+SPEC.md section 8 calls guardrails "the third profile type in section 6,
+with the same scopes and lock semantics", and section 9's UI table lists
+Guardrails as a tenant screen — both of which say the engine should be
+caller-scoped and the map is right. But making it so means implementing
+scope and lock precedence for guardrails, which is a design, not a flag.
+It is recorded here rather than guessed at.
+
+### What is still not true
+
+- **No CloudStack has rendered any of this.** The Playwright specs for
+  v2 exist and skip; all 44 UI e2e specs have still never run against a
+  real management server, the same gap milestone 6 carries.
+- **There is no v2 Terraform resource.** CLAUDE.md requires that
+  everything in the UI also works through CloudMonkey and Terraform.
+  CloudMonkey gets the verbs for free once the setting is on; Terraform
+  does not, so that rule is now half-met and the provider is owed five
+  resources.
+- The engine still does not fetch adapter artefacts, produce an
+  evaluation, or call the guard model, so these screens will list what
+  the API records rather than work anyone has done.
+
+## Milestone 9 — v2 in Terraform
+
+Five resources and a data source, so CLAUDE.md's rule that everything in
+the UI also works through CloudMonkey and Terraform holds for Tier 2:
+`cloudstack_ai_adapter`, `_batch`, `_certificate`, `_private_endpoint`,
+`_guardrail_profile`, and `cloudstack_ai_evaluations`.
+
+### Declared unconditionally, and the failure says why
+
+Terraform cannot ask CloudStack what is registered before a plan, and a
+resource that came and went with a setting would be a schema error
+rather than a message anyone can act on. So the resources are always
+declared, a v1 install fails at apply, and `v2Error` turns CloudStack's
+"unknown API command" into a sentence naming `ai.services.v2.enabled`.
+
+Only that one case. A permission or validation error dressed up as a v2
+problem would send an operator to the wrong place entirely, which is
+worse than the bare message — so there is a test for each half.
+
+### What these resources are, stated rather than assumed
+
+- **A batch is work, not desired state.** Destroy cancels what has not
+  run; what has run stays billed with its results available. Every
+  argument is `ForceNew` because a submitted batch cannot be changed.
+- **A certificate renews in place.** New material calls
+  `replaceAiCertificate` rather than forcing a new resource, so every
+  private endpoint naming that id keeps naming it — which is the whole
+  reason the command exists.
+- **Its body and key are write-once**, the same trap as the API key
+  secret: `listAiCertificates` returns metadata only, so `Read` touches
+  neither. Writing back what the response does not carry would empty
+  both on the next refresh, and nothing could recover them.
+- **A private endpoint cannot be edited**: no update command, because
+  the proxy VM is built from those values at boot.
+
+### A second drift guard, and what it found
+
+Nothing tied the provider's command names to `aisvc/api/commands.py` —
+they are string literals, so a rename leaves a resource that builds,
+tests, plans and then fails at apply. `commands_test.go` now reads the
+map and checks every name, as the UI does from its side.
+
+Writing it turned up that `profileResource` assembles its commands by
+concatenation (`"createAi" + title + "Profile"`), so eight command names
+never appear whole in the source and a scan cannot see them. They are
+listed explicitly and checked against the map, rather than left as the
+one place names are assembled and nothing verifies.
+
+### What is still not true
+
+- **No acceptance test has run against a live management server**, v1
+  or v2. The new ones are gated on `CLOUDSTACK_AI_V2=1` as well as
+  `TF_ACC`, so a v1 zone skips them rather than failing for a reason
+  that is not a bug — but that gate has never been lifted.
+- **The guardrail resource will 403 for a tenant.** It is declared for
+  every role because the command map grants it to every role; the
+  engine's routes are admin-only. The same unresolved question the UI
+  entry records.
+- These resources express what the API records. The engine still does
+  not fetch adapter artefacts, produce an evaluation, or call the guard
+  model.
+
+## Milestone 9 — guardrails scoped to the caller
+
+The guardrail routes were admin-only, and section 8 says guardrails are
+"the third profile type in section 6, with the same scopes and lock
+semantics" while section 9's UI table lists them as a tenant screen.
+Both were untrue, and the command map — which grants them to every role
+— promised a call the engine refused with a bare 403.
+
+They are scoped now: `aisvc/guardrails/authority.py`.
+
+### The objection was right; shutting tenants out was the wrong answer
+
+The old comment read *a guardrail an account can remove is not one*,
+and that is correct. The scope rule answers it rather than reversing it:
+a caller may write at their own level and no higher, so tightening their
+own account is theirs to do and the platform profile screening them is
+unreachable — they cannot edit it, retarget it or delete it.
+
+| scope | who may write it |
+| --- | --- |
+| platform | root admin |
+| domain | root admin, or a domain admin inside their own domain |
+| account | root admin, or the account itself |
+| deployment | root admin |
+
+A domain admin may not write *at* their own domain's parent either:
+`/Customers` would bind a profile over every other reseller in it.
+
+**Deployment scope is root admin's, and that is a limitation rather than
+a decision.** A deployment name does not say who owns it and the engine
+has no ownership lookup for one, so a tenant could otherwise bind a
+weaker profile over someone else's deployment. A tenant tightens at the
+account scope, which is what section 9's table describes.
+
+### Authority and locks are different rules
+
+Authority is about the scope. A lock is about one check, and
+`resolve_guardrails` already ignored a lower layer that touched one — so
+nothing unsafe was getting through before either.
+
+Authoring refuses it anyway, which protects nothing extra and is still
+worth doing: a tenant whose profile was accepted and then silently
+dropped believes their rule is in force. A locked check is refused even
+when the new value is *stricter*, because otherwise the lock's meaning
+would depend on which direction someone moved it.
+
+### Listing is wider than editing, on purpose
+
+A tenant sees the platform profile and any domain profile bound over
+them, and cannot change either. Hiding them would only leave a tenant
+unable to explain a block to their own customer.
+
+### Retargeting was the hole worth closing
+
+`updateAiGuardrailProfile` takes a target, so the account rule would
+have been a formality — create a profile for yourself, then move it onto
+someone else. The new target is checked for authority too.
+
+### Three disagreements became one, and it is now pinned
+
+Guardrails were three of the four places the command map promised more
+than the engine served. What is left is `createAiBudget`, and there the
+**engine** is the right side: a tenant who could set their own budget
+could lift the limit blocking them. Narrowing the map changes a
+published grant, so it is recorded, not done quietly.
+
+`TestTheGrantMatchesTheEngine` reads the routes, compares them to the
+grants and pins the remaining one by name, so a fourth cannot appear
+unnoticed — and asserts the guardrail routes are not admin-only again.
+
+### What is still not true
+
+- **The guard model is still not called.** These profiles decide what
+  *would* be checked; `check_input` runs the PII and size checks, and
+  the open-weight guard model behind the content checks is not wired
+  to anything.
+- **Deployment-scope guardrails need an ownership lookup** before a
+  tenant can set one, as above.
+- None of this has run against a real CloudStack, the same gap every
+  milestone-9 entry carries.

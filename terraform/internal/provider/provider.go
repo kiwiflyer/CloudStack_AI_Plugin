@@ -48,9 +48,21 @@ func New() *schema.Provider {
 			"cloudstack_ai_generation_profile": resourceAiGenerationProfile(),
 			"cloudstack_ai_serving_profile":    resourceAiServingProfile(),
 			"cloudstack_ai_budget":             resourceAiBudget(),
+
+			// Tier 2. Declared unconditionally: Terraform cannot ask
+			// CloudStack what is registered before a plan, and a
+			// resource that came and went would be a schema error
+			// rather than a message anyone can act on. v2Error turns
+			// "unknown command" into the setting to turn on.
+			"cloudstack_ai_adapter":           resourceAiAdapter(),
+			"cloudstack_ai_batch":             resourceAiBatch(),
+			"cloudstack_ai_certificate":       resourceAiCertificate(),
+			"cloudstack_ai_private_endpoint":  resourceAiPrivateEndpoint(),
+			"cloudstack_ai_guardrail_profile": resourceAiGuardrailProfile(),
 		},
 		DataSourcesMap: map[string]*schema.Resource{
-			"cloudstack_ai_models": dataSourceAiModels(),
+			"cloudstack_ai_models":      dataSourceAiModels(),
+			"cloudstack_ai_evaluations": dataSourceAiEvaluations(),
 		},
 		ConfigureContextFunc: configure,
 	}

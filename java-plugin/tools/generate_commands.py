@@ -75,6 +75,90 @@ def f(java: str, wire: str, type_: str, doc: str, api: str | None = None) -> Fie
 
 RESPONSES: tuple[Response, ...] = (
     Response(
+        "AiAdapterResponse", "aiadapter",
+        "A tenant's LoRA adapter (SPEC.md section 8).",
+        (
+            f("id", "id", "String", "the adapter's id"),
+            f("name", "name", "String", "the adapter's name"),
+            f("baseModel", "basemodel", "String", "the base it is served on", "basemodel"),
+            f("servedModelName", "servedmodelname", "String",
+              "what to address it as at the gateway", "servedmodelname"),
+            f("rank", "rank", "Integer", "its LoRA rank"),
+            f("sizeBytes", "sizebytes", "Long", "its size on disk", "sizebytes"),
+            f("account", "account", "String", "the owning account"),
+            f("shared", "shared", "Boolean", "whether it is shared across the domain"),
+        ),
+    ),
+    Response(
+        "AiBatchResponse", "aibatch",
+        "A batch inference job (SPEC.md section 8).",
+        (
+            f("id", "id", "String", "the batch's id"),
+            f("model", "model", "String", "the model it runs against"),
+            f("status", "status", "String",
+              "validating, in_progress, completed, failed, expired or cancelled"),
+            f("requestCount", "requestcount", "Integer",
+              "how many requests it holds", "requestcount"),
+            f("account", "account", "String", "the owning account"),
+            f("created", "created", "String", "when it was submitted"),
+            f("finished", "finished", "String", "when it finished, if it has"),
+        ),
+    ),
+    Response(
+        "AiGuardrailProfileResponse", "aiguardrailprofile",
+        "A guardrail profile and where it is bound (SPEC.md sections 6, 8).",
+        (
+            f("id", "id", "String", "the profile's id"),
+            f("name", "name", "String", "the profile's name"),
+            f("scope", "scope", "String", "the level it is bound at"),
+            f("target", "target", "String", "the domain, account or deployment"),
+        ),
+    ),
+    Response(
+        "AiEvaluationResponse", "aievaluation",
+        "A pre-publish evaluation verdict (SPEC.md section 8).",
+        (
+            f("id", "id", "String", "the evaluation's id"),
+            f("model", "model", "String", "the model evaluated"),
+            f("revision", "revision", "String", "the revision evaluated"),
+            f("passed", "passed", "Boolean", "whether publishing is allowed"),
+            f("overridden", "overridden", "Boolean",
+              "whether a root admin forced it through"),
+            f("summary", "summary", "String", "what the gate concluded"),
+        ),
+    ),
+    Response(
+        "AiCertificateResponse", "aicertificate",
+        "An uploaded TLS certificate. Never carries the key or the "
+        "certificate body (SPEC.md section 8).",
+        (
+            f("id", "id", "String", "the certificate's id"),
+            f("customDomain", "customdomain", "String",
+              "the domain it covers", "customdomain"),
+            f("fingerprint", "fingerprint", "String", "its SHA-256 fingerprint"),
+            f("expires", "expires", "String", "when it expires"),
+            f("serial", "serial", "Integer",
+              "bumped on each replacement; a proxy built from an older one is stale"),
+            f("account", "account", "String", "the owning account"),
+        ),
+    ),
+    Response(
+        "AiPrivateEndpointResponse", "aiprivateendpoint",
+        "How a deployment is exposed (SPEC.md section 8).",
+        (
+            f("id", "id", "String", "the exposure's id"),
+            f("deployment", "deployment", "String", "the deployment it fronts"),
+            f("exposure", "exposure", "String", "in words: public, private, or both"),
+            f("network", "network", "String", "the tier the private endpoint sits on"),
+            f("publicEnabled", "publicenabled", "Boolean", "whether it is also reachable publicly"),
+            f("customDomain", "customdomain", "String", "the domain it answers on, if any"),
+            f("tls", "tls", "String", "where its certificate comes from: none, acme or uploaded"),
+            f("certificate", "certificate", "String", "the uploaded certificate it uses, if any"),
+            f("account", "account", "String", "the owning account"),
+        ),
+    ),
+
+    Response(
         "AiHfModelResponse", "aihfmodel",
         "One Hugging Face repo from a search (SPEC.md section 5).",
         (
@@ -337,6 +421,10 @@ class Command:
     params: tuple[Param, ...] = ()
     query: tuple[str, ...] = ()    # java fields appended as query parameters
     success_response: bool = False
+    #: "v1" ships in GA; "v2" is generated but registered only when
+    #: ai.services.v2.enabled is on, so the release boundary in
+    #: aisvc/api/commands.py holds on this side too.
+    release: str = "v1"
 
 
 def p(name, java, type_, doc, required=False, entity=None, wire=None) -> Param:
@@ -622,6 +710,188 @@ COMMANDS: tuple[Command, ...] = (
         "listAiReconcilerRuns", "Lists reconciler runs.",
         "/v1/runs", response="AiReconcilerRunResponse", items_key="runs",
     ),
+    # -- tier 2 (SPEC.md section 8) ---------------------------------------
+    # Generated, but registered only when ai.services.v2.enabled is on:
+    # the release boundary in aisvc/api/commands.py holds here too.
+    Command(
+        "listAiAdapters", "Lists the LoRA adapters this account may use.",
+        "/v1/adapters", response="AiAdapterResponse", items_key="adapters",
+        release="v2",
+    ),
+    Command(
+        "uploadAiAdapter", "Registers a LoRA adapter.",
+        "/v1/adapters", method="POST", is_async=True,
+        response="AiAdapterResponse", event="ADAPTER_UPLOAD",
+        event_doing="registering adapter", release="v2",
+        params=(
+            p("name", "name", "STRING", "a name for the adapter", required=True),
+            p("basemodel", "baseModel", "STRING", "the base it serves on",
+              required=True, wire="base_model"),
+            p("rank", "rank", "INTEGER", "its LoRA rank", required=True),
+            p("uri", "uri", "STRING", "where its artefacts are"),
+        ),
+    ),
+    Command(
+        "deleteAiAdapter", "Deletes a LoRA adapter.",
+        "/v1/adapters/{adapterId}", method="DELETE", success_response=True,
+        event="ADAPTER_DELETE", event_doing="deleting adapter", release="v2",
+        params=(p("id", "adapterId", "STRING", "the adapter to delete", required=True),),
+    ),
+    Command(
+        "createAiBatch", "Submits a batch inference job.",
+        "/v1/batches", method="POST", is_async=True,
+        response="AiBatchResponse", event="BATCH_CREATE",
+        event_doing="submitting batch", release="v2",
+        params=(
+            p("model", "model", "STRING", "the model to run against", required=True),
+            p("inputuri", "inputUri", "STRING", "where the JSONL input is",
+              wire="input_uri"),
+        ),
+    ),
+    Command(
+        "listAiBatches", "Lists batch jobs.",
+        "/v1/batches", response="AiBatchResponse", items_key="batches",
+        release="v2",
+    ),
+    Command(
+        "cancelAiBatch", "Cancels a batch job.",
+        "/v1/batches/{batchId}/cancel", method="POST", is_async=True,
+        response="AiBatchResponse", event="BATCH_CANCEL",
+        event_doing="cancelling batch", release="v2",
+        params=(p("id", "batchId", "STRING", "the batch to cancel", required=True),),
+    ),
+    Command(
+        "getAiBatchResults", "Downloads a batch job's results.",
+        "/v1/batches/{batchId}/results", response="AiBatchResponse",
+        release="v2",
+        params=(p("id", "batchId", "STRING", "the batch to read", required=True),),
+    ),
+    Command(
+        "listAiGuardrailProfiles", "Lists guardrail profiles.",
+        "/v1/profiles/guardrail", response="AiGuardrailProfileResponse",
+        items_key="profiles", release="v2",
+    ),
+    Command(
+        "createAiGuardrailProfile", "Creates a guardrail profile.",
+        "/v1/profiles/guardrail", method="POST",
+        response="AiGuardrailProfileResponse", event="PROFILE_UPDATE",
+        event_doing="creating guardrail profile", release="v2",
+        params=(
+            p("name", "name", "STRING", "a name for the profile", required=True),
+            p("scope", "scope", "STRING", "the level to bind it at"),
+            p("target", "target", "STRING", "the domain, account or deployment"),
+            p("preset", "preset", "STRING", "a shipped profile to start from"),
+        ),
+    ),
+    Command(
+        "updateAiGuardrailProfile", "Updates a guardrail profile.",
+        "/v1/profiles/guardrail/{profileId}", method="PATCH",
+        response="AiGuardrailProfileResponse", event="PROFILE_UPDATE",
+        event_doing="updating guardrail profile", release="v2",
+        params=(
+            p("id", "profileId", "STRING", "the profile to update", required=True),
+            p("target", "target", "STRING", "the scope to bind it to"),
+        ),
+    ),
+    Command(
+        "deleteAiGuardrailProfile", "Deletes a guardrail profile.",
+        "/v1/profiles/guardrail/{profileId}", method="DELETE",
+        success_response=True, event="PROFILE_UPDATE",
+        event_doing="deleting guardrail profile", release="v2",
+        params=(p("id", "profileId", "STRING", "the profile to delete", required=True),),
+    ),
+    Command(
+        "runAiModelEvaluation", "Records a pre-publish evaluation.",
+        "/v1/models/{modelName}/evaluations", method="POST", is_async=True,
+        response="AiEvaluationResponse", event="MODEL_UPDATE",
+        event_doing="evaluating model", release="v2",
+        params=(
+            p("model", "modelName", "STRING", "the model evaluated", required=True),
+            p("revision", "revision", "STRING", "the revision evaluated", required=True),
+        ),
+    ),
+    Command(
+        "listAiEvaluations", "Lists a model's evaluations.",
+        "/v1/models/{modelName}/evaluations", response="AiEvaluationResponse",
+        items_key="evaluations", release="v2",
+        params=(p("model", "modelName", "STRING", "the model to list", required=True),),
+    ),
+    Command(
+        "uploadAiCertificate", "Uploads a TLS certificate for a custom domain.",
+        "/v1/certificates", method="POST", response="AiCertificateResponse",
+        release="v2",
+        params=(
+            p("customdomain", "customDomain", "STRING", "the domain it covers",
+              required=True, wire="custom_domain"),
+            p("certificate", "certificate", "STRING", "the PEM certificate",
+              required=True),
+            p("privatekey", "privateKey", "STRING", "the PEM private key",
+              required=True, wire="private_key"),
+        ),
+    ),
+    Command(
+        "listAiCertificates", "Lists uploaded certificates.",
+        "/v1/certificates", response="AiCertificateResponse",
+        items_key="certificates", release="v2",
+    ),
+    Command(
+        "replaceAiCertificate", "Replaces a certificate, keeping its id.",
+        "/v1/certificates/{certificateId}", method="PATCH",
+        response="AiCertificateResponse", release="v2",
+        params=(
+            p("id", "certificateId", "STRING", "the certificate to replace",
+              required=True),
+            p("certificate", "certificate", "STRING", "the PEM certificate",
+              required=True),
+            p("privatekey", "privateKey", "STRING", "the PEM private key",
+              required=True, wire="private_key"),
+        ),
+    ),
+    Command(
+        "deleteAiCertificate", "Deletes a certificate.",
+        "/v1/certificates/{certificateId}", method="DELETE", success_response=True,
+        release="v2",
+        params=(
+            p("id", "certificateId", "STRING", "the certificate to delete",
+              required=True),
+        ),
+    ),
+    Command(
+        "listAiPrivateEndpoints",
+        "Lists private endpoints and how each one is reachable.",
+        "/v1/endpoints/private",
+        response="AiPrivateEndpointResponse",
+        items_key="endpoints",
+        release="v2",
+    ),
+    Command(
+        "createAiPrivateEndpoint", "Attaches an endpoint to a tenant network.",
+        "/v1/endpoints/private", method="POST", is_async=True,
+        response="AiPrivateEndpointResponse", event="MODEL_UPDATE",
+        event_doing="attaching private endpoint", release="v2",
+        params=(
+            p("deployment", "deployment", "STRING", "the deployment to front",
+              required=True),
+            p("networkid", "networkId", "STRING", "the VPC tier to attach to",
+              wire="network_id"),
+            p("publicenabled", "publicEnabled", "BOOLEAN",
+              "whether the public endpoint stays on", wire="public_enabled"),
+            p("customdomain", "customDomain", "STRING", "a custom domain",
+              wire="custom_domain"),
+            p("certificateid", "certificateId", "STRING",
+              "an uploaded certificate for it", wire="certificate_id"),
+        ),
+    ),
+    Command(
+        "deleteAiPrivateEndpoint", "Removes a private endpoint.",
+        "/v1/endpoints/private/{exposureId}", method="DELETE", is_async=True,
+        response="AiPrivateEndpointResponse", event="MODEL_UPDATE",
+        event_doing="removing private endpoint", release="v2",
+        params=(
+            p("id", "exposureId", "STRING", "the exposure to remove", required=True),
+        ),
+    ),
+
 )
 
 
@@ -854,7 +1124,16 @@ def main() -> int:
 
     print(f"generated {len(written)} files")
     registration = "\n".join(
-        f"        commands.add({class_name(c.name)}.class);" for c in COMMANDS)
+        f"        commands.add({class_name(c.name)}.class);"
+        for c in COMMANDS
+        if c.release == "v1"
+    )
+    registration += "\n\n// v2, registered only when ai.services.v2.enabled:\n"
+    registration += "\n".join(
+        f"        commands.add({class_name(c.name)}.class);"
+        for c in COMMANDS
+        if c.release == "v2"
+    )
     (ROOT / "target" / "generated-registration.txt").parent.mkdir(
         parents=True, exist_ok=True)
     (ROOT / "target" / "generated-registration.txt").write_text(

@@ -84,6 +84,18 @@ public final class AiServicesConfig {
             "Seconds to wait for GPU nodes to drain before a host enters maintenance.",
             true, ConfigKey.Scope.Global);
 
+    /**
+     * Whether the Tier 2 command surface is registered (SPEC.md section 8).
+     *
+     * <p>Off by default. The engine marks these {@code Release.V2}, and a
+     * GA install should not grow a surface for features it does not run;
+     * this is how the same boundary holds on the plugin side.
+     */
+    public static final ConfigKey<Boolean> V2Enabled = new ConfigKey<>(
+            CATEGORY, Boolean.class, "ai.services.v2.enabled", "false",
+            "Register the Tier 2 (v2) AI Services API commands.",
+            true, ConfigKey.Scope.Global);
+
     public static ConfigKey<?>[] all() {
         return new ConfigKey<?>[] {
                 Enabled,
@@ -94,6 +106,7 @@ public final class AiServicesConfig {
                 EngineTrustStore,
                 HfRequireApproval,
                 MaintenanceDrainTimeout,
+                V2Enabled,
         };
     }
 }

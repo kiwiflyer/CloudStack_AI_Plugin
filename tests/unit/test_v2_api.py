@@ -170,8 +170,8 @@ class TestGuardrailProfiles:
 
         assert client.get("/v1/profiles/guardrail", headers=ADMIN).json()["count"] == 1
 
-    def test_a_tenant_cannot_create_one(self, client: TestClient) -> None:
-        """A guardrail an account could remove is not a guardrail."""
+    def test_a_tenant_cannot_create_a_domain_profile(self, client: TestClient) -> None:
+        """A guardrail an account could set over a whole domain is not one."""
         assert self.create(client, headers=TENANT).status_code == 403
 
     def test_a_preset_can_be_used(self, client: TestClient) -> None:
@@ -199,6 +199,187 @@ class TestGuardrailProfiles:
         assert (
             client.delete(f"/v1/profiles/guardrail/{profile_id}", headers=ADMIN).status_code == 200
         )
+
+
+class TestGuardrailScoping:
+    """A tenant may tighten their own account and nothing above it.
+
+    SPEC.md section 8 makes guardrails "the third profile type in
+    section 6, with the same scopes and lock semantics", and section 9
+    lists them as a tenant screen. These routes were admin-only, which
+    made both untrue and left the command map promising a call the
+    engine refused.
+    """
+
+    def post(self, client: TestClient, headers: dict[str, str], **kw: Any) -> Any:
+        body: dict[str, Any] = {
+            "name": "stricter",
+            "scope": "account",
+            "target": "acme",
+            "checks": {"topics": {"action": "block", "value": ["self-harm"]}},
+        }
+        body.update(kw)
+        return client.post("/v1/profiles/guardrail", json=body, headers=headers)
+
+    def test_a_tenant_may_tighten_their_own_account(self, client: TestClient) -> None:
+        response = self.post(client, TENANT)
+
+        assert response.status_code == 200
+        assert response.json()["scope"] == "account"
+
+    def test_a_tenant_may_not_write_for_another_account(self, client: TestClient) -> None:
+        response = self.post(client, TENANT, target="other")
+
+        assert response.status_code == 403
+        assert "other" in response.json()["detail"]
+
+    def test_a_tenant_may_not_touch_the_platform_profile(self, client: TestClient) -> None:
+        response = self.post(client, TENANT, scope="platform", target="")
+
+        assert response.status_code == 403
+        # The refusal says what they may do instead.
+        assert "account" in response.json()["detail"]
+
+    def test_an_unknown_scope_is_a_bad_request_not_a_refusal(self, client: TestClient) -> None:
+        response = self.post(client, ADMIN, scope="universe")
+
+        assert response.status_code == 400
+
+    def test_a_tenant_sees_the_platform_profile_screening_them(self, client: TestClient) -> None:
+        # They cannot change it; not showing it would only leave them
+        # unable to explain a block to their own customer.
+        self.post(client, ADMIN, name="platform-wide", scope="platform", target="")
+
+        listed = client.get("/v1/profiles/guardrail", headers=TENANT).json()
+
+        assert [row["name"] for row in listed["profiles"]] == ["platform-wide"]
+
+    def test_a_tenant_does_not_see_another_account(self, client: TestClient) -> None:
+        self.post(client, ADMIN, name="theirs", scope="account", target="other")
+
+        listed = client.get("/v1/profiles/guardrail", headers=TENANT).json()
+
+        assert listed["profiles"] == []
+
+    def test_a_tenant_may_edit_their_own(self, client: TestClient) -> None:
+        profile_id = self.post(client, TENANT).json()["id"]
+
+        response = client.patch(
+            f"/v1/profiles/guardrail/{profile_id}",
+            json={"checks": {"topics": {"action": "block", "value": ["self-harm", "weapons"]}}},
+            headers=TENANT,
+        )
+
+        assert response.status_code == 200
+
+    def test_a_tenant_may_not_edit_the_platform_profile(self, client: TestClient) -> None:
+        profile_id = self.post(client, ADMIN, scope="platform", target="").json()["id"]
+
+        response = client.patch(
+            f"/v1/profiles/guardrail/{profile_id}",
+            json={"checks": {}},
+            headers=TENANT,
+        )
+
+        assert response.status_code == 403
+
+    def test_a_tenant_may_not_delete_the_platform_profile(self, client: TestClient) -> None:
+        # The move the old admin-only rule existed to prevent, and it
+        # is still prevented.
+        profile_id = self.post(client, ADMIN, scope="platform", target="").json()["id"]
+
+        response = client.delete(f"/v1/profiles/guardrail/{profile_id}", headers=TENANT)
+
+        assert response.status_code == 403
+
+    def test_a_tenant_may_delete_their_own(self, client: TestClient) -> None:
+        profile_id = self.post(client, TENANT).json()["id"]
+
+        assert (
+            client.delete(f"/v1/profiles/guardrail/{profile_id}", headers=TENANT).status_code == 200
+        )
+
+    def test_a_tenant_may_not_retarget_a_profile_onto_someone_else(
+        self, client: TestClient
+    ) -> None:
+        # Otherwise the account check would be a formality: create it
+        # for yourself, then move it.
+        profile_id = self.post(client, TENANT).json()["id"]
+
+        response = client.patch(
+            f"/v1/profiles/guardrail/{profile_id}",
+            json={"target": "other"},
+            headers=TENANT,
+        )
+
+        assert response.status_code == 403
+
+    def test_a_check_locked_above_cannot_be_set_below(self, client: TestClient) -> None:
+        """Refused outright rather than accepted and then ignored.
+
+        `resolve_guardrails` drops a lower layer that touches a locked
+        check, so nothing unsafe got through before either. What is
+        new is that the tenant is told, instead of believing their
+        rule is in force.
+        """
+        self.post(
+            client,
+            ADMIN,
+            name="platform-wide",
+            scope="platform",
+            target="",
+            checks={"pii": {"action": "redact", "policy": "locked"}},
+        )
+
+        response = self.post(client, TENANT, name="mine", checks={"pii": {"action": "flag"}})
+
+        assert response.status_code == 409
+        assert "pii" in response.json()["detail"]
+        assert "platform" in response.json()["detail"]
+
+    def test_even_a_stricter_value_is_refused(self, client: TestClient) -> None:
+        self.post(
+            client,
+            ADMIN,
+            name="platform-wide",
+            scope="platform",
+            target="",
+            checks={"pii": {"action": "redact", "policy": "locked"}},
+        )
+
+        response = self.post(client, TENANT, name="mine", checks={"pii": {"action": "block"}})
+
+        assert response.status_code == 409
+
+    def test_an_unlocked_check_above_may_still_be_overridden(self, client: TestClient) -> None:
+        # That is what precedence is for.
+        self.post(
+            client,
+            ADMIN,
+            name="platform-wide",
+            scope="platform",
+            target="",
+            checks={"pii": {"action": "flag", "policy": "default"}},
+        )
+
+        response = self.post(client, TENANT, name="mine", checks={"pii": {"action": "block"}})
+
+        assert response.status_code == 200
+
+    def test_another_tenants_lock_does_not_bind_this_one(self, client: TestClient) -> None:
+        # A lock at someone else's account scope is not above anyone.
+        self.post(
+            client,
+            ADMIN,
+            name="theirs",
+            scope="account",
+            target="other",
+            checks={"pii": {"action": "redact", "policy": "locked"}},
+        )
+
+        response = self.post(client, TENANT, name="mine", checks={"pii": {"action": "block"}})
+
+        assert response.status_code == 200
 
 
 class TestEvaluations:
@@ -338,6 +519,59 @@ class TestPrivateEndpoints:
         assert (
             client.delete(f"/v1/endpoints/private/{exposure_id}", headers=TENANT).status_code == 200
         )
+
+    def test_the_exposures_are_listed(self, client: TestClient) -> None:
+        """Create and delete existed; nothing could say what was there.
+
+        Without a list a tenant cannot learn the id they need to delete,
+        and the UI has nothing to draw.
+        """
+        self.create(client)
+
+        response = client.get("/v1/endpoints/private", headers=TENANT)
+
+        assert response.status_code == 200
+        assert len(response.json()["endpoints"]) == 1
+
+    def test_a_listed_exposure_says_how_it_is_reachable(self, client: TestClient) -> None:
+        self.create(client)
+
+        row = client.get("/v1/endpoints/private", headers=TENANT).json()["endpoints"][0]
+
+        assert row["deployment"] == "llama-3.3-70b-instruct"
+        assert row["network"] == "net-1"
+        assert row["publicenabled"] is False
+        assert "private" in row["exposure"]
+
+    def test_a_custom_domain_is_listed_with_it(self, client: TestClient) -> None:
+        # Public, because ACME on a private-only endpoint is refused.
+        self.create(client, public_enabled=True, custom_domain="ai.acme.example", tls="acme")
+
+        row = client.get("/v1/endpoints/private", headers=TENANT).json()["endpoints"][0]
+
+        assert row["customdomain"] == "ai.acme.example"
+        assert row["tls"] == "acme"
+        assert "ai.acme.example" in row["exposure"]
+
+    def test_another_tenant_does_not_see_it(self, client: TestClient) -> None:
+        self.create(client)
+
+        listed = client.get("/v1/endpoints/private", headers=OTHER_TENANT).json()
+
+        assert listed["endpoints"] == []
+
+    def test_an_admin_sees_it(self, client: TestClient) -> None:
+        self.create(client)
+
+        listed = client.get("/v1/endpoints/private", headers=ADMIN).json()
+
+        assert len(listed["endpoints"]) == 1
+
+    def test_a_deleted_exposure_stops_being_listed(self, client: TestClient) -> None:
+        exposure_id = self.create(client).json()["id"]
+        client.delete(f"/v1/endpoints/private/{exposure_id}", headers=TENANT)
+
+        assert client.get("/v1/endpoints/private", headers=TENANT).json()["endpoints"] == []
 
 
 class TestBatchInputAndResults:

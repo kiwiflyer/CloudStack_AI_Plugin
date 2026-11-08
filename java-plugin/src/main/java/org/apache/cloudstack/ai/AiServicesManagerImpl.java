@@ -38,26 +38,41 @@ import org.apache.cloudstack.ai.engine.CallerContext;
 import org.apache.cloudstack.ai.engine.EngineClient;
 import org.apache.cloudstack.ai.api.command.ApproveAiModelCmd;
 import org.apache.cloudstack.ai.api.command.AssignAiTuningProfileCmd;
+import org.apache.cloudstack.ai.api.command.CancelAiBatchCmd;
 import org.apache.cloudstack.ai.api.command.CheckAiHfModelCmd;
 import org.apache.cloudstack.ai.api.command.CreateAiApiKeyCmd;
+import org.apache.cloudstack.ai.api.command.CreateAiBatchCmd;
 import org.apache.cloudstack.ai.api.command.CreateAiBudgetCmd;
 import org.apache.cloudstack.ai.api.command.CreateAiGenerationProfileCmd;
+import org.apache.cloudstack.ai.api.command.CreateAiGuardrailProfileCmd;
 import org.apache.cloudstack.ai.api.command.CreateAiPlaygroundSessionCmd;
+import org.apache.cloudstack.ai.api.command.CreateAiPrivateEndpointCmd;
 import org.apache.cloudstack.ai.api.command.CreateAiServingProfileCmd;
+import org.apache.cloudstack.ai.api.command.DeleteAiAdapterCmd;
 import org.apache.cloudstack.ai.api.command.DeleteAiBudgetCmd;
+import org.apache.cloudstack.ai.api.command.DeleteAiCertificateCmd;
 import org.apache.cloudstack.ai.api.command.DeleteAiGenerationProfileCmd;
+import org.apache.cloudstack.ai.api.command.DeleteAiGuardrailProfileCmd;
 import org.apache.cloudstack.ai.api.command.DeleteAiModelDeploymentCmd;
+import org.apache.cloudstack.ai.api.command.DeleteAiPrivateEndpointCmd;
 import org.apache.cloudstack.ai.api.command.DeleteAiServingProfileCmd;
 import org.apache.cloudstack.ai.api.command.DeployAiModelCmd;
 import org.apache.cloudstack.ai.api.command.DiscoverAiGpuClassesCmd;
 import org.apache.cloudstack.ai.api.command.DrainAiNodeCmd;
+import org.apache.cloudstack.ai.api.command.GetAiBatchResultsCmd;
 import org.apache.cloudstack.ai.api.command.GetAiEffectiveParametersCmd;
+import org.apache.cloudstack.ai.api.command.ListAiAdaptersCmd;
 import org.apache.cloudstack.ai.api.command.ListAiApiKeysCmd;
+import org.apache.cloudstack.ai.api.command.ListAiBatchesCmd;
 import org.apache.cloudstack.ai.api.command.ListAiBudgetsCmd;
+import org.apache.cloudstack.ai.api.command.ListAiCertificatesCmd;
 import org.apache.cloudstack.ai.api.command.ListAiEndpointsCmd;
+import org.apache.cloudstack.ai.api.command.ListAiEvaluationsCmd;
 import org.apache.cloudstack.ai.api.command.ListAiGenerationProfilesCmd;
 import org.apache.cloudstack.ai.api.command.ListAiGpuCapacityCmd;
+import org.apache.cloudstack.ai.api.command.ListAiGuardrailProfilesCmd;
 import org.apache.cloudstack.ai.api.command.ListAiModelDeploymentsCmd;
+import org.apache.cloudstack.ai.api.command.ListAiPrivateEndpointsCmd;
 import org.apache.cloudstack.ai.api.command.ListAiModelsCmd;
 import org.apache.cloudstack.ai.api.command.ListAiReconcilerRunsCmd;
 import org.apache.cloudstack.ai.api.command.ListAiServingProfilesCmd;
@@ -66,14 +81,19 @@ import org.apache.cloudstack.ai.api.command.ListAiUsageCmd;
 import org.apache.cloudstack.ai.api.command.MirrorAiModelCmd;
 import org.apache.cloudstack.ai.api.command.PromoteAiRolloutCmd;
 import org.apache.cloudstack.ai.api.command.PublishAiModelCmd;
+import org.apache.cloudstack.ai.api.command.ReplaceAiCertificateCmd;
 import org.apache.cloudstack.ai.api.command.RevokeAiApiKeyCmd;
 import org.apache.cloudstack.ai.api.command.RollbackAiRolloutCmd;
+import org.apache.cloudstack.ai.api.command.RunAiModelEvaluationCmd;
 import org.apache.cloudstack.ai.api.command.RunAiSetupSelfTestCmd;
 import org.apache.cloudstack.ai.api.command.SearchAiHfModelsCmd;
 import org.apache.cloudstack.ai.api.command.UpdateAiBudgetCmd;
 import org.apache.cloudstack.ai.api.command.UpdateAiGenerationProfileCmd;
+import org.apache.cloudstack.ai.api.command.UpdateAiGuardrailProfileCmd;
 import org.apache.cloudstack.ai.api.command.UpdateAiModelDeploymentCmd;
 import org.apache.cloudstack.ai.api.command.UpdateAiServingProfileCmd;
+import org.apache.cloudstack.ai.api.command.UploadAiAdapterCmd;
+import org.apache.cloudstack.ai.api.command.UploadAiCertificateCmd;
 import org.apache.cloudstack.ai.dao.AiDeploymentDao;
 import org.apache.cloudstack.ai.engine.EngineTransport;
 import org.apache.cloudstack.ai.engine.HttpEngineTransport;
@@ -122,6 +142,9 @@ public class AiServicesManagerImpl extends ManagerBase
     @Override
     public List<Class<?>> getCommands() {
         List<Class<?>> commands = new ArrayList<>();
+        // Every v1 command from SPEC.md section 9. The list is kept in
+        // step with the engine's routes by aisvc/api/commands.py and the
+        // tests on both sides.
         commands.add(ApproveAiModelCmd.class);
         commands.add(AssignAiTuningProfileCmd.class);
         commands.add(CheckAiHfModelCmd.class);
@@ -160,9 +183,53 @@ public class AiServicesManagerImpl extends ManagerBase
         commands.add(UpdateAiGenerationProfileCmd.class);
         commands.add(UpdateAiModelDeploymentCmd.class);
         commands.add(UpdateAiServingProfileCmd.class);
-        // Every v1 command from SPEC.md section 9. The list is kept in
-        // step with the engine's routes by aisvc/api/commands.py and the
-        // tests on both sides; v2's commands arrive with milestone 9.
+        if (v2Enabled()) {
+            commands.addAll(v2Commands());
+        }
+        return commands;
+    }
+
+    /**
+     * Whether to register the Tier 2 command surface.
+     *
+     * <p>Its own method so the split can be tested without a
+     * ConfigDepot; in production this is the global setting, which
+     * reads false when nothing has set it.
+     */
+    boolean v2Enabled() {
+        return AiServicesConfig.V2Enabled.value();
+    }
+
+    /**
+     * The Tier 2 commands (SPEC.md section 8).
+     *
+     * <p>Generated like the rest, but held back: the engine marks them
+     * {@code Release.V2}, and a GA install should not advertise an API
+     * for features it does not run. An operator turns them on with
+     * {@code ai.services.v2.enabled}.
+     */
+    private static List<Class<?>> v2Commands() {
+        List<Class<?>> commands = new ArrayList<>();
+        commands.add(CancelAiBatchCmd.class);
+        commands.add(CreateAiBatchCmd.class);
+        commands.add(CreateAiGuardrailProfileCmd.class);
+        commands.add(CreateAiPrivateEndpointCmd.class);
+        commands.add(DeleteAiAdapterCmd.class);
+        commands.add(DeleteAiCertificateCmd.class);
+        commands.add(DeleteAiGuardrailProfileCmd.class);
+        commands.add(DeleteAiPrivateEndpointCmd.class);
+        commands.add(GetAiBatchResultsCmd.class);
+        commands.add(ListAiAdaptersCmd.class);
+        commands.add(ListAiBatchesCmd.class);
+        commands.add(ListAiCertificatesCmd.class);
+        commands.add(ListAiEvaluationsCmd.class);
+        commands.add(ListAiGuardrailProfilesCmd.class);
+        commands.add(ListAiPrivateEndpointsCmd.class);
+        commands.add(ReplaceAiCertificateCmd.class);
+        commands.add(RunAiModelEvaluationCmd.class);
+        commands.add(UpdateAiGuardrailProfileCmd.class);
+        commands.add(UploadAiAdapterCmd.class);
+        commands.add(UploadAiCertificateCmd.class);
         return commands;
     }
 

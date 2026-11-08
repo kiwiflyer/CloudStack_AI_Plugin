@@ -251,6 +251,220 @@ export default {
       ]
     },
 
+    // -- tenant, v2 -----------------------------------------------------
+    //
+    // These need no `show` of their own. CloudStack drops a route whose
+    // `permission` is missing from the account's listApis answer, and
+    // the plugin only registers the v2 commands when
+    // ai.services.v2.enabled is on — so on a v1 install the commands
+    // are absent, the routes are dropped, and these screens are not
+    // there. A second switch here could only disagree with that one.
+    {
+      name: 'aiadapter',
+      title: 'label.ai.adapters',
+      icon: 'deployment-unit-outlined',
+      permission: ['listAiAdapters'],
+      resourceType: 'AiAdapter',
+      columns: () => {
+        // `servedmodelname` is what a tenant actually puts in a
+        // request — `<base>:<adapter>` — so it earns a column over the
+        // adapter's own name, which addresses nothing.
+        const fields = ['name', 'basemodel', 'servedmodelname', 'rank']
+        if (isAdminOrDomainAdmin()) fields.push('account')
+        return fields
+      },
+      details: () => [
+        'id', 'name', 'basemodel', 'servedmodelname', 'rank', 'sizebytes',
+        'shared', 'account', 'created'
+      ],
+      tabs: [detailsTab],
+      actions: [
+        {
+          api: 'uploadAiAdapter',
+          icon: 'upload-outlined',
+          label: 'label.ai.upload.adapter',
+          listView: true,
+          popup: true,
+          args: ['name', 'basemodel', 'rank', 'uri']
+        },
+        {
+          api: 'deleteAiAdapter',
+          icon: 'delete-outlined',
+          label: 'label.ai.delete.adapter',
+          dataView: true,
+          message: 'message.ai.delete.adapter'
+        }
+      ]
+    },
+    {
+      name: 'aibatch',
+      title: 'label.ai.batches',
+      icon: 'unordered-list-outlined',
+      permission: ['listAiBatches'],
+      resourceType: 'AiBatch',
+      columns: () => {
+        const fields = ['id', 'model', 'status', 'requestcount', 'created']
+        if (isAdminOrDomainAdmin()) fields.push('account')
+        return fields
+      },
+      details: () => [
+        'id', 'model', 'status', 'requestcount', 'account', 'created',
+        'finished', 'inputuri', 'outputuri'
+      ],
+      tabs: [detailsTab],
+      actions: [
+        {
+          api: 'createAiBatch',
+          icon: 'plus-outlined',
+          label: 'label.ai.create.batch',
+          listView: true,
+          popup: true,
+          args: ['model', 'inputuri']
+        },
+        {
+          api: 'getAiBatchResults',
+          icon: 'download-outlined',
+          label: 'label.ai.batch.results',
+          dataView: true
+        },
+        {
+          api: 'cancelAiBatch',
+          icon: 'stop-outlined',
+          label: 'label.ai.cancel.batch',
+          dataView: true,
+          message: 'message.ai.cancel.batch'
+        }
+      ]
+    },
+    {
+      name: 'aicertificate',
+      title: 'label.ai.certificates',
+      icon: 'safety-certificate-outlined',
+      permission: ['listAiCertificates'],
+      resourceType: 'AiCertificate',
+      // Metadata only: the engine never returns the certificate body
+      // and never the key, so there is nothing here to put on a screen
+      // that should not be on one.
+      columns: () => {
+        const fields = ['customdomain', 'expires', 'fingerprint']
+        if (isAdminOrDomainAdmin()) fields.push('account')
+        return fields
+      },
+      details: () => [
+        'id', 'customdomain', 'fingerprint', 'serial', 'expires', 'account',
+        'created'
+      ],
+      tabs: [detailsTab],
+      actions: [
+        {
+          api: 'uploadAiCertificate',
+          icon: 'upload-outlined',
+          label: 'label.ai.upload.certificate',
+          listView: true,
+          popup: true,
+          args: ['customdomain', 'certificate', 'privatekey']
+        },
+        {
+          api: 'replaceAiCertificate',
+          icon: 'reload-outlined',
+          label: 'label.ai.replace.certificate',
+          dataView: true,
+          popup: true,
+          // Replacing rebuilds the proxy, which is downtime: a proxy
+          // fetches its material once, at boot (PROGRESS.md, m9).
+          message: 'message.ai.replace.certificate',
+          args: ['certificate', 'privatekey']
+        },
+        {
+          api: 'deleteAiCertificate',
+          icon: 'delete-outlined',
+          label: 'label.ai.delete.certificate',
+          dataView: true,
+          message: 'message.ai.delete.certificate'
+        }
+      ]
+    },
+    {
+      name: 'aiprivateendpoint',
+      title: 'label.ai.private.endpoints',
+      icon: 'lock-outlined',
+      permission: ['listAiPrivateEndpoints'],
+      resourceType: 'AiPrivateEndpoint',
+      columns: () => {
+        // `exposure` is the phrase the engine builds — "private on
+        // net-1 as ai.acme.example". It is the one column a buyer
+        // checking that an endpoint really is private will read.
+        const fields = ['deployment', 'exposure', 'customdomain', 'tls']
+        if (isAdminOrDomainAdmin()) fields.push('account')
+        return fields
+      },
+      details: () => [
+        'id', 'deployment', 'exposure', 'network', 'publicenabled',
+        'customdomain', 'tls', 'certificate', 'account', 'created'
+      ],
+      tabs: [detailsTab],
+      actions: [
+        {
+          api: 'createAiPrivateEndpoint',
+          icon: 'plus-outlined',
+          label: 'label.ai.create.private.endpoint',
+          listView: true,
+          popup: true,
+          args: [
+            'deployment', 'networkid', 'publicenabled', 'customdomain',
+            'tls', 'certificateid'
+          ]
+        },
+        {
+          api: 'deleteAiPrivateEndpoint',
+          icon: 'delete-outlined',
+          label: 'label.ai.delete.private.endpoint',
+          dataView: true,
+          message: 'message.ai.delete.private.endpoint'
+        }
+      ]
+    },
+    {
+      name: 'aiguardrail',
+      title: 'label.ai.guardrails',
+      icon: 'safety-outlined',
+      permission: ['listAiGuardrailProfiles'],
+      // No `show`: the engine scopes these now, so a tenant sees the
+      // platform profile screening them and may tighten their own
+      // account. What they may not do is written where it belongs —
+      // in aisvc/guardrails/authority.py — and refused there, with a
+      // message saying what they can do instead.
+      resourceType: 'AiGuardrailProfile',
+      columns: () => ['name', 'scope', 'target'],
+      details: () => ['id', 'name', 'scope', 'target', 'checks'],
+      tabs: [detailsTab],
+      actions: [
+        {
+          api: 'createAiGuardrailProfile',
+          icon: 'plus-outlined',
+          label: 'label.ai.create.guardrail.profile',
+          listView: true,
+          popup: true,
+          args: ['name', 'scope', 'target', 'preset']
+        },
+        {
+          api: 'updateAiGuardrailProfile',
+          icon: 'edit-outlined',
+          label: 'label.ai.update.guardrail.profile',
+          dataView: true,
+          popup: true,
+          args: ['target']
+        },
+        {
+          api: 'deleteAiGuardrailProfile',
+          icon: 'delete-outlined',
+          label: 'label.ai.delete.guardrail.profile',
+          dataView: true,
+          message: 'message.ai.delete.guardrail.profile'
+        }
+      ]
+    },
+
     // -- admin ----------------------------------------------------------
     {
       name: 'aisetup',
@@ -327,7 +541,17 @@ export default {
         'id', 'name', 'repo', 'revision', 'sha256', 'license', 'sizegb',
         'task', 'published', 'deployments'
       ],
-      tabs: [detailsTab],
+      tabs: [
+        detailsTab,
+        {
+          // v2. The tab is always declared; `runAiModelEvaluation` and
+          // `listAiEvaluations` are not registered on a v1 install, so
+          // the action is hidden by CloudStack and the tab reports
+          // nothing to show.
+          name: 'label.ai.evaluations',
+          component: view('EvaluationsTab')
+        }
+      ],
       actions: [
         {
           api: 'publishAiModel',
@@ -336,6 +560,18 @@ export default {
           dataView: true,
           popup: true,
           args: ['pricetier', 'domainid']
+        },
+        {
+          api: 'runAiModelEvaluation',
+          icon: 'experiment-outlined',
+          label: 'label.ai.run.evaluation',
+          dataView: true,
+          popup: true,
+          // Root admin: the gate exists to stop a bad revision being
+          // published, so the person who runs it is the one who can
+          // override it (SPEC.md section 8).
+          show: isAdmin,
+          args: ['revision']
         }
       ]
     },

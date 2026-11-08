@@ -9,6 +9,8 @@ than in a Marvin run.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from typing import Any
 
 import pytest
 
@@ -345,3 +347,255 @@ class TestTheGuardIsMethodAware:
 
         assert ("PATCH", "/v1/certificates/{certificate_id}") in mapped
         assert ("DELETE", "/v1/certificates/{certificate_id}") in mapped
+
+
+# --------------------------------------------------------------------------
+# The Java generator's own table
+# --------------------------------------------------------------------------
+#
+# `java-plugin/tools/generate_commands.py` carries a second description
+# of the same commands, because it needs things this module does not
+# (parameter types, response classes, event names). It is a copy, and a
+# copy nobody compares is a copy that drifts: a v2 command added here
+# would simply never reach CloudStack, silently and with every test
+# still green. So it is compared, here, where both sides can be
+# imported.
+#
+# Two commands are deliberately hand-written rather than generated —
+# `deployAiModel` and `deleteAiModelDeployment` own the `ai_deployment`
+# row CloudStack uses for ownership and cleanup, which the generator
+# does not model. They are listed, so adding a third by accident fails.
+
+HAND_WRITTEN = frozenset({"deployAiModel", "deleteAiModelDeployment"})
+
+#: `/v1/models/{model_name}` against `/v1/models/{modelId}`: the
+#: generator substitutes the Java field, so the name inside the braces
+#: is its business and not drift.
+PLACEHOLDER = re.compile(r"\{[^}]*\}")
+
+
+def generator_commands() -> dict[str, Any]:
+    """Import the generator without running it."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "java-plugin" / "tools" / "generate_commands.py"
+    spec = importlib.util.spec_from_file_location("aisvc_java_generator", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Its dataclasses resolve annotations through sys.modules.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return {command.name: command for command in module.COMMANDS}
+
+
+def drift(engine: Mapping[str, Any], java: Mapping[str, Any]) -> list[str]:
+    """Every disagreement between the two tables, in plain words."""
+    problems = []
+
+    for name in sorted(set(engine) - set(java) - HAND_WRITTEN):
+        problems.append(f"{name}: in commands.py but the generator emits no class for it")
+    for name in sorted(set(java) - set(engine)):
+        problems.append(f"{name}: generated, but commands.py does not have it")
+
+    for name in sorted(set(engine) & set(java)):
+        one, other = engine[name], java[name]
+        if one.method.upper() != other.method.upper():
+            problems.append(f"{name}: method {one.method} here, {other.method} in the generator")
+        if one.is_async != other.is_async:
+            problems.append(f"{name}: async {one.is_async} here, {other.is_async} in the generator")
+        if one.release.value != other.release:
+            problems.append(f"{name}: {one.release.value} here, {other.release} in the generator")
+        here = PLACEHOLDER.sub("{}", one.path)
+        there = PLACEHOLDER.sub("{}", other.path)
+        if here != there:
+            problems.append(f"{name}: {one.path} here, {other.path} in the generator")
+
+    return problems
+
+
+class TestTheGeneratorAgrees:
+    """The plugin's surface is the command map, or it is a bug."""
+
+    def test_the_two_tables_describe_the_same_commands(self) -> None:
+        found = drift({c.name: c for c in COMMANDS}, generator_commands())
+
+        assert not found, "the generator has drifted from commands.py:\n  " + "\n  ".join(found)
+
+    def test_every_v2_command_is_generated(self) -> None:
+        """What this guard was written for: v2 reaching CloudStack at all."""
+        generated = generator_commands()
+
+        missing = [c.name for c in V2 if c.name not in generated]
+
+        assert not missing, f"v2 commands with no CloudStack class: {missing}"
+
+    def test_the_hand_written_ones_really_are_in_the_map(self) -> None:
+        # Otherwise the exemption would quietly excuse a typo.
+        names = {c.name for c in COMMANDS}
+
+        assert names >= HAND_WRITTEN
+
+    def test_it_would_notice_a_command_the_generator_forgot(self) -> None:
+        engine = {c.name: c for c in COMMANDS}
+        java = generator_commands()
+        java.pop("listAiAdapters")
+
+        assert any("listAiAdapters" in problem for problem in drift(engine, java))
+
+    def test_it_would_notice_a_release_that_disagreed(self) -> None:
+        import dataclasses
+
+        engine = {c.name: c for c in COMMANDS}
+        java = generator_commands()
+        java["listAiAdapters"] = dataclasses.replace(java["listAiAdapters"], release="v1")
+
+        assert any("listAiAdapters" in problem for problem in drift(engine, java))
+
+    def test_it_would_notice_a_path_that_disagreed(self) -> None:
+        import dataclasses
+
+        engine = {c.name: c for c in COMMANDS}
+        java = generator_commands()
+        java["listAiAdapters"] = dataclasses.replace(
+            java["listAiAdapters"], path="/v1/adapters/elsewhere"
+        )
+
+        assert any("listAiAdapters" in problem for problem in drift(engine, java))
+
+
+# --------------------------------------------------------------------------
+# SPEC.md section 9's own table
+# --------------------------------------------------------------------------
+#
+# The table is what a reader and a reviewer go by, and it had fallen
+# behind twice — once on v1 (three commands missing) and again on v2
+# (`getAiBatchResults` and all four certificate commands), both found by
+# hand. Parsing it makes the omission fail a test instead.
+#
+# Rows name their commands in full, comma-separated. The old
+# `list/create/update/deleteAiThing` shorthand is what let them hide: it
+# cannot spell `listAiThings`, so a row that looked complete was not.
+
+SPEC_PATH = "SPEC.md"
+
+
+def spec_command_names() -> set[str]:
+    """Every command named in section 9's table, groups expanded."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[2] / SPEC_PATH).read_text()
+    section = text.split("## 9.")[1].split("## 10.")[0]
+
+    names: set[str] = set()
+    for line in section.splitlines():
+        if not line.startswith("| `"):
+            continue
+        cell = line.split("|")[1].strip()
+        names.update(re.findall(r"`([^`]+)`", cell))
+    return names
+
+
+class TestTheSpecTable:
+    """Section 9's table is the published surface; it has to be whole."""
+
+    def test_the_table_names_every_command(self) -> None:
+        missing = sorted({c.name for c in COMMANDS} - spec_command_names())
+
+        assert not missing, f"commands absent from SPEC.md section 9's table: {missing}"
+
+    def test_the_table_invents_nothing(self) -> None:
+        extra = sorted(spec_command_names() - {c.name for c in COMMANDS})
+
+        assert not extra, f"SPEC.md section 9 names commands that do not exist: {extra}"
+
+    def test_it_reads_a_multi_command_row(self) -> None:
+        # The parsing this guard rests on, stated outright.
+        names = spec_command_names()
+
+        assert {"listAiServingProfiles", "createAiServingProfile"} <= names
+        assert "deleteAiGenerationProfile" in names
+
+    def test_it_would_notice_a_command_left_out_of_the_table(self) -> None:
+        assert "listAiAdapters" in spec_command_names()
+        assert "getAiBatchResults" in spec_command_names()
+        assert "replaceAiCertificate" in spec_command_names()
+
+
+# --------------------------------------------------------------------------
+# The grant against what the engine actually enforces
+# --------------------------------------------------------------------------
+#
+# The map says who CloudStack lets through; the engine's route decides
+# who it serves. Where the map is the more generous of the two, a tenant
+# gets a 403 from the engine with nothing to explain it — a button that
+# fails for a reason no screen can show.
+#
+# Not a hole: the engine is the authority and it is the stricter side.
+# But each one is a promise CloudStack makes and does not keep, so they
+# are counted here and the list only shrinks.
+
+ADMIN_DEP = re.compile(
+    r"@app\.(get|post|patch|delete|put)\(\s*(.*?)\)\s*\n\s*async def (\w+)\((.*?)\)\s*->",
+    re.S,
+)
+
+#: Where the map is knowingly wider than the engine.
+#:
+#: `createAiBudget` is granted to every role and served admin-only, and
+#: here the **engine** is right: a tenant who could set their own budget
+#: could lift the limit that is blocking them. The map is the side to
+#: narrow, which changes a published grant — an open decision, recorded
+#: rather than made quietly.
+KNOWN_WIDER_THAN_THE_ENGINE = {"createAiBudget"}
+
+
+def admin_only_routes() -> set[tuple[str, str]]:
+    """Every engine route served behind AdminDep."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / "aisvc" / "api" / "app.py").read_text()
+
+    found = set()
+    for verb, args, _name, params in ADMIN_DEP.findall(source):
+        path = re.search(r'f?"\{?PREFIX\}?([^"]*)"', args)
+        if path and "AdminDep" in params:
+            found.add((verb.upper(), "/v1" + path.group(1)))
+    return found
+
+
+class TestTheGrantMatchesTheEngine:
+    def test_the_routes_were_read(self) -> None:
+        # An empty set would make the check below vacuous.
+        assert len(admin_only_routes()) > 5
+
+    def test_no_new_command_promises_more_than_the_engine_serves(self) -> None:
+        admin_only = admin_only_routes()
+
+        wider = {
+            command.name
+            for command in COMMANDS
+            if Role.USER in command.roles and (command.method.upper(), command.path) in admin_only
+        }
+
+        assert wider == KNOWN_WIDER_THAN_THE_ENGINE, (
+            "the map and the engine disagree about who may call: "
+            f"{sorted(wider - KNOWN_WIDER_THAN_THE_ENGINE)}"
+        )
+
+    def test_guardrails_are_no_longer_among_them(self) -> None:
+        """What this milestone changed, stated so it cannot slip back."""
+        admin_only = admin_only_routes()
+
+        for name in (
+            "listAiGuardrailProfiles",
+            "createAiGuardrailProfile",
+            "updateAiGuardrailProfile",
+            "deleteAiGuardrailProfile",
+        ):
+            command = next(c for c in COMMANDS if c.name == name)
+            assert (command.method.upper(), command.path) not in admin_only, (
+                f"{name} is admin-only again; tenants are meant to be able to "
+                "tighten their own account"
+            )

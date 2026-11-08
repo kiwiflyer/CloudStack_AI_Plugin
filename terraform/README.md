@@ -18,8 +18,78 @@ change with the engine.
 | `cloudstack_ai_budget` | `createAiBudget`, `listAiBudgets`, `updateAiBudget`, `deleteAiBudget` |
 | `cloudstack_ai_models` (data source) | `listAiModels` |
 
+### Tier 2 (v2)
+
+| Resource | Commands |
+| --- | --- |
+| `cloudstack_ai_adapter` | `uploadAiAdapter`, `listAiAdapters`, `deleteAiAdapter` |
+| `cloudstack_ai_batch` | `createAiBatch`, `listAiBatches`, `cancelAiBatch` |
+| `cloudstack_ai_certificate` | `uploadAiCertificate`, `listAiCertificates`, `replaceAiCertificate`, `deleteAiCertificate` |
+| `cloudstack_ai_private_endpoint` | `createAiPrivateEndpoint`, `listAiPrivateEndpoints`, `deleteAiPrivateEndpoint` |
+| `cloudstack_ai_guardrail_profile` | `createAiGuardrailProfile`, `listAiGuardrailProfiles`, `updateAiGuardrailProfile`, `deleteAiGuardrailProfile` |
+| `cloudstack_ai_evaluations` (data source) | `listAiEvaluations` |
+
+**These need `ai.services.v2.enabled` set on the management server.**
+The plugin registers the Tier 2 commands only when it is on, so without
+it every one of these fails at apply with CloudStack reporting an
+unknown command.
+
+The provider declares them either way. Terraform cannot ask CloudStack
+what is registered before a plan, and a resource that came and went
+would be a schema error rather than a message anyone can act on. So the
+failure happens at apply and says which setting to set.
+
+Their acceptance tests are gated on `CLOUDSTACK_AI_V2=1` as well as
+`TF_ACC`, so a v1 zone skips them rather than failing for a reason that
+is not a bug.
+
 Every resource supports `terraform import` by its id. A budget's id is
 the account it belongs to.
+
+## What the Tier 2 resources are, and are not
+
+- **A batch is work, not desired state.** `terraform destroy` cancels
+  what has not run; requests already completed stay billed and their
+  results stay available. Nothing about a submitted batch can be
+  changed, so every argument is `ForceNew`.
+- **An adapter is immutable.** There is no `updateAiAdapter`: its rank
+  has to match what vLLM was started with, so a change is another
+  upload. Read back `served_model_name` — `<base>:<adapter>` — because
+  the adapter's own name addresses nothing.
+- **A certificate renews in place.** New material calls
+  `replaceAiCertificate` rather than making a new resource, so every
+  private endpoint naming that id keeps naming it. The proxy is rebuilt
+  to pick the material up, which interrupts traffic: a proxy reads its
+  certificate once, at boot.
+- **A private endpoint cannot be edited.** There is no update command,
+  because the proxy VM is built from these values at boot. It is a proxy
+  and not a Kubernetes `LoadBalancer` Service because the CloudStack
+  cloud-controller takes a Service's network from the nodes' first NIC,
+  so a Service cannot be placed on a chosen tier.
+- **A guardrail profile can be retargeted, not rescoped.**
+  `updateAiGuardrailProfile` takes the target and nothing else — and
+  the new target is checked for authority too, or the scope rule would
+  be a formality: create it for yourself, then move it.
+- **Guardrails are scoped to the caller, not to a role.** A tenant may
+  write at the account scope with their own account as the target; a
+  domain admin inside their own domain; the platform and deployment
+  scopes are a root admin's. An apply that reaches above the caller is
+  refused with a message naming what they may set instead. A check
+  another scope has `locked` is refused outright rather than stored and
+  then ignored when requests are screened.
+
+### The certificate body and key
+
+The same write-once problem as the API key secret, for the same reason:
+`listAiCertificates` returns metadata only — never the certificate body,
+never the key. So `Read` touches neither, an imported certificate has
+both empty, and the acceptance test ignores them on import. Both are
+marked `Sensitive`; the body is not secret, but it travels with the key
+and showing one while hiding the other invites pasting them the wrong
+way round.
+
+**The private key is in Terraform state**, with everything that implies
+for how state is stored.
 
 ## The API key secret
 
