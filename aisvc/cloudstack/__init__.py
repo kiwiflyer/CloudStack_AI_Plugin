@@ -187,9 +187,15 @@ class CloudStackClient:
                 if response.status_code < 400:
                     return self._unwrap(command, response.json())
 
+                # CloudStack answers API errors with its own status codes,
+                # several of which are 5xx (530, 531, 533, 534...). A body
+                # carrying errorcode/errortext is a definitive answer, so it
+                # is raised rather than retried; only a bare 5xx with no
+                # CloudStack error in it is treated as transient.
+                body = self._error_body(command, response)
+                self._raise_for_api_error(command, body)
+
                 if response.status_code < 500:
-                    body = self._error_body(command, response)
-                    self._raise_for_api_error(command, body)
                     raise CloudStackError(
                         f"{command}: HTTP {response.status_code}",
                         error_code=response.status_code,
@@ -203,7 +209,9 @@ class CloudStackClient:
             if attempt < self.max_retries:
                 await asyncio.sleep(self.backoff_base * (2**attempt))
 
-        raise CloudStackError(f"{command}: giving up after {self.max_retries} retries") from last
+        raise CloudStackError(
+            f"{command}: giving up after {self.max_retries} retries ({last})"
+        ) from last
 
     @staticmethod
     def _error_body(command: str, response: httpx.Response) -> dict[str, Any]:

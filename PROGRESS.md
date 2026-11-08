@@ -85,10 +85,87 @@ amended rule and a note recording why.
    classes will need per-GPU accounting.
 
 3. The eight open decisions in SPEC.md section 14 are untouched. None blocked milestone 1;
-   the serving-layer and gateway choices will block milestone 3.
+   the serving-layer and gateway choices now block milestone 3.
 
-## Milestone 2 — Provisioning (next)
+## Milestone 2 — Provisioning (done)
 
 `provision` for VMs and CKS pools, cloud-init and Packer golden template, `aisvc apply` for
-node pools, Postgres run log. Requires: a target CloudStack release pinned, and recorded
-`deployVirtualMachine` / `scaleKubernetesCluster` responses from a lab zone (`make record`).
+node pools, Postgres run log.
+
+**State:** 243 tests pass, `ruff` clean, `mypy --strict` clean, 94% line coverage.
+
+```
+make check      # lint + types + unit + contract + integration
+aisvc apply --spec examples/platform.yaml --dry-run
+```
+
+### What landed
+
+| Module | What it does |
+| --- | --- |
+| `aisvc/db` | SQLAlchemy run log (`aisvc_run`, `aisvc_run_action`), Alembic migration `0001`, session plumbing. Dialect-neutral so unit tests run on SQLite; JSON becomes JSONB on Postgres |
+| `aisvc/provision` | `NodeProvisioner`: `deployVirtualMachine` with offering, template, host anti-affinity and cloud-init; `destroyVirtualMachine`; `scaleKubernetesCluster` |
+| `aisvc/provision/cloudinit.py` | Renders GPU node userdata from a Jinja template and base64-encodes it |
+| `aisvc/reconciler/executor.py` | Runs a plan in dependency order with per-action timeouts, recording every outcome |
+| `aisvc/cli` | `aisvc apply`, with `--dry-run`, confirmation before writes, and fail-fast config checks |
+| `templates/packer/` | Golden GPU image: driver, container toolkit, kubelet baked in; records versions in `/etc/aisvc/image.json` for drift detection |
+
+`tests/integration/` is new, with a stateful CloudStack fake whose VMs persist across calls.
+It carries the two cases SPEC.md section 12 names: `test_second_apply_produces_empty_plan`
+and `test_dry_run_makes_no_api_writes`.
+
+### Decisions taken, and why
+
+**Node VMs are named `aisvc-<pool>-<ordinal>`.** This is what makes provisioning idempotent:
+the pool's membership is derived from the names that already exist, so re-running `apply`
+creates nothing. New nodes take the lowest free ordinals; removals take the highest first.
+
+**Cluster join details come from the environment, not the spec.** `AISVC_CKS_JOIN_ENDPOINT`,
+`AISVC_CKS_JOIN_TOKEN` and `AISVC_CKS_CA_CERT_HASH`, per SPEC.md section 11 — secrets never
+live in `platform.yaml`. `GpuNodeUserdata` and `ClusterJoin` keep them out of `repr()` so they
+cannot reach a log line or plan output.
+
+**`aisvc apply` asks before writing** unless given `--yes`, and validates credentials and join
+details *before* planning, so an operator is never asked to confirm changes that could not
+have been applied.
+
+### Two bugs this milestone found in milestone 1
+
+**`plan_capacity` was comparing `min_nodes` against physical hosts.** A pool is sized in GPU
+node VMs; hosts are where they are placed. The snapshot now carries `PoolCapacity` (the pool's
+member VMs) alongside `ClassCapacity` (host capacity), and the plan sizes pools by VM count
+while warning separately when there are too few free hosts to place them on. Caught by the
+first integration test that executed a plan and re-observed.
+
+**The CloudStack client retried API errors and discarded their text.** CloudStack answers API
+errors with its own status codes, several of them 5xx — 530, 531, 533. The client treated
+those as transient, retried three times, then raised "giving up after 3 retries" with the
+actual error (`Insufficient capacity`) lost. It now treats any response carrying
+`errorcode`/`errortext` as a definitive answer whatever the HTTP status, and only retries a
+bare 5xx with no CloudStack error in it.
+
+### Open questions for the next session
+
+1. **`scale_cluster` is implemented but unused.** `plan_capacity` provisions standalone node
+   VMs that join CKS via cloud-init; it never calls `scaleKubernetesCluster`. Both paths are
+   in SPEC.md section 4. Which one owns GPU worker nodes needs settling before milestone 3
+   renders serving workloads onto them — the answer may differ per CloudStack release.
+
+2. **No leader election yet.** SPEC.md section 4 wants one reconciler leader per zone via a
+   Postgres advisory lock. `apply` is a one-shot command so nothing races today, but daemon
+   mode (milestone 7) needs it, and two concurrent `apply` runs would both plan the same
+   nodes.
+
+3. **Node removal picks the highest ordinal, not the emptiest node.** Fine while nothing is
+   scheduled on them; milestone 7's `drain` has to come first, or scaling down will kill
+   nodes with running replicas.
+
+4. **The weight-cache device is hardcoded to `/dev/nvme1n1`.** It should come from the GPU
+   class or be discovered on the node.
+
+## Milestone 3 — Serving and sourcing (next)
+
+`registry`, `hf` search/check/mirror/scan (section 5), `k8s` rendering, `gateway` with hooks,
+`profiles` serving and generation (section 6), one model end to end in a lab zone, cold-start
+target validated. **Blocked on** two of SPEC.md section 14's open decisions: the serving layer
+(KServe vs the vLLM production stack) and the gateway (LiteLLM vs Envoy AI Gateway).

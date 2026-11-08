@@ -189,6 +189,59 @@ class TestRetries:
 
         assert attempts == 1
 
+    async def test_a_cloudstack_error_body_is_not_retried_whatever_the_status(
+        self,
+    ) -> None:
+        """CloudStack answers API errors with 5xx codes such as 530.
+
+        Those are definitive answers, not transient failures: retrying
+        wastes time and loses the error text.
+        """
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return httpx.Response(
+                530,
+                json={
+                    "deployvirtualmachineresponse": {
+                        "errorcode": 533,
+                        "errortext": "Unable to create a deployment",
+                    }
+                },
+            )
+
+        async with client(handler, max_retries=3, backoff_base=0.0) as cs:
+            with pytest.raises(CloudStackError, match="Unable to create a deployment"):
+                await cs.call("deployVirtualMachine")
+
+        assert attempts == 1
+
+    async def test_a_5xx_without_an_error_body_is_still_retried(self) -> None:
+        """A bare 502 from a proxy is transient and worth retrying."""
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts < 2:
+                return httpx.Response(502, text="<html>bad gateway</html>")
+            return ok({"listhostsresponse": {"count": 0}})
+
+        async with client(handler, max_retries=3, backoff_base=0.0) as cs:
+            await cs.call("listHosts")
+
+        assert attempts == 2
+
+    async def test_giving_up_keeps_the_last_error_text(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, text="busy")
+
+        async with client(handler, max_retries=1, backoff_base=0.0) as cs:
+            with pytest.raises(CloudStackError, match="503"):
+                await cs.call("listHosts")
+
     async def test_transport_errors_are_retried(self) -> None:
         attempts = 0
 

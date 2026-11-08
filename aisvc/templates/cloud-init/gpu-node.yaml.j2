@@ -1,0 +1,54 @@
+#cloud-config
+# GPU node userdata (SPEC.md section 13).
+#
+# The golden template built by templates/packer already carries the NVIDIA
+# driver, container toolkit and kubelet. This only identifies the node,
+# proves the GPU is usable, prepares the weight cache and joins the cluster.
+hostname: {{ hostname }}
+fqdn: {{ hostname }}
+preserve_hostname: false
+
+write_files:
+  - path: /etc/aisvc/node.env
+    permissions: "0644"
+    content: |
+      AISVC_NODE_POOL={{ pool }}
+      AISVC_GPU_CLASS={{ gpu_class }}
+      AISVC_ZONE={{ zone }}
+      AISVC_CKS_CLUSTER={{ cks_cluster }}
+
+  - path: /etc/aisvc/kubelet-extra-args
+    permissions: "0644"
+    content: |
+      --node-labels=aisvc.io/node-pool={{ pool }},aisvc.io/gpu-class={{ gpu_class }},aisvc.io/zone={{ zone }},nvidia.com/gpu.present=true
+
+{% if weight_cache_device %}
+  - path: /etc/systemd/system/var-lib-aisvc-weights.mount
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Model weight cache on node-local NVMe
+      Before=kubelet.service
+
+      [Mount]
+      What={{ weight_cache_device }}
+      Where=/var/lib/aisvc/weights
+      Type=ext4
+      Options=defaults,noatime
+
+      [Install]
+      WantedBy=multi-user.target
+{% endif %}
+
+runcmd:
+  # Fail fast if the driver did not come up: a node that joins without a
+  # working GPU will still be given pods to run.
+  - ["/bin/bash", "-c", "nvidia-smi -L || { echo 'no GPU visible'; exit 1; }"]
+  - ["/bin/bash", "-c", "nvidia-ctk runtime configure --runtime=containerd --set-as-default"]
+  - ["systemctl", "restart", "containerd"]
+{% if weight_cache_device %}
+  - ["/bin/bash", "-c", "blkid {{ weight_cache_device }} || mkfs.ext4 -F {{ weight_cache_device }}"]
+  - ["mkdir", "-p", "/var/lib/aisvc/weights"]
+  - ["systemctl", "enable", "--now", "var-lib-aisvc-weights.mount"]
+{% endif %}
+  - ["/bin/bash", "-c", "kubeadm join {{ join_endpoint }} --token {{ join_token }} --discovery-token-ca-cert-hash {{ ca_cert_hash }} --node-name {{ hostname }}"]

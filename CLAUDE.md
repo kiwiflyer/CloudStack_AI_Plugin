@@ -4,15 +4,15 @@ Guidance for Claude Code working in this repository.
 
 ## Current state
 
-**Milestone 1 is done; milestones 2–9 are not.** See `PROGRESS.md` for what landed, the
-decisions taken, and the open questions. Working today: `aisvc/spec`, `aisvc/capacity`,
-`aisvc/cloudstack`, `aisvc/inventory`, `aisvc/reconciler` (diff only, nothing executes),
-`aisvc/cli` (`validate` and `plan`, both read-only).
+**Milestones 1–2 are done; 3–9 are not.** See `PROGRESS.md` for what landed, the decisions
+taken, and the open questions. Working today: `aisvc/spec`, `aisvc/capacity`,
+`aisvc/cloudstack`, `aisvc/inventory`, `aisvc/provision`, `aisvc/db`, `aisvc/reconciler`
+(diff and execute), `aisvc/cli` (`validate`, `plan`, `apply`), plus `templates/packer/`.
 
 Everything else in the layout below is **planned**, not written: there is no `java-plugin/`,
-`ui/`, `terraform/`, `deploy/`, `gateway-hooks/`, and no `db/`, `api/`, `hf/`, `registry/`,
-`profiles/`, `gateway/`, `provision/` or `k8s/` module yet. `make test-java`, `test-ui`,
-`test-tf` and `record` deliberately exit 1 with the milestone that will fill them in.
+`ui/`, `terraform/`, `deploy/`, `gateway-hooks/`, and no `api/`, `hf/`, `registry/`,
+`profiles/`, `gateway/` or `k8s/` module yet. `make test-java`, `test-ui`, `test-tf` and
+`record` deliberately exit 1 with the milestone that will fill them in.
 
 Before claiming a command works, run it. Before referencing a module, confirm the file exists.
 
@@ -81,9 +81,20 @@ aisvc validate --spec examples/platform.yaml --licenses licenses.yaml
 aisvc plan --spec examples/platform.yaml --no-observe
 ```
 
+```
+aisvc apply --spec examples/platform.yaml --dry-run
+```
+
 `--observe` (the default) needs `CLOUDSTACK_API_URL`, `CLOUDSTACK_API_KEY` and
-`CLOUDSTACK_SECRET_KEY`. Planned: `apply` (m2), `status`, `drain <host>` (m7),
+`CLOUDSTACK_SECRET_KEY`. `apply` additionally needs `AISVC_DATABASE_URL` and the cluster join
+details `AISVC_CKS_JOIN_ENDPOINT`, `AISVC_CKS_JOIN_TOKEN`, `AISVC_CKS_CA_CERT_HASH` — secrets
+come from the environment, never from `platform.yaml`. Planned: `status`, `drain <host>` (m7),
 `mirror <repo>` (m3), `effective <deployment>` (m3).
+
+**GPU nodes are named `aisvc-<pool>-<ordinal>`.** That naming is what makes provisioning
+idempotent — pool membership is read back from it, so never change the scheme without a
+migration path for nodes already deployed. A pool is sized in node VMs (`PoolCapacity`);
+physical host capacity is the separate `ClassCapacity`.
 
 **Units and conventions worth knowing before you touch sizing:** memory is GiB throughout
 (`gpu_mem_gb: 80` means 80 GiB); parameter counts are decimal billions; a model's optional
@@ -152,7 +163,7 @@ Build one per session, each ending with green tests and a `PROGRESS.md` update. 
 the previous. 1–8 are v1 GA; 9 is v2.
 
 1. ~~Foundation~~ — **done**, see `PROGRESS.md`
-2. Provisioning — `provision`, cloud-init, Packer golden template, `aisvc apply` for node pools
+2. ~~Provisioning~~ — **done**, see `PROGRESS.md`
 3. Serving and sourcing — `registry`, `hf`, `k8s` rendering, `gateway`, serving + generation profiles
 4. Engine API — FastAPI, async jobs, caller-context filtering, mTLS, contract tests
 5. Native API plugin — v1 commands, ConfigKeys, async bridge, events, roles, usage, deletion hooks

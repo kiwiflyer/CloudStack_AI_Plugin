@@ -13,6 +13,9 @@ dependencies = [
     "httpx>=0.27",
     "typer>=0.12",
     "rich>=13.7",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +27,7 @@ dev = [
     "mypy>=1.11",
     "ruff>=0.6",
     "types-PyYAML>=6.0",
+    "psycopg[binary]>=3.2",
 ]
 
 [project.scripts]
@@ -31,6 +35,9 @@ aisvc = "aisvc.cli.main:app"
 
 [tool.setuptools.packages.find]
 include = ["aisvc*"]
+
+[tool.setuptools.package-data]
+aisvc = ["templates/**/*.j2", "db/migrations/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

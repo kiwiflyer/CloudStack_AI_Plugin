@@ -7,6 +7,7 @@ desired state.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -17,11 +18,16 @@ if TYPE_CHECKING:
     from aisvc.spec import PlatformSpec
 
 __all__ = [
+    "NODE_NAME_RE",
     "CapacitySnapshot",
     "ClassCapacity",
     "HostRecord",
+    "PoolCapacity",
     "take_snapshot",
 ]
+
+#: GPU node VMs are named aisvc-<pool>-<ordinal>; see aisvc.provision.
+NODE_NAME_RE = re.compile(r"^aisvc-(?P<pool>.+)-(?P<ordinal>\d{3,})$")
 
 #: A host is usable only when it is up and its resource state is enabled.
 HEALTHY_RESOURCE_STATES = frozenset({"Enabled"})
@@ -103,16 +109,40 @@ class ClassCapacity:
         return self.nodes_free > 0
 
 
+@dataclass(frozen=True, slots=True)
+class PoolCapacity:
+    """The GPU node VMs that currently belong to one node pool.
+
+    A pool's size is counted in node VMs, not physical hosts: `min_nodes`
+    and `max_nodes` size the pool, while `ClassCapacity` says whether the
+    hosts to place them on exist.
+    """
+
+    pool: str
+    zone: str
+    gpu_class: str
+    #: Node VM names, in ordinal order.
+    nodes: tuple[str, ...] = ()
+
+    @property
+    def node_count(self) -> int:
+        return len(self.nodes)
+
+
 @dataclass(frozen=True)
 class CapacitySnapshot:
     """What CloudStack actually has, at one moment."""
 
     taken_at: datetime
     classes: dict[tuple[str, str], ClassCapacity] = field(default_factory=dict)
+    pools: dict[str, PoolCapacity] = field(default_factory=dict)
     hosts: tuple[HostRecord, ...] = ()
 
     def for_class(self, zone: str, gpu_class: str) -> ClassCapacity | None:
         return self.classes.get((zone, gpu_class))
+
+    def for_pool(self, pool: str) -> PoolCapacity | None:
+        return self.pools.get(pool)
 
     @classmethod
     def empty_for(cls, spec: PlatformSpec) -> CapacitySnapshot:
@@ -133,7 +163,13 @@ class CapacitySnapshot:
             for zone in spec.document.zones
             for gpu_class in spec.document.gpu_classes
         }
-        return cls(taken_at=datetime.now(UTC), classes=classes)
+        pools = {
+            pool.name: PoolCapacity(
+                pool=pool.name, zone=pool.zone, gpu_class=pool.gpu_class, nodes=()
+            )
+            for pool in spec.document.node_pools
+        }
+        return cls(taken_at=datetime.now(UTC), classes=classes, pools=pools)
 
     def for_zone(self, zone: str) -> list[ClassCapacity]:
         return [cap for (z, _), cap in self.classes.items() if z == zone]
@@ -188,8 +224,26 @@ async def take_snapshot(client: CloudStackClient, spec: PlatformSpec) -> Capacit
                 host_ids=tuple(h.id for h in matching),
             )
 
+    pools: dict[str, PoolCapacity] = {}
+    for pool in spec.document.node_pools:
+        members = sorted(
+            (
+                (int(match.group("ordinal")), str(vm.get("name", "")))
+                for vm in raw_vms
+                if (match := NODE_NAME_RE.match(str(vm.get("name", ""))))
+                and match.group("pool") == pool.name
+            ),
+        )
+        pools[pool.name] = PoolCapacity(
+            pool=pool.name,
+            zone=pool.zone,
+            gpu_class=pool.gpu_class,
+            nodes=tuple(name for _, name in members),
+        )
+
     return CapacitySnapshot(
         taken_at=datetime.now(UTC),
         classes=classes,
+        pools=pools,
         hosts=tuple(hosts),
     )

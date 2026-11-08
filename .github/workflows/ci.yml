@@ -21,7 +21,7 @@ jobs:
       - run: pytest tests/unit -q --cov --cov-report=term-missing
 
   contract:
-    name: Contract
+    name: Contract and integration
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -31,3 +31,4 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: pytest tests/contract -q
+      - run: pytest tests/integration -q

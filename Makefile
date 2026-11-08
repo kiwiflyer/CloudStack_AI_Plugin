@@ -37,4 +37,4 @@ test-gpu:
 record:
 	@echo "refreshes tests/fixtures/cloudstack against a lab zone; milestone 2"; exit 1
 
-check: lint types test-unit test-contract
+check: lint types test-unit test-contract test-int

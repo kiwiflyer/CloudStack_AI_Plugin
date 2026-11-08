@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import yaml
 
-from aisvc.inventory import CapacitySnapshot, ClassCapacity
+from aisvc.inventory import CapacitySnapshot, ClassCapacity, PoolCapacity
 from aisvc.reconciler import Action, ActionKind, Plan, plan_capacity
 from aisvc.spec import PlatformSpec, load_spec_from_string
 from tests.unit.test_spec import LICENSES, MINIMAL
@@ -18,7 +18,22 @@ def spec_with(**pool_changes: object) -> PlatformSpec:
     return load_spec_from_string(yaml.safe_dump(doc), allowed_licenses=LICENSES)
 
 
-def snapshot_with(nodes_total: int, nodes_allocated: int = 0) -> CapacitySnapshot:
+def snapshot_with(
+    pool_nodes: int, hosts_free: int = 8, *, include_pool: bool = True
+) -> CapacitySnapshot:
+    """A snapshot with `pool_nodes` node VMs in h100-pool.
+
+    A pool is sized in node VMs; `hosts_free` is the separate question of
+    whether there is physical room to place more.
+    """
+    pools = {}
+    if include_pool:
+        pools["h100-pool"] = PoolCapacity(
+            pool="h100-pool",
+            zone="zone-east-1",
+            gpu_class="h100-8x",
+            nodes=tuple(f"aisvc-h100-pool-{i:03d}" for i in range(1, pool_nodes + 1)),
+        )
     return CapacitySnapshot(
         taken_at=datetime.now(UTC),
         classes={
@@ -26,17 +41,18 @@ def snapshot_with(nodes_total: int, nodes_allocated: int = 0) -> CapacitySnapsho
                 zone="zone-east-1",
                 gpu_class="h100-8x",
                 gpus_per_node=8,
-                nodes_total=nodes_total,
-                nodes_healthy=nodes_total,
-                nodes_allocated=nodes_allocated,
+                nodes_total=hosts_free,
+                nodes_healthy=hosts_free,
+                nodes_allocated=0,
             )
         },
+        pools=pools,
     )
 
 
 class TestPlanCapacity:
     def test_pool_below_its_minimum_plans_node_creation(self) -> None:
-        plan = plan_capacity(spec_with(min_nodes=3), snapshot_with(nodes_total=1))
+        plan = plan_capacity(spec_with(min_nodes=3), snapshot_with(pool_nodes=1))
 
         creates = [a for a in plan.actions if a.kind is ActionKind.CREATE]
         assert len(creates) == 1
@@ -45,41 +61,53 @@ class TestPlanCapacity:
         assert "h100-pool" in creates[0].name
 
     def test_pool_at_its_minimum_plans_nothing(self) -> None:
-        plan = plan_capacity(spec_with(min_nodes=2), snapshot_with(nodes_total=2))
+        plan = plan_capacity(spec_with(min_nodes=2), snapshot_with(pool_nodes=2))
         assert plan.actions == []
         assert not plan.has_changes
 
     def test_pool_between_min_and_max_plans_nothing(self) -> None:
-        plan = plan_capacity(spec_with(min_nodes=1, max_nodes=6), snapshot_with(nodes_total=4))
+        plan = plan_capacity(spec_with(min_nodes=1, max_nodes=6), snapshot_with(pool_nodes=4))
         assert not plan.has_changes
 
     def test_pool_above_its_maximum_plans_node_removal(self) -> None:
-        plan = plan_capacity(spec_with(min_nodes=1, max_nodes=2), snapshot_with(nodes_total=5))
+        plan = plan_capacity(spec_with(min_nodes=1, max_nodes=2), snapshot_with(pool_nodes=5))
 
         deletes = [a for a in plan.actions if a.kind is ActionKind.DELETE]
         assert len(deletes) == 1
         assert deletes[0].count == 3
 
-    def test_unobserved_class_is_reported_as_a_problem_not_a_create(self) -> None:
+    def test_unobserved_pool_is_reported_as_a_problem_not_a_create(self) -> None:
         spec = spec_with(min_nodes=1)
-        empty = CapacitySnapshot(taken_at=datetime.now(UTC), classes={})
+        empty = CapacitySnapshot(taken_at=datetime.now(UTC), classes={}, pools={})
         plan = plan_capacity(spec, empty)
 
         assert any("not observed" in w for w in plan.warnings)
         assert not plan.has_changes
 
+    def test_too_few_free_hosts_is_a_warning_but_still_planned(self) -> None:
+        """Placement is CloudStack's call; say so rather than refuse to plan."""
+        plan = plan_capacity(spec_with(min_nodes=4), snapshot_with(pool_nodes=0, hosts_free=1))
+
+        assert plan.to_add == 4
+        assert any("free h100-8x host" in w for w in plan.warnings)
+
+    def test_enough_free_hosts_warns_about_nothing(self) -> None:
+        plan = plan_capacity(spec_with(min_nodes=2), snapshot_with(pool_nodes=0, hosts_free=8))
+
+        assert not any("free h100-8x host" in w for w in plan.warnings)
+
     def test_plan_carries_the_spec_notes(self) -> None:
         spec = spec_with(min_nodes=2)
-        plan = plan_capacity(spec, snapshot_with(nodes_total=2))
+        plan = plan_capacity(spec, snapshot_with(pool_nodes=2))
         assert any("max_num_seqs" in n for n in plan.notes)
 
     def test_second_plan_against_the_resulting_state_is_empty(self) -> None:
         """The reconciler must converge: SPEC.md section 12."""
         spec = spec_with(min_nodes=3)
-        first = plan_capacity(spec, snapshot_with(nodes_total=1))
+        first = plan_capacity(spec, snapshot_with(pool_nodes=1))
         applied = sum(a.count for a in first.actions if a.kind is ActionKind.CREATE)
 
-        second = plan_capacity(spec, snapshot_with(nodes_total=1 + applied))
+        second = plan_capacity(spec, snapshot_with(pool_nodes=1 + applied))
         assert not second.has_changes
 
 
