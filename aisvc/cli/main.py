@@ -23,6 +23,7 @@ from aisvc.k8s.client import (
     ClusterKubernetes,
     observe_deployments,
     observe_route_hash,
+    observe_weights,
 )
 from aisvc.provision import ClusterJoin, NodeProvisioner
 from aisvc.reconciler import ActualState, Executor, Plan, plan_all
@@ -147,6 +148,7 @@ async def _observe(spec: PlatformSpec) -> ActualState:
         capacity=capacity,
         deployments=observe_deployments(cluster, namespace=namespace),
         route_hash=observe_route_hash(cluster, namespace=namespace),
+        weights=observe_weights(cluster, namespace=namespace),
     )
 
 

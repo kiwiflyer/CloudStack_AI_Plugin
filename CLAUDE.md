@@ -10,8 +10,9 @@ Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`,
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
 Not written: `setup/`, `playground/`, all v2 modules, `ui/`, `terraform/`, `deploy/`.
-`lifecycle`, `autoscale` and `metering` exist but **nothing calls them** — they are decision
-functions waiting for a driver. `make test-java`, `test-ui`,
+`lifecycle` and `autoscale` are driven by the reconciler. `metering` is not: nothing pulls
+usage or writes usage records yet, and nothing fills in `DeploymentHealth`, so autoscaling
+decides correctly on data no one supplies. `make test-java`, `test-ui`,
 `test-tf` and `record` deliberately exit 1 naming the milestone that fills them in.
 
 `aisvc apply` takes an empty zone to a served model in one run — nodes, then deployments, then
@@ -23,10 +24,15 @@ proves who they are. Never weaken `ssl_cert_reqs`, and never bind a non-loopback
 without TLS configured — `aisvc/api/server.py` enforces both. Caller context arrives in
 `X-Aisvc-*` headers and every response is filtered by `CallerContext.may_see`.
 
-**Change detection is by spec hash.** The rendered manifest is digested and stamped as
-`aisvc.io/spec-hash`; the gateway config's digest goes on its ConfigMap. Plans compare digests
-rather than diffing live objects, so anything that changes rendering must flow through
-`spec_hash` or convergence breaks silently.
+**Change detection is by config hash.** The rendered manifest is digested **at a normalised
+replica count** and stamped as `aisvc.io/spec-hash`; the gateway config's digest goes on its
+ConfigMap. Replicas are deliberately excluded: scaling is an in-place change, and folding it
+in made every autoscale look like a spec change and start a rollout. Anything that changes
+rendering must flow through `config_hash` or convergence breaks silently.
+
+**Which colour is live is derived from the gateway's weights**, never stored — so there is no
+rollout state to desync. A spec change on a `bluegreen` model creates the other colour; the
+live one keeps serving until an operator promotes.
 
 Before claiming a command works, run it. Before referencing a module, confirm the file exists.
 

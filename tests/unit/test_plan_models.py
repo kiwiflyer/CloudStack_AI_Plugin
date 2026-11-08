@@ -13,7 +13,7 @@ import pytest
 import yaml
 
 from aisvc.inventory import CapacitySnapshot, ClassCapacity, PoolCapacity
-from aisvc.k8s import DeploymentTarget, image_for, render, spec_hash
+from aisvc.k8s import DeploymentTarget, config_hash, image_for
 from aisvc.k8s.client import DeployedModel
 from aisvc.reconciler import ActionKind, plan_all
 from aisvc.reconciler.state import ActualState
@@ -91,7 +91,7 @@ def expected_target(loaded: PlatformSpec, replicas: int = 2) -> DeploymentTarget
 
 
 def deployed(loaded: PlatformSpec, **kw: Any) -> DeployedModel:
-    digest = spec_hash(render(expected_target(loaded)))
+    digest = config_hash(expected_target(loaded))
     defaults: dict[str, Any] = {
         "model": "llama-3.3-70b-instruct",
         "colour": "blue",
@@ -134,7 +134,9 @@ class TestModelPlanning:
 
         assert actions_of(plan, "model-deployment") == []
 
-    def test_a_changed_spec_plans_an_update(self) -> None:
+    def test_a_changed_spec_brings_up_the_other_colour(self) -> None:
+        """The default rollout strategy is bluegreen, so a spec change
+        creates the candidate rather than mutating what is serving."""
         loaded = spec()
         stale = deployed(loaded, spec_hash="something-else")
         plan = plan_all(
@@ -143,11 +145,12 @@ class TestModelPlanning:
             registry=mirrored_registry(),
         )
 
-        updates = actions_of(plan, "model-deployment")
-        assert len(updates) == 1
-        assert updates[0].kind is ActionKind.UPDATE
+        actions = actions_of(plan, "model-deployment")
+        assert len(actions) == 1
+        assert actions[0].kind is ActionKind.CREATE
+        assert actions[0].name.endswith("-green")
 
-    def test_the_update_says_what_changed(self) -> None:
+    def test_the_rollout_says_why_it_is_happening(self) -> None:
         loaded = spec()
         stale = deployed(loaded, spec_hash="old", image="vllm/vllm-openai:v0.9.0")
         plan = plan_all(
@@ -156,7 +159,7 @@ class TestModelPlanning:
             registry=mirrored_registry(),
         )
 
-        assert "spec changed" in actions_of(plan, "model-deployment")[0].reason
+        assert "bluegreen" in actions_of(plan, "model-deployment")[0].reason
 
     def test_a_deployment_for_an_unknown_model_is_removed(self) -> None:
         orphan = DeployedModel(

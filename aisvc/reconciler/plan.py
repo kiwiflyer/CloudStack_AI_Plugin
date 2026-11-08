@@ -13,22 +13,31 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from aisvc.k8s import DEFAULT_NAMESPACE, DeploymentTarget, image_for, render, spec_hash
+from aisvc.autoscale import decide
+from aisvc.k8s import (
+    DEFAULT_NAMESPACE,
+    DeploymentTarget,
+    config_hash,
+    image_for,
+)
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from aisvc.inventory import CapacitySnapshot
     from aisvc.reconciler.state import ActualState
     from aisvc.registry import ModelRegistry
     from aisvc.spec import NodePool, PlatformSpec
+    from aisvc.spec.models import Model
 
 __all__ = [
     "ACTIVE_COLOUR",
     "Action",
     "ActionKind",
     "Plan",
-    "config_hash",
     "plan_all",
     "plan_capacity",
+    "route_config_hash",
 ]
 
 #: v1 serves one colour; blue/green rollouts arrive with `lifecycle`
@@ -216,12 +225,11 @@ def plan_models(
     declared: set[tuple[str, str]] = set()
 
     for model in spec.document.models:
-        declared.add((model.name, ACTIVE_COLOUR))
-
         if not model.source_is_pinned:
             warnings.append(
                 f"models.{model.name}: source does not pin a commit SHA, so it cannot be deployed"
             )
+            declared.add((model.name, ACTIVE_COLOUR))
             continue
 
         revision = model.revision or ""
@@ -230,61 +238,123 @@ def plan_models(
                 f"models.{model.name}: {model.repo_id}@{revision[:12]} is not "
                 "mirrored yet, so it will not be deployed"
             )
+            declared.add((model.name, ACTIVE_COLOUR))
             continue
 
         pool = next((p for p in spec.document.node_pools if p.name == model.node_pool), None)
         if pool is None:  # already reported by validation
             continue
 
-        target = DeploymentTarget(
-            model=model,
-            pool=pool,
-            gpu_class=spec.gpu_class(pool.gpu_class),
-            serving_profile=spec.serving_profile_for(model),
-            image=image_for(model),
-            replicas=model.replicas.min,
-            weights_uri=registry.uri_for(model.repo_id, revision),
-            colour=ACTIVE_COLOUR,
-        )
-        desired_hash = spec_hash(render(target, namespace=namespace))
-        current = state.deployment(model.name, ACTIVE_COLOUR)
+        live = state.live_colour(model.name)
+        candidate = _other_colour(live)
+        blue_green = model.rollout.strategy == "bluegreen"
 
-        depends_on: tuple[str, ...] = ()
-        if (node_action := node_action_for.get(pool.name)) is not None:
-            depends_on = (node_action.key,)
+        # Both colours are declared during a rollout, so neither is
+        # mistaken for an orphan and deleted out from under it.
+        declared.add((model.name, live))
 
-        detail = (
-            f"{model.replicas.min} replica(s) of {target.image} "
-            f"on {pool.name}, weights {target.weights_uri}"
-        )
+        deployed_live = state.deployment(model.name, live)
+        deployed_candidate = state.deployment(model.name, candidate)
+        rolling = deployed_live is not None and deployed_candidate is not None
 
-        if current is None:
+        replicas = _replicas_for(model, state, deployed_live, rolling=rolling)
+        depends_on = _depends_on(node_action_for, pool.name)
+
+        live_hash = _target_hash(spec, model, pool, registry, replicas, live, namespace)
+
+        if deployed_live is None:
             actions.append(
-                Action(
-                    kind=ActionKind.CREATE,
-                    resource_type="model-deployment",
-                    name=target.name,
-                    count=1,
-                    detail=detail,
+                _deployment_action(
+                    ActionKind.CREATE,
+                    model,
+                    pool,
+                    replicas,
+                    live,
                     reason="not deployed",
                     depends_on=depends_on,
+                    registry=registry,
                 )
             )
-        elif current.spec_hash != desired_hash:
+            continue
+
+        spec_unchanged = deployed_live.spec_hash == live_hash
+
+        if spec_unchanged and rolling and _rollout_finished(state, model.name, candidate):
+            # The candidate carries no traffic: a promote or rollback
+            # settled, and the loser is swept up below.
+            continue
+
+        if spec_unchanged and not rolling:
+            if deployed_live.replicas_desired != replicas:
+                # Scaling, not a spec change: in place, no rollout.
+                actions.append(
+                    _deployment_action(
+                        ActionKind.UPDATE,
+                        model,
+                        pool,
+                        replicas,
+                        live,
+                        reason=_scale_reason(model, state)
+                        or f"replica count is {deployed_live.replicas_desired}, want {replicas}",
+                        depends_on=depends_on,
+                        registry=registry,
+                    )
+                )
+            continue
+
+        if not blue_green:
+            if not spec_unchanged or deployed_live.replicas_desired != replicas:
+                actions.append(
+                    _deployment_action(
+                        ActionKind.UPDATE,
+                        model,
+                        pool,
+                        replicas,
+                        live,
+                        reason=_changed_reason(deployed_live, live_hash),
+                        depends_on=depends_on,
+                        registry=registry,
+                    )
+                )
+            continue
+
+        # Blue/green: bring the other colour up to the new spec and leave
+        # the live one serving until an operator promotes
+        # (ADR-0001 put the weights at the gateway, not here).
+        declared.add((model.name, candidate))
+        candidate_hash = _target_hash(spec, model, pool, registry, replicas, candidate, namespace)
+
+        if deployed_candidate is None:
             actions.append(
-                Action(
-                    kind=ActionKind.UPDATE,
-                    resource_type="model-deployment",
-                    name=target.name,
-                    count=1,
-                    detail=detail,
+                _deployment_action(
+                    ActionKind.CREATE,
+                    model,
+                    pool,
+                    replicas,
+                    candidate,
                     reason=(
-                        f"spec changed: running {current.spec_hash[:12] or 'unknown'}, "
-                        f"want {desired_hash[:12]}"
+                        f"spec changed and rollout.strategy is bluegreen, so "
+                        f"{candidate} is brought up beside {live}"
                     ),
                     depends_on=depends_on,
+                    registry=registry,
                 )
             )
+        elif deployed_candidate.spec_hash != candidate_hash:
+            actions.append(
+                _deployment_action(
+                    ActionKind.UPDATE,
+                    model,
+                    pool,
+                    replicas,
+                    candidate,
+                    reason=_changed_reason(deployed_candidate, candidate_hash),
+                    depends_on=depends_on,
+                    registry=registry,
+                )
+            )
+        # Otherwise the candidate matches: waiting on promote or rollback,
+        # which are operator actions through the API.
 
     for (name, colour), deployed in sorted(state.deployments.items()):
         if (name, colour) in declared:
@@ -296,7 +366,7 @@ def plan_models(
                 name=f"{name}-{colour}",
                 count=1,
                 detail=f"{deployed.replicas_desired} replica(s)",
-                reason="no longer declared in the spec",
+                reason=_retire_reason(name, colour, state),
             )
         )
 
@@ -318,7 +388,7 @@ def plan_routes(
         return []
 
     config = build_litellm_config(spec, weights=None, namespace=namespace)
-    digest = config_hash(config)
+    digest = route_config_hash(config)
     if state.route_hash == digest:
         return []
 
@@ -341,7 +411,7 @@ def plan_routes(
     ]
 
 
-def config_hash(config: dict[str, object]) -> str:
+def route_config_hash(config: dict[str, object]) -> str:
     """Digest of a rendered gateway config, used to detect drift."""
     canonical = json.dumps(config, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
@@ -374,4 +444,144 @@ def plan_all(
         actions=[*capacity.actions, *models, *routes],
         warnings=[*capacity.warnings, *model_warnings],
         notes=capacity.notes,
+    )
+
+
+def _other_colour(colour: str) -> str:
+    return "green" if colour == "blue" else "blue"
+
+
+def _depends_on(node_action_for: dict[str, Action], pool_name: str) -> tuple[str, ...]:
+    action = node_action_for.get(pool_name)
+    return (action.key,) if action is not None else ()
+
+
+def _changed_reason(deployed: Any, desired: str) -> str:
+    return f"spec changed: running {deployed.spec_hash[:12] or 'unknown'}, want {desired[:12]}"
+
+
+def _retire_reason(name: str, colour: str, state: ActualState) -> str:
+    """Why a deployment is being removed.
+
+    A colour left over from a finished rollout reads very differently
+    from a model somebody deleted, and an operator should be able to
+    tell which they are looking at.
+    """
+    if state.weights.get(name, {}).get(colour) == 0:
+        return f"rollout finished; {colour} no longer carries traffic"
+    return "no longer declared in the spec"
+
+
+def _replicas_for(
+    model: Model,
+    state: ActualState,
+    deployed: Any,
+    *,
+    rolling: bool,
+) -> int:
+    """How many replicas this model should run.
+
+    The spec's minimum is a floor, not a target: once metrics exist,
+    `autoscale` decides within the declared band. Scaling is skipped
+    mid-rollout, because moving replicas while traffic is shifting makes
+    both harder to reason about.
+    """
+    floor = model.replicas.min
+    if deployed is None or rolling:
+        return floor
+
+    ceiling = model.replicas.max
+    health = state.health.get(model.name)
+    if health is None:
+        # No metrics: keep what is running, but inside the declared band.
+        # A raised floor must still take effect, or a spec change to
+        # replicas would be silently ignored.
+        return max(floor, min(deployed.replicas_desired or floor, ceiling))
+
+    decision = decide(
+        health.metrics,
+        slo={
+            "ttft_p95_ms": model.slo.ttft_p95_ms,
+            "queue_depth_target": model.slo.queue_depth_target,
+        },
+        replicas=deployed.replicas_desired or floor,
+        minimum=floor,
+        maximum=model.replicas.max,
+        breaching_for_seconds=health.breaching_for_seconds,
+        idle_for_seconds=health.idle_for_seconds,
+    )
+    return decision.replicas
+
+
+def _scale_reason(model: Model, state: ActualState) -> str:
+    health = state.health.get(model.name)
+    if health is None:
+        return ""
+    deployed = state.deployment(model.name, state.live_colour(model.name))
+    decision = decide(
+        health.metrics,
+        slo={
+            "ttft_p95_ms": model.slo.ttft_p95_ms,
+            "queue_depth_target": model.slo.queue_depth_target,
+        },
+        replicas=(deployed.replicas_desired if deployed else model.replicas.min),
+        minimum=model.replicas.min,
+        maximum=model.replicas.max,
+        breaching_for_seconds=health.breaching_for_seconds,
+        idle_for_seconds=health.idle_for_seconds,
+    )
+    return decision.reason
+
+
+def _rollout_finished(state: ActualState, model: str, candidate: str) -> bool:
+    """Whether the candidate has been taken out of the traffic split."""
+    return state.weights.get(model, {}).get(candidate) == 0
+
+
+def _target_hash(
+    spec: PlatformSpec,
+    model: Model,
+    pool: NodePool,
+    registry: ModelRegistry,
+    replicas: int,
+    colour: str,
+    namespace: str,
+) -> str:
+    """The replica-independent identity of a deployment's configuration."""
+    target = DeploymentTarget(
+        model=model,
+        pool=pool,
+        gpu_class=spec.gpu_class(pool.gpu_class),
+        serving_profile=spec.serving_profile_for(model),
+        image=image_for(model),
+        replicas=replicas,
+        weights_uri=registry.uri_for(model.repo_id, model.revision or ""),
+        colour=colour,
+    )
+    return config_hash(target, namespace=namespace)
+
+
+def _deployment_action(
+    kind: ActionKind,
+    model: Model,
+    pool: NodePool,
+    replicas: int,
+    colour: str,
+    *,
+    reason: str,
+    depends_on: tuple[str, ...],
+    registry: ModelRegistry,
+) -> Action:
+    """One create or update of a model deployment."""
+    return Action(
+        kind=kind,
+        resource_type="model-deployment",
+        name=f"{model.name}-{colour}",
+        count=1,
+        detail=(
+            f"{replicas} replica(s) of {image_for(model)} on {pool.name}, "
+            f"weights {registry.uri_for(model.repo_id, model.revision or '')}"
+        ),
+        reason=reason,
+        depends_on=depends_on,
     )

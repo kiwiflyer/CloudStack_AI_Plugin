@@ -33,6 +33,7 @@ __all__ = [
     "ENGINE_PORT",
     "WEIGHT_CACHE_PATH",
     "DeploymentTarget",
+    "config_hash",
     "engine_args",
     "image_for",
     "render",
@@ -368,6 +369,19 @@ def spec_hash(objects: Sequence[dict[str, Any]]) -> str:
     """
     canonical = json.dumps(objects, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
+
+
+def config_hash(target: DeploymentTarget, *, namespace: str = DEFAULT_NAMESPACE) -> str:
+    """A digest of everything about a deployment except its replica count.
+
+    Replicas move under autoscaling, which is an in-place change. Folding
+    them into the identity would make every scale look like a spec change
+    and start a blue/green rollout over a number.
+    """
+    from dataclasses import replace as _replace
+
+    normalised = _replace(target, replicas=0)
+    return spec_hash(render(normalised, namespace=namespace))
 
 
 def render_yaml(target: DeploymentTarget, *, namespace: str = DEFAULT_NAMESPACE) -> str:

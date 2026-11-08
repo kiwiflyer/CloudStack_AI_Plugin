@@ -15,9 +15,15 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from aisvc.gateway import build_litellm_config
-from aisvc.k8s import DEFAULT_NAMESPACE, DeploymentTarget, image_for, render
+from aisvc.k8s import (
+    DEFAULT_NAMESPACE,
+    DeploymentTarget,
+    config_hash,
+    image_for,
+    render,
+)
 from aisvc.k8s.client import Kubernetes, apply_objects, delete_deployment
-from aisvc.reconciler.plan import config_hash
+from aisvc.reconciler.plan import route_config_hash
 
 if TYPE_CHECKING:
     from aisvc.registry import ModelRegistry
@@ -83,7 +89,14 @@ class ServingDeployer:
         """Create or update one colour of one model."""
         target = self._target_for(name)
         objects = render(target, namespace=self.namespace)
-        apply_objects(self.cluster, objects, dry_run=dry_run)
+        # Stamped with the replica-independent hash, so a scale does not
+        # read as a spec change on the next plan.
+        apply_objects(
+            self.cluster,
+            objects,
+            dry_run=dry_run,
+            digest=config_hash(target, namespace=self.namespace),
+        )
         return [f"{obj['kind']}/{obj['metadata']['name']}" for obj in objects]
 
     async def delete_model(self, name: str, *, dry_run: bool = False) -> list[str]:
@@ -113,7 +126,7 @@ class ServingDeployer:
                 },
                 # Read back by observe_route_hash so a settled platform
                 # does not re-apply its routes on every run.
-                "annotations": {ROUTE_HASH_ANNOTATION: config_hash(config)},
+                "annotations": {ROUTE_HASH_ANNOTATION: route_config_hash(config)},
             },
             "data": {"config.yaml": yaml.safe_dump(config, sort_keys=False)},
         }

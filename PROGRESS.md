@@ -553,13 +553,17 @@ skipping the 202 check.
 7. The commands are tested for shape, not behaviour against a real engine. That is what the
    Marvin tests and the integration environment are for.
 
-## Milestone 7 — Operations (partly done)
+## Milestone 7 — Operations (lifecycle and autoscale wired in)
 
 `autoscale`, `lifecycle` and `metering`, plus the engine endpoints the plugin's commands were
 calling into thin air.
 
-**State:** 819 Python tests pass, `ruff` clean, `mypy --strict` clean, 94% line coverage.
-`lifecycle` is at 99%, `metering` 98%, `autoscale` 100%. 361 Java tests still pass.
+**State:** 845 Python tests pass, `ruff` clean, `mypy --strict` clean, 94% line coverage.
+361 Java tests still pass.
+
+`lifecycle` and `autoscale` are no longer decision functions nobody calls: the reconciler
+drives both. A spec change on a blue/green model brings the other colour up beside the one
+serving, and replica counts follow the metrics inside the declared band.
 
 ### What landed
 
@@ -606,13 +610,35 @@ The plugin **compiles and passes all 361 tests against 4.22.1.1 LTS** as well as
 nothing 4.23-only has crept in. A CI job runs it on every change, so the eventual retarget
 stays a rebuild rather than a rewrite.
 
+### Wiring them in, and what it exposed
+
+**The live colour is derived, not stored.** `ActualState.live_colour` reads the gateway's own
+weights back from the ConfigMap, so there is no rollout state to fall out of step with
+reality — the same argument as the spec hash. A promotion is therefore just a weight change
+the next plan notices.
+
+**Scaling is not a spec change, and finding that out took a bug.** The first wiring folded the
+replica count into the spec hash, so autoscaling to three replicas looked like a configuration
+change and started a blue/green rollout over a number. `config_hash` now renders at a
+normalised replica count and the deployer stamps that, while replica drift is handled as an
+in-place update. The two concepts were conflated and the tests separated them.
+
+**Scaling is skipped mid-rollout.** Moving replicas while traffic is shifting makes both
+harder to reason about, and neither is urgent enough to do at once.
+
+**A raised replica floor still takes effect without metrics.** The first version kept whatever
+was deployed, which silently ignored a spec change to `replicas.min`.
+
 ### What milestone 7 still needs
 
-1. **Nothing drives any of this.** `lifecycle`, `autoscale` and `metering` are pure decision
-   functions with no caller: the reconciler does not run rollouts, no loop reads Prometheus,
-   and nothing pulls usage hourly or writes CloudStack usage records.
-2. **No Prometheus client.** `Metrics` is a dataclass somebody has to fill in.
-3. **Alerts and Grafana dashboards** (section 11) are unwritten.
-4. Usage reconciling to gateway token counts within 1% (section 14) cannot be checked until
-   something actually meters.
+1. **Metering has no driver.** Pricing and budget logic are tested, but nothing pulls usage
+   from the gateway hourly or writes CloudStack usage records. Section 14's "usage reconciles
+   to gateway token counts within 1%" cannot be checked until something meters.
+2. **No Prometheus client.** `DeploymentHealth` is a dataclass the reconciler reads; nothing
+   fills it in, so `aisvc apply` never autoscales in practice. The decision logic is driven
+   and tested; the data source is not written.
+3. **Promote and rollback write no weights yet.** The API endpoints compute the split and
+   record it on a job, but nothing applies it to the gateway ConfigMap — so a real promotion
+   still needs the operator to change the weights.
+4. **Alerts and Grafana dashboards** (section 11) are unwritten.
 

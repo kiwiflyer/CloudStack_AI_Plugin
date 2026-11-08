@@ -211,3 +211,74 @@ class TestObserve:
             ("llama-3.3-70b-instruct", "blue"),
             ("llama-3.3-70b-instruct", "green"),
         }
+
+
+class TestObserveWeights:
+    """How the planner learns a promotion happened."""
+
+    def configmap(self, cluster: FakeKubernetes, config: str) -> None:
+        cluster.apply(
+            "ConfigMap",
+            "aisvc-serving",
+            {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {
+                    "name": "aisvc-gateway-config",
+                    "namespace": "aisvc-serving",
+                },
+                "data": {"config.yaml": config},
+            },
+            field_manager="aisvc",
+            force=True,
+        )
+
+    def test_no_configmap_means_no_weights(self, cluster: FakeKubernetes) -> None:
+        from aisvc.k8s.client import observe_weights
+
+        assert observe_weights(cluster, namespace="aisvc-serving") == {}
+
+    def test_weights_are_read_per_model_and_colour(self, cluster: FakeKubernetes) -> None:
+        from aisvc.k8s.client import observe_weights
+
+        self.configmap(
+            cluster,
+            "model_list:\n"
+            "- model_name: m\n"
+            "  litellm_params: {weight: 90}\n"
+            "  model_info: {colour: blue}\n"
+            "- model_name: m\n"
+            "  litellm_params: {weight: 10}\n"
+            "  model_info: {colour: green}\n",
+        )
+
+        assert observe_weights(cluster, namespace="aisvc-serving") == {
+            "m": {"blue": 90, "green": 10}
+        }
+
+    def test_a_single_entry_defaults_to_all_the_traffic(self, cluster: FakeKubernetes) -> None:
+        from aisvc.k8s.client import observe_weights
+
+        self.configmap(
+            cluster,
+            "model_list:\n- model_name: m\n  litellm_params: {}\n  model_info: {colour: blue}\n",
+        )
+
+        assert observe_weights(cluster, namespace="aisvc-serving") == {"m": {"blue": 100}}
+
+    def test_an_entry_without_a_colour_is_skipped(self, cluster: FakeKubernetes) -> None:
+        from aisvc.k8s.client import observe_weights
+
+        self.configmap(
+            cluster,
+            "model_list:\n- model_name: m\n  litellm_params: {weight: 50}\n  model_info: {}\n",
+        )
+
+        assert observe_weights(cluster, namespace="aisvc-serving") == {}
+
+    def test_an_empty_config_is_not_an_error(self, cluster: FakeKubernetes) -> None:
+        from aisvc.k8s.client import observe_weights
+
+        self.configmap(cluster, "")
+
+        assert observe_weights(cluster, namespace="aisvc-serving") == {}

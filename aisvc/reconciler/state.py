@@ -11,13 +11,27 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from aisvc.autoscale import Metrics
 from aisvc.inventory import CapacitySnapshot
 
 if TYPE_CHECKING:
     from aisvc.k8s.client import DeployedModel
     from aisvc.spec import PlatformSpec
 
-__all__ = ["ActualState"]
+__all__ = ["ActualState", "DeploymentHealth"]
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentHealth:
+    """What Prometheus says about one model, and for how long.
+
+    The durations are what keep a passing spike from adding a GPU node
+    and a quiet minute from removing one (SPEC.md section 4).
+    """
+
+    metrics: Metrics
+    breaching_for_seconds: int = 0
+    idle_for_seconds: int = 0
 
 
 @dataclass(frozen=True)
@@ -29,6 +43,11 @@ class ActualState:
     deployments: dict[tuple[str, str], DeployedModel] = field(default_factory=dict)
     #: The gateway config currently in effect, by its digest.
     route_hash: str = ""
+    #: Traffic weights per model, as the gateway currently has them.
+    #: The colour carrying the most traffic is the one that is live.
+    weights: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: Prometheus signals per model, where they have been observed.
+    health: dict[str, DeploymentHealth] = field(default_factory=dict)
     observed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def deployment(self, model: str, colour: str) -> DeployedModel | None:
@@ -36,6 +55,17 @@ class ActualState:
 
     def colours_of(self, model: str) -> list[str]:
         return sorted(colour for name, colour in self.deployments if name == model)
+
+    def live_colour(self, model: str, *, default: str = "blue") -> str:
+        """Which colour is currently carrying traffic for this model.
+
+        Read from the gateway's weights rather than stored, so there is
+        no rollout state to fall out of step with reality.
+        """
+        split = self.weights.get(model)
+        if not split:
+            return default
+        return max(split, key=lambda colour: split[colour])
 
     @classmethod
     def empty_for(cls, spec: PlatformSpec) -> ActualState:

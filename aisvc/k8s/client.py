@@ -30,6 +30,7 @@ __all__ = [
     "delete_deployment",
     "observe_deployments",
     "observe_route_hash",
+    "observe_weights",
 ]
 
 #: Server-side apply field manager. Fixed, so repeated applies converge
@@ -211,6 +212,7 @@ def apply_objects(
     objects: Sequence[dict[str, Any]],
     *,
     dry_run: bool = False,
+    digest: str | None = None,
 ) -> None:
     """Server-side apply a rendered manifest, stamping its spec hash.
 
@@ -220,11 +222,11 @@ def apply_objects(
     if dry_run:
         return
 
-    digest = spec_hash(objects)
+    stamp = digest if digest is not None else spec_hash(objects)
     for obj in objects:
         kind = str(obj["kind"])
         namespace = str(obj["metadata"].get("namespace", DEFAULT_NAMESPACE))
-        stamped = _with_hash(obj, digest)
+        stamped = _with_hash(obj, stamp)
         try:
             cluster.apply(
                 kind,
@@ -319,3 +321,41 @@ def observe_route_hash(
         annotations = metadata.get("annotations") or {}
         return str(annotations.get("aisvc.io/route-hash", ""))
     return ""
+
+
+def observe_weights(
+    cluster: Kubernetes,
+    *,
+    namespace: str = DEFAULT_NAMESPACE,
+    name: str = "aisvc-gateway-config",
+) -> dict[str, dict[str, int]]:
+    """The traffic split per model, as the gateway currently has it.
+
+    Read back from the ConfigMap the deployer writes, so the planner
+    learns about a promotion without any rollout state of its own.
+    """
+    import yaml
+
+    for obj in cluster.list("ConfigMap", namespace):
+        metadata = obj.get("metadata") or {}
+        if metadata.get("name") != name:
+            continue
+        data = (obj.get("data") or {}).get("config.yaml")
+        if not data:
+            return {}
+        try:
+            config = yaml.safe_load(data) or {}
+        except yaml.YAMLError:  # pragma: no cover - the deployer wrote it
+            return {}
+
+        weights: dict[str, dict[str, int]] = {}
+        for entry in config.get("model_list", []):
+            model = entry.get("model_name")
+            info = entry.get("model_info") or {}
+            params = entry.get("litellm_params") or {}
+            colour = info.get("colour")
+            if not model or not colour:
+                continue
+            weights.setdefault(model, {})[colour] = int(params.get("weight", 100))
+        return weights
+    return {}

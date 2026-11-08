@@ -89,6 +89,9 @@ class Platform:
         self.cluster = cluster
         self.registry = registry
         self.session = session
+        #: Traffic weights as the gateway has them, which is how the
+        #: planner learns which colour is live.
+        self.weights: dict[str, dict[str, int]] = {}
 
     async def reconcile(self, spec: PlatformSpec, *, dry_run: bool = False) -> object:
         client = CloudStackClient(
@@ -105,6 +108,7 @@ class Platform:
                 capacity=capacity,
                 deployments=observe_deployments(self.cluster, namespace=NAMESPACE),
                 route_hash=observe_route_hash(self.cluster, namespace=NAMESPACE),
+                weights=dict(self.weights),
             )
             plan = plan_all(spec, state, registry=self.registry, namespace=NAMESPACE)
 
@@ -201,11 +205,18 @@ class TestChangeDetection:
         bigger = load_spec_from_string(yaml.safe_dump(doc), allowed_licenses=LICENSES)
         await platform.reconcile(bigger)
 
+        # Scaling is in place: a replica count is not a spec change, so
+        # it must not start a rollout.
         deployment = platform.cluster.get("Deployment", NAMESPACE, "llama-3.3-70b-instruct-blue")
         assert deployment["spec"]["replicas"] == 3
+        assert ("llama-3.3-70b-instruct", "green") not in platform.deployments()
 
     async def test_a_serving_profile_change_rolls_out(self, platform: Platform) -> None:
-        """SPEC.md section 6: a profile change takes effect by rollout."""
+        """SPEC.md section 6: a profile change takes effect by rollout.
+
+        ADR-0001 put rollouts here rather than in the serving layer, so
+        the change lands on a new colour beside the one still serving.
+        """
         await platform.reconcile(spec())
 
         doc = yaml.safe_load(MINIMAL)
@@ -214,9 +225,12 @@ class TestChangeDetection:
         changed = load_spec_from_string(yaml.safe_dump(doc), allowed_licenses=LICENSES)
         await platform.reconcile(changed)
 
-        deployment = platform.cluster.get("Deployment", NAMESPACE, "llama-3.3-70b-instruct-blue")
-        args = deployment["spec"]["template"]["spec"]["containers"][0]["args"]
-        assert "128" in args
+        green = platform.cluster.get("Deployment", NAMESPACE, "llama-3.3-70b-instruct-green")
+        assert "128" in green["spec"]["template"]["spec"]["containers"][0]["args"]
+
+        # Blue keeps serving the old configuration until promotion.
+        blue = platform.cluster.get("Deployment", NAMESPACE, "llama-3.3-70b-instruct-blue")
+        assert "256" in blue["spec"]["template"]["spec"]["containers"][0]["args"]
 
     async def test_removing_a_model_removes_its_deployment(self, platform: Platform) -> None:
         await platform.reconcile(spec())
@@ -306,4 +320,64 @@ class TestOrderingUnderFailure:
         run = await platform.reconcile(spec())
 
         assert run.status is RunStatus.SUCCEEDED  # type: ignore[attr-defined]
+        assert ("llama-3.3-70b-instruct", "blue") in platform.deployments()
+
+
+class TestRolloutAcrossRuns:
+    """A blue/green rollout, one reconcile at a time (SPEC.md section 7)."""
+
+    async def test_a_rollout_runs_to_completion(self, platform: Platform) -> None:
+        await platform.reconcile(spec())
+        platform.weights = {"llama-3.3-70b-instruct": {"blue": 100, "green": 0}}
+
+        # A spec change brings green up beside blue.
+        doc = yaml.safe_load(MINIMAL)
+        doc["nodePools"][0]["min_nodes"] = 2
+        doc["tuningProfiles"]["serving"][0]["params"]["max_num_seqs"] = 128
+        changed = load_spec_from_string(yaml.safe_dump(doc), allowed_licenses=LICENSES)
+        await platform.reconcile(changed)
+
+        assert ("llama-3.3-70b-instruct", "green") in platform.deployments()
+        assert ("llama-3.3-70b-instruct", "blue") in platform.deployments()
+
+        # Nothing more to do while the operator decides.
+        await platform.reconcile(changed)
+        assert [a.resource_type for a in platform.planned.actions] == []
+
+        # Promotion moves the traffic; the next run retires blue.
+        platform.weights = {"llama-3.3-70b-instruct": {"blue": 0, "green": 100}}
+        await platform.reconcile(changed)
+
+        assert ("llama-3.3-70b-instruct", "blue") not in platform.deployments()
+        assert ("llama-3.3-70b-instruct", "green") in platform.deployments()
+
+    async def test_the_platform_settles_after_a_rollout(self, platform: Platform) -> None:
+        await platform.reconcile(spec())
+        platform.weights = {"llama-3.3-70b-instruct": {"blue": 100, "green": 0}}
+
+        doc = yaml.safe_load(MINIMAL)
+        doc["nodePools"][0]["min_nodes"] = 2
+        doc["tuningProfiles"]["serving"][0]["params"]["max_num_seqs"] = 128
+        changed = load_spec_from_string(yaml.safe_dump(doc), allowed_licenses=LICENSES)
+        await platform.reconcile(changed)
+        platform.weights = {"llama-3.3-70b-instruct": {"blue": 0, "green": 100}}
+        await platform.reconcile(changed)
+
+        await platform.reconcile(changed)
+
+        assert platform.planned.actions == []
+
+    async def test_a_rollback_retires_the_candidate_instead(self, platform: Platform) -> None:
+        await platform.reconcile(spec())
+        platform.weights = {"llama-3.3-70b-instruct": {"blue": 100, "green": 0}}
+
+        doc = yaml.safe_load(MINIMAL)
+        doc["nodePools"][0]["min_nodes"] = 2
+        doc["tuningProfiles"]["serving"][0]["params"]["max_num_seqs"] = 128
+        changed = load_spec_from_string(yaml.safe_dump(doc), allowed_licenses=LICENSES)
+        await platform.reconcile(changed)
+
+        # The operator rolls back: blue keeps all the traffic.
+        await platform.reconcile(changed)
+
         assert ("llama-3.3-70b-instruct", "blue") in platform.deployments()
