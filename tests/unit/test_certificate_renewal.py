@@ -243,3 +243,54 @@ class TestTheSweep:
         self.certificate(session, days=10)
 
         await sweep_renewals(session, sink=Broken())
+
+
+class TestOneAlertPerSweep:
+    """Several thresholds crossing at once must not become several
+    near-identical messages.
+
+    They do cross together — a certificate first seen ten days out
+    passes 30 and 14 in the same sweep — and three alerts reading
+    "expires in 9 days" is exactly the noise the thresholds exist to
+    prevent. One alert, at the most urgent severity, and every crossed
+    point recorded so none fires again.
+    """
+
+    def record(self, days: float) -> Any:
+        from aisvc.db.models import CertificateRecord
+
+        return CertificateRecord(
+            id="c-1",
+            account="acme",
+            domain="/Customers/Acme",
+            custom_domain="ai.acme.example",
+            certificate="",
+            private_key="",
+            fingerprint="ff",
+            not_after=expiring_in(days),
+        )
+
+    def test_two_thresholds_crossing_make_one_alert(self) -> None:
+        alerts = renewal_alerts(self.record(10))
+
+        assert len(alerts) == 1
+
+    def test_it_takes_the_most_urgent_severity(self) -> None:
+        from aisvc.observability.alerts import AlertSeverity
+
+        # 30, 14 and 7 all cross at five days left.
+        alerts = renewal_alerts(self.record(5))
+
+        assert alerts[0].severity is AlertSeverity.CRITICAL
+
+    def test_every_crossed_threshold_is_recorded(self) -> None:
+        """Or the ones skipped would fire on the next sweep."""
+        alerts = renewal_alerts(self.record(5))
+
+        assert sorted(alerts[0].detail["thresholds"]) == [7, 14, 30]
+
+    def test_a_single_crossing_is_unchanged(self) -> None:
+        alerts = renewal_alerts(self.record(20))
+
+        assert len(alerts) == 1
+        assert alerts[0].detail["thresholds"] == [30]

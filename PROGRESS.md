@@ -1873,3 +1873,84 @@ shorter-lived replacement was refused.
 - Adapter artefacts are not fetched, evaluations are judged rather than
   produced, the guard model is not called, no v2 command reaches
   CloudStack, and the batch worker has no leader election.
+
+## Milestone 9 — watching ACME renewal
+
+**Status:** an ACME endpoint's live certificate is probed on every
+apply, so a failed renewal is noticed before it stops working.
+
+1666 Python tests, 399 Java, 21 Go, 86 Vitest.
+
+### Probing, not reporting
+
+An ACME certificate has no record here — certbot issues and renews it
+on the proxy — so the renewal sweep had nothing to watch, and a failed
+renewal left nginx on an expired certificate with no alert at all.
+
+The engine asks the endpoint instead. Probing rather than having the
+proxy report back, for three reasons:
+
+- it needs no credential on the proxy, which is the problem that made
+  ACME awkward in the first place;
+- it sees what a browser sees, so it also catches nginx never being
+  reloaded after a renewal, or DNS pointing somewhere else;
+- a proxy that has stopped answering cannot file a report saying so.
+
+**Expiry and trust are read as separate questions.** The connection is
+made without verification so the certificate can be read whatever state
+it is in — an expired one is exactly what this is looking for, and a
+verifying handshake would refuse the connection and report nothing.
+Trust is checked separately, because "stops working on Friday" and
+"never worked" are different problems. A failed ACME run that leaves a
+self-signed certificate in place looks perfectly healthy by expiry and
+is refused by every browser.
+
+The tests run against a real TLS server on localhost. The point is to
+read a certificate off a socket, and a mocked socket would prove
+nothing about that.
+
+### Two noise problems the smoke test found
+
+Both would have made these alerts worthless, and both were in code that
+passed its unit tests:
+
+1. **Thresholds crossing together made near-identical messages.** A
+   certificate first seen ten days out passes 30 and 14 in one sweep,
+   and five days out passes three at once — so the first sweep sent
+   three alerts all reading "expires in 4 days", at mixed severities.
+   Now one alert per sweep, at the severity of the most urgent point
+   passed, with every point recorded so none fires again. Fixed in the
+   uploaded path too, which had the same shape.
+
+2. **Standing conditions re-alerted every reconcile.** Untrusted,
+   unreachable and wrong-domain stay true until someone fixes them,
+   unlike a threshold, which is a moment. Each is announced once now,
+   and again only if it clears and returns — a problem fixed and
+   reintroduced should not pass unseen.
+
+### Verified
+
+Against real TLS sockets: a fresh certificate read at 59 days, an
+expiring one at 4, an expired one at -4, and a closed port reported
+unreachable rather than raising. The sweep then gave two distinct
+alerts — untrusted, and expiring — where it had given four, and the
+second sweep was silent.
+
+### What is still not true
+
+- **No real ACME certificate has been probed.** The tests and the smoke
+  use self-signed certificates on localhost, so `trusted` has only ever
+  been observed as false. The trust path is exercised but never
+  satisfied.
+- **Nothing acts on what the probe finds.** A failed renewal raises an
+  alert; it does not re-run certbot or replace the proxy. An operator
+  reads the alert and decides.
+- **The probe needs to reach the endpoint**, which means the engine
+  resolving and connecting to the tenant's custom domain. For a
+  private-only endpoint on a VPC tier that may not be possible from
+  where the engine runs, and it would read as `unreachable` — an alert
+  about the probe's own vantage point rather than the endpoint.
+- Renewal of an uploaded certificate still replaces the proxy, which is
+  downtime; adapter artefacts are not fetched; evaluations are judged
+  rather than produced; the guard model is not called; no v2 command
+  reaches CloudStack; and the batch worker has no leader election.

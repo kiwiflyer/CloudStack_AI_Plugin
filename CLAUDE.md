@@ -17,7 +17,9 @@ v2 is reachable through the engine API and the CLI, not through CloudStack: its
 commands are `Release.V2` and the Java generator emits V1 only. No CloudStack has run the proxy provisioner and no
 proxy has booted. Uploaded certificates are watched and can be
 replaced, but renewing one replaces its proxy VM — downtime, because a proxy fetches
-its material once at boot. ACME renewal is unwatched. Nothing fetches an adapter's
+its material once at boot. ACME endpoints are probed on each apply, so a
+failed renewal is seen; nothing acts on it automatically, and a private-only endpoint
+may be unreachable from where the engine runs. Nothing fetches an adapter's
 artefacts, produces an evaluation or calls the guard model. The batch
 worker (`aisvc batch`) has no leader election, so run one.
 

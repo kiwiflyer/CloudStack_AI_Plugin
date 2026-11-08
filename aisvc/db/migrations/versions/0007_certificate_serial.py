@@ -34,9 +34,13 @@ def upgrade() -> None:
         "aisvc_private_endpoint",
         sa.Column("proxy_certificate_serial", sa.Integer(), nullable=False, server_default="0"),
     )
+    # ACME certificates have no record of their own, so an endpoint's
+    # countdown is remembered against its exposure.
+    op.add_column("aisvc_private_endpoint", sa.Column("acme_notified", JsonColumn, nullable=True))
 
 
 def downgrade() -> None:
+    op.drop_column("aisvc_private_endpoint", "acme_notified")
     op.drop_column("aisvc_private_endpoint", "proxy_certificate_serial")
     op.drop_column("aisvc_certificate", "notified")
     op.drop_column("aisvc_certificate", "serial")

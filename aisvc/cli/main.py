@@ -25,6 +25,7 @@ from aisvc.batch.runner import (
     preemption_signal,
 )
 from aisvc.certificates.bootstrap import BootstrapTokens
+from aisvc.certificates.probe import sweep_endpoint_certificates
 from aisvc.certificates.renewal import sweep_renewals
 from aisvc.cloudstack import CloudStackClient, CloudStackError, Credentials
 from aisvc.db import Base, RunLog, UsageStore, create_session_factory, session_scope
@@ -385,6 +386,11 @@ async def _apply(
                     # Nothing else runs often enough to notice an
                     # expiry: a certificate does not degrade, it stops.
                     await sweep_renewals(session, sink=LogSink())
+                    # ACME certificates have no record here — certbot
+                    # issues and renews them on the proxy — so the only
+                    # way to know a renewal failed is to look at what
+                    # the endpoint is serving.
+                    await sweep_endpoint_certificates(session, sink=LogSink())
                 return run.id, run.status.value
 
 

@@ -288,6 +288,10 @@ class PrivateEndpointRecord(Base):
     #: certificate's current serial means it is serving superseded
     #: material and has to be replaced.
     proxy_certificate_serial: Mapped[int] = mapped_column(Integer, default=0)
+    #: Renewal thresholds already announced for what this endpoint is
+    #: observed to be serving. ACME certificates have no record of
+    #: their own, so the countdown is remembered here.
+    acme_notified: Mapped[list[int]] = mapped_column(JsonColumn, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

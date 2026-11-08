@@ -71,50 +71,57 @@ def crossed_renewal_thresholds(
 
 
 def renewal_alerts(record: CertificateRecord, already_notified: Sequence[int] = ()) -> list[Alert]:
-    """One alert per newly crossed threshold.
+    """At most one alert, however many thresholds were passed.
 
-    Carries the domain and the days left and nothing else: an alert
+    They cross together — a certificate first seen ten days out passes
+    30 and 14 in the same sweep — and three messages all reading
+    "expires in 9 days" is exactly the noise the thresholds exist to
+    prevent. So: one alert, at the severity of the most urgent point
+    passed, recording every point so none fires again.
+
+    Carries the domain and the days left and nothing else. An alert
     reaches logs and webhooks, and certificate material has no business
     in either.
     """
     left = days_until(record.not_after)
-    alerts: list[Alert] = []
+    crossed = crossed_renewal_thresholds(days_left=left, already_notified=already_notified)
+    if not crossed:
+        return []
 
-    for threshold in crossed_renewal_thresholds(days_left=left, already_notified=already_notified):
-        if left < 0:
-            summary = (
-                f"the TLS certificate for {record.custom_domain} expired "
-                f"{abs(left)} day(s) ago; its endpoint is serving a certificate "
-                "browsers will refuse"
-            )
-        else:
-            summary = (
-                f"the TLS certificate for {record.custom_domain} expires in "
-                f"{left} day(s); upload a replacement before it does"
-            )
-
-        alerts.append(
-            Alert(
-                category="certificate",
-                summary=summary,
-                severity=(
-                    AlertSeverity.CRITICAL
-                    if threshold <= CRITICAL_BELOW_DAYS
-                    else AlertSeverity.WARNING
-                ),
-                account=record.account,
-                domain=record.domain,
-                detail={
-                    "certificate": record.id,
-                    "customdomain": record.custom_domain,
-                    "daysleft": left,
-                    "threshold": threshold,
-                    "expires": record.not_after.isoformat() if record.not_after else None,
-                },
-            )
+    if left < 0:
+        summary = (
+            f"the TLS certificate for {record.custom_domain} expired "
+            f"{abs(left)} day(s) ago; its endpoint is serving a certificate "
+            "browsers will refuse"
+        )
+    else:
+        summary = (
+            f"the TLS certificate for {record.custom_domain} expires in "
+            f"{left} day(s); upload a replacement before it does"
         )
 
-    return alerts
+    return [
+        Alert(
+            category="certificate",
+            summary=summary,
+            severity=(
+                AlertSeverity.CRITICAL
+                if min(crossed) <= CRITICAL_BELOW_DAYS
+                else AlertSeverity.WARNING
+            ),
+            account=record.account,
+            domain=record.domain,
+            detail={
+                "certificate": record.id,
+                "customdomain": record.custom_domain,
+                "daysleft": left,
+                # All of them, so points passed in the same sweep do
+                # not fire again on the next one.
+                "thresholds": sorted(crossed),
+                "expires": record.not_after.isoformat() if record.not_after else None,
+            },
+        )
+    ]
 
 
 async def sweep_renewals(session: Any, *, sink: Any) -> int:
@@ -134,7 +141,16 @@ async def sweep_renewals(session: Any, *, sink: Any) -> int:
         if not alerts:
             continue
 
-        record.notified = sorted(already + [int(alert.detail["threshold"]) for alert in alerts])
+        record.notified = sorted(
+            {
+                *already,
+                *(
+                    int(threshold)
+                    for alert in alerts
+                    for threshold in alert.detail.get("thresholds", ())
+                ),
+            }
+        )
         for alert in alerts:
             try:
                 await sink.send(alert)
