@@ -1336,3 +1336,97 @@ now and arrive by injection.
   means every v2 feature here is reachable through the engine API and
   the operator CLI, and not yet through CloudMonkey, Terraform or the
   UI. Section 9's v2 screens remain unbuilt.
+
+## Milestone 9 — batch execution
+
+**Status:** batches run. Submitted, parsed, executed against the
+gateway, results written and downloadable, metered at the batch rate,
+preempted by online traffic, expired at the window and swept at
+retention.
+
+1405 Python tests, 399 Java, 21 Go, 86 Vitest.
+
+### Most of the runner is about not running
+
+- **Yielding.** `should_preempt` is checked before each pass, and that
+  yielding is the only thing making the discount defensible: a batch
+  competing for GPUs would be cheap traffic degrading the SLO everyone
+  else pays full rate for. The signal is built from the same
+  `DeploymentHealth` the autoscaler reads, so the two cannot disagree
+  about whether a model is under pressure. One busy model is enough —
+  batch shares the GPUs.
+- **Stopping.** A job past its completion window is expired rather than
+  worked on. Once the promise is broken nobody is waiting for the
+  answer.
+- **Carrying on.** A failed request is recorded against its own line
+  and the batch continues. One bad line in fifty thousand is normal,
+  and failing the file would make batches useless at the size they
+  exist for.
+
+Preemption is checked before a batch starts rather than mid-flight: a
+run that stopped halfway would leave partial results nobody asked for,
+and the next pass picks the job up anyway.
+
+### Where the files live
+
+Input and output JSONL go to the registry, not a database column —
+these run to hundreds of megabytes and the object store is already
+where large immutable artefacts belong. `GET /v1/batches/{id}/results`
+serves the output as `application/x-ndjson`, one object per line in
+OpenAI's shape, so a tenant's existing client reads it unchanged. It
+answers 409 before the batch has run and 410 once retention has swept
+it, rather than an empty 200 that would read as "no results".
+
+### A billing bug my own test had papered over
+
+`BatchRunner` took a `discount` it never applied, and the test called
+`test_usage_is_metered_at_the_discount` asserted only token counts — so
+a batch would have been billed at the full online rate and nothing
+would have caught it.
+
+The fix removes pricing from the runner entirely. It records what was
+used; the discount lives in the tier the meter was built with
+(`batch_tier`), which is a fraction of the online tier so a model's
+batch price follows its online price instead of going stale. One
+pricing path rather than two that could disagree.
+
+### Driving it
+
+`aisvc batch` runs passes, `--once` for one. It refuses to start
+without `AISVC_GATEWAY_URL`, and warns rather than refusing when
+`AISVC_PROMETHEUS_URL` is absent: without it online load is invisible
+and batches will not stand down, which is the wrong thing on a busy
+platform but better than a worker that silently does nothing.
+
+Requests go **through the gateway**, not straight to a model: a batch
+is still a tenant's traffic and has to meet the same profiles,
+guardrails and key scopes as anything else.
+
+### Verified
+
+The runner against a real SQLite database and a real HTTP gateway:
+preempted while busy, ran when quiet, three results back, 21 input and
+9 output tokens metered across them.
+
+**Not covered by that:** the registry was in-memory, so the S3 path is
+unexercised, and the `aisvc batch` command's own wiring was not run —
+both need object-store credentials this machine does not have. There is
+no filesystem object store, which is why a local smoke test cannot
+reach either.
+
+### What is still not true
+
+- **Private endpoints are recorded, not attached.** No VPC tier, no
+  per-tenant proxy, no certificate.
+- **Adapter artefacts are not fetched.** The caller supplies a `uri`;
+  nothing mirrors a LoRA or verifies what is at that address, so the
+  safetensors check is on the declared file list rather than on bytes.
+- **Evaluations are judged, not produced**, and the guard model is not
+  called.
+- **No v2 command reaches CloudStack.** They are `Release.V2` and the
+  Java generator emits V1 only, so every v2 feature is reachable
+  through the engine API and the operator CLI and not through
+  CloudMonkey, Terraform or the UI.
+- **Batches run one at a time, in one process.** There is no leader
+  election on the worker as there is for the reconciler, so two
+  workers would both pick up the same job.

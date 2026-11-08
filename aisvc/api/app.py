@@ -34,6 +34,7 @@ from aisvc.api.deps import (
 )
 from aisvc.api.errors import ApiError, register_error_handlers
 from aisvc.batch import BatchRejected, parse_requests
+from aisvc.batch.runner import read_output, store_input
 from aisvc.db import BudgetRecord, KeyStore, RunLog, UsageStore
 from aisvc.db.tier2 import (
     TERMINAL_BATCH_STATES,
@@ -280,6 +281,8 @@ def _batch_row(record: Any) -> dict[str, Any]:
         "account": record.account,
         "created": record.created_at.isoformat() if record.created_at else None,
         "finished": record.finished_at.isoformat() if record.finished_at else None,
+        "inputuri": record.input_uri,
+        "outputuri": record.output_uri,
     }
 
 
@@ -1034,7 +1037,48 @@ def _register_routes(app: FastAPI) -> None:
             request_count=len(requests),
             input_uri=body.input_uri,
         )
+        if body.input:
+            # To the registry, not a column: these run to hundreds of
+            # megabytes and the object store is already where large
+            # immutable artefacts live.
+            store_input(services.registry, record, body.input)
         return _batch_row(record)
+
+    @app.get(
+        f"{PREFIX}/batches/{{batch_id}}/results",
+        tags=["batches"],
+        summary="Download a batch's results",
+        response_class=PlainTextResponse,
+    )
+    async def batch_results(
+        batch_id: str, caller: CallerDep, session: SessionDep, services: ServicesDep
+    ) -> PlainTextResponse:
+        """The JSONL results, one object per line in OpenAI's shape."""
+        record = BatchStore(session).get(batch_id)
+        if record is None or not caller.may_see(account=record.account, domain_path=record.domain):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such batch: {batch_id}",
+                code="batch_not_found",
+            )
+
+        if not record.output_uri:
+            raise ApiError(
+                status.HTTP_409_CONFLICT,
+                f"this batch is {record.state}; results are available once it has completed",
+                code="results_not_ready",
+            )
+
+        try:
+            body = read_output(services.registry, record)
+        except Exception as exc:
+            raise ApiError(
+                status.HTTP_410_GONE,
+                "these results are no longer stored; they may have passed their retention period",
+                code="results_gone",
+            ) from exc
+
+        return PlainTextResponse(body, media_type="application/x-ndjson")
 
     @app.get(f"{PREFIX}/batches", tags=["batches"], summary="List batches")
     async def list_batches(caller: CallerDep, session: SessionDep) -> dict[str, Any]:

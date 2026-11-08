@@ -8,8 +8,9 @@ used rather than merely imported.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from tests.unit.conftest import ADMIN, OTHER_TENANT, TENANT
@@ -337,3 +338,71 @@ class TestPrivateEndpoints:
         assert (
             client.delete(f"/v1/endpoints/private/{exposure_id}", headers=TENANT).status_code == 200
         )
+
+
+class TestBatchInputAndResults:
+    """A batch is only useful if its input is kept and its results come
+    back. The JSONL goes to the registry rather than a column: these run
+    to hundreds of megabytes."""
+
+    def create(self, client: TestClient, **kw: Any) -> Any:
+        body: dict[str, Any] = {"model": "llama-3.3-70b-instruct", "input": BATCH_LINE}
+        body.update(kw)
+        return client.post("/v1/batches", json=body, headers=TENANT)
+
+    def test_the_input_is_stored(self, client: TestClient) -> None:
+        body = self.create(client).json()
+
+        assert body["inputuri"]
+
+    def test_results_are_not_ready_before_it_runs(self, client: TestClient) -> None:
+        batch_id = self.create(client).json()["id"]
+
+        response = client.get(f"/v1/batches/{batch_id}/results", headers=TENANT)
+
+        assert response.status_code == 409
+
+    def test_results_come_back_once_it_has(self, client: TestClient) -> None:
+        from aisvc.batch.runner import output_key
+
+        batch_id = self.create(client).json()["id"]
+        services = cast(FastAPI, client.app).state.services
+        session = services.session_factory()
+        from aisvc.db.tier2 import BatchStore
+
+        record = BatchStore(session).get(batch_id)
+        assert record is not None
+        services.registry.store.put(output_key(record), b'{"custom_id":"a"}')
+        record.state = "completed"
+        record.output_uri = output_key(record)
+        session.commit()
+
+        response = client.get(f"/v1/batches/{batch_id}/results", headers=TENANT)
+
+        assert response.status_code == 200
+        assert "custom_id" in response.text
+
+    def test_another_tenant_cannot_fetch_them(self, client: TestClient) -> None:
+        batch_id = self.create(client).json()["id"]
+
+        response = client.get(f"/v1/batches/{batch_id}/results", headers=OTHER_TENANT)
+
+        assert response.status_code == 404
+
+    def test_results_are_served_as_jsonl(self, client: TestClient) -> None:
+        from aisvc.batch.runner import output_key
+        from aisvc.db.tier2 import BatchStore
+
+        batch_id = self.create(client).json()["id"]
+        services = cast(FastAPI, client.app).state.services
+        session = services.session_factory()
+        record = BatchStore(session).get(batch_id)
+        assert record is not None
+        services.registry.store.put(output_key(record), b'{"custom_id":"a"}')
+        record.state = "completed"
+        record.output_uri = output_key(record)
+        session.commit()
+
+        response = client.get(f"/v1/batches/{batch_id}/results", headers=TENANT)
+
+        assert response.headers["content-type"].startswith("application/x-ndjson")

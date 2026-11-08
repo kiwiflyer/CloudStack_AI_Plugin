@@ -12,13 +12,21 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
+import httpx
 import typer
 from rich.console import Console
 
 from aisvc.api.client import EngineClient, EngineError
+from aisvc.batch import DEFAULT_DISCOUNT
+from aisvc.batch.runner import (
+    BatchRunner,
+    Outcome,
+    batch_tier,
+    preemption_signal,
+)
 from aisvc.cloudstack import CloudStackClient, CloudStackError, Credentials
-from aisvc.db import Base, RunLog, create_session_factory, session_scope
-from aisvc.db.tier2 import AdapterStore
+from aisvc.db import Base, RunLog, UsageStore, create_session_factory, session_scope
+from aisvc.db.tier2 import AdapterStore, BatchStore
 from aisvc.inventory import take_snapshot
 from aisvc.k8s import DEFAULT_NAMESPACE
 from aisvc.k8s.client import (
@@ -27,7 +35,9 @@ from aisvc.k8s.client import (
     observe_route_hash,
     observe_weights,
 )
+from aisvc.metering import UsageMeter
 from aisvc.observability import HealthObserver, PrometheusClient
+from aisvc.observability.alerts import LogSink
 from aisvc.provision import ClusterJoin, NodeProvisioner
 from aisvc.reconciler import ActualState, Executor, Plan, plan_all
 from aisvc.reconciler.deployer import ServingDeployer
@@ -343,6 +353,111 @@ def _engine() -> EngineClient:
         )
         raise typer.Exit(code=1)
     return client
+
+
+@app.command()
+def batch(
+    once: Annotated[
+        bool,
+        typer.Option("--once", help="Run one pass and exit, rather than looping."),
+    ] = False,
+    interval: Annotated[
+        int,
+        typer.Option("--interval", help="Seconds to wait between passes."),
+    ] = 30,
+) -> None:
+    """Run queued batches on spare capacity (SPEC.md section 8).
+
+    Stands down whenever online traffic is waiting: that yielding is
+    what makes the batch discount defensible, so it is checked before
+    every pass rather than once at startup.
+
+    Needs AISVC_DATABASE_URL, the registry settings and
+    AISVC_GATEWAY_URL. Without AISVC_PROMETHEUS_URL it cannot see
+    online load and runs batches unconditionally, which is the wrong
+    thing on a busy platform — it says so and carries on, because a
+    worker that silently refused to work would look broken.
+    """
+    gateway = os.environ.get("AISVC_GATEWAY_URL")
+    if not gateway:
+        err.print(
+            "[bold red]No gateway configured:[/bold red] set AISVC_GATEWAY_URL "
+            "to the OpenAI-compatible base URL batches should be sent to."
+        )
+        raise typer.Exit(code=1)
+
+    if not os.environ.get("AISVC_PROMETHEUS_URL"):
+        out.print(
+            "[yellow]No AISVC_PROMETHEUS_URL:[/yellow] online load cannot be seen, "
+            "so batches will not stand down for tenant traffic.\n"
+        )
+
+    loaded = _load(Path(os.environ.get("AISVC_SPEC", "platform.yaml")), None)
+    asyncio.run(_batch_worker(gateway, loaded, once=once, interval=interval))
+
+
+def _batch_meter(session: Any, spec: PlatformSpec) -> Any:
+    """A meter that bills at the batch rate (SPEC.md section 8)."""
+    tiers = {t.name: t for t in spec.document.price_tiers}
+    discount = next(
+        (m.batch.discount for m in spec.document.models if m.batch.enabled),
+        DEFAULT_DISCOUNT,
+    )
+
+    def tier_for(model_name: str) -> Any:
+        model = next((m for m in spec.document.models if m.name == model_name), None)
+        tier = tiers.get(model.price_tier) if model and model.price_tier else None
+        return batch_tier(tier, discount=discount) if tier else None
+
+    return UsageMeter(UsageStore(session), tier_for=tier_for, sink=LogSink())
+
+
+async def _batch_worker(gateway: str, spec: PlatformSpec, *, once: bool, interval: int) -> None:
+    """One pass, or a loop of them."""
+    factory = create_session_factory()
+    Base.metadata.create_all(factory.kw["bind"])
+
+    while True:
+        health = await _observe_health(set())
+        with session_scope(factory) as session:
+            runner = BatchRunner(
+                BatchStore(session),
+                _registry(),
+                complete=_gateway_completion(gateway),
+                should_preempt=preemption_signal(health),
+                meter=_batch_meter(session, spec),
+            )
+            outcome = await runner.run_once()
+            swept = runner.sweep_retention()
+
+        if outcome is not Outcome.IDLE or swept:
+            out.print(f"batch pass: {outcome.value}, {swept} result set(s) swept")
+
+        if once:
+            return
+        await asyncio.sleep(interval)
+
+
+def _gateway_completion(base_url: str) -> Any:
+    """Send one batch request through the gateway.
+
+    Through the gateway rather than straight to a model: a batch is
+    still a tenant's traffic and has to meet the same profiles,
+    guardrails and key scopes as anything else.
+    """
+
+    async def complete(request: Any) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=300) as client:
+            response = await client.post(
+                f"{base_url.rstrip('/')}{request.url}",
+                json=request.body,
+                headers={"Authorization": f"Bearer {os.environ.get('AISVC_BATCH_KEY', '')}"},
+            )
+            response.raise_for_status()
+            body: dict[str, Any] = response.json()
+            return body
+
+    return complete
 
 
 @app.command()

@@ -195,6 +195,15 @@ COMMANDS: tuple[Command, ...] = (
         is_async=True,
         release=Release.V2,
     ),
+    # SPEC.md section 8 says results come back; without a command for
+    # them a tenant can start a batch and never read it.
+    _c(
+        "getAiBatchResults",
+        "GET",
+        "/v1/batches/{batch_id}/results",
+        ALL,
+        release=Release.V2,
+    ),
     _c("listAiGuardrailProfiles", "GET", "/v1/profiles/guardrail", ALL, release=Release.V2),
     _c("createAiGuardrailProfile", "POST", "/v1/profiles/guardrail", ALL, release=Release.V2),
     _c(
