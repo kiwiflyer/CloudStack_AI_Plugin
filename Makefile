@@ -22,8 +22,13 @@ test-contract:
 test-int:
 	$(PYTEST) tests/integration -q
 
+# JDK 17 from Homebrew is keg-only, so point JAVA_HOME at it explicitly.
+JAVA_HOME ?= /opt/homebrew/opt/openjdk@17
+
 test-java:
-	@echo "milestone 5: not scaffolded yet"; exit 1
+	@test -d "$(HOME)/.m2/repository/org/apache/cloudstack/cloud-api" || \
+		{ echo "CloudStack artifacts are not installed; see java-plugin/README.md"; exit 1; }
+	cd java-plugin && JAVA_HOME=$(JAVA_HOME) PATH=$(JAVA_HOME)/bin:$$PATH mvn -q test
 
 test-ui:
 	@echo "milestone 6: not scaffolded yet"; exit 1

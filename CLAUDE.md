@@ -4,13 +4,13 @@ Guidance for Claude Code working in this repository.
 
 ## Current state
 
-**Milestones 1–4 are done, bar milestone 3's GPU-lab work; 5–9 are not.** See `PROGRESS.md`.
+**Milestones 1–4 are done bar milestone 3's GPU-lab work; milestone 5 has its foundation; 6–9 are not.** See `PROGRESS.md`.
 Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`, `db`,
 `reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, the `aisvc` CLI
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
 Not written: `autoscale/`, `lifecycle/`, `metering/`, `setup/`, `playground/`,
-all v2 modules, `java-plugin/`, `ui/`, `terraform/`, `deploy/`. `make test-java`, `test-ui`,
+all v2 modules, `ui/`, `terraform/`, `deploy/`. `make test-java`, `test-ui`,
 `test-tf` and `record` deliberately exit 1 naming the milestone that fills them in.
 
 `aisvc apply` takes an empty zone to a served model in one run — nodes, then deployments, then
@@ -74,13 +74,18 @@ examples/platform.yaml
 
 ## Commands
 
+**Building `java-plugin/` needs setup.** CloudStack publishes no Maven artifacts, so its
+modules must be built from source into `~/.m2` first — `java-plugin/README.md` has the two
+commands. JDK 17 (`JAVA_HOME=/opt/homebrew/opt/openjdk@17`, keg-only), targeting JDK 11
+bytecode. `make test-java` fails with a clear message if the artifacts are absent.
+
 ```
 make install        # editable install into .venv
 make check          # lint + types + unit + contract + integration + security
 make test-unit      # pytest, no GPU, no network
 make test-contract  # schemathesis + recorded CloudStack responses
 make test-int       # docker compose: CloudStack simulator, kind, MinIO, Postgres, LiteLLM, mocks
-make test-java      # JUnit 5 + Mockito + Marvin
+make test-java      # JUnit 5; needs CloudStack artifacts in ~/.m2
 make test-ui        # Vitest + Playwright
 make test-tf        # Terraform acceptance against the simulator
 make test-security  # licence policy; add pip-audit, bandit, semgrep later
@@ -202,6 +207,12 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
 - **ADR-0002 — gateway:** LiteLLM Proxy. Enforcement hooks live in `gateway-hooks/` and
   **import `aisvc.profiles` directly** — never reimplement profile precedence, in any
   language. Stay on LiteLLM's MIT side: nothing from `enterprise/`, no licence-gated features.
+
+**In the Java plugin:** build the caller context from `CallContext`, never from request
+parameters — the engine filters every response by what the plugin asserts. Never weaken the
+mTLS requirement to a fallback. Failover retries only *unreachable* replicas; a replica that
+answered has answered, and retrying a POST elsewhere could do the work twice. Commands and
+role permissions are generated from `aisvc/api/commands.py`, not hand-listed.
 
 ## Licensing — enforced, not advisory
 

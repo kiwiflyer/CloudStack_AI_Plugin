@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements. See the NOTICE file distributed with this
+  work for additional information regarding copyright ownership. The ASF
+  licenses this file to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance with the
+  License. You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+  License for the specific language governing permissions and limitations
+  under the License.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    Deliberately standalone rather than inheriting cloudstack-plugins, so the
+    module builds from this repository without a CloudStack checkout on the
+    path. When this is upstreamed as plugins/ai-services (SPEC.md section 14),
+    swap this for the usual <parent> block and drop the explicit versions.
+
+    CloudStack publishes no Maven artifacts, so cloud-api and friends must be
+    present in the local repository: clone apache/cloudstack at the tag in
+    cs.version and run
+      mvn install -DskipTests -pl api,utils,framework/config,framework/db -am
+    See docs/adr/0003-cloudstack-release.md.
+  -->
+  <groupId>org.apache.cloudstack</groupId>
+  <artifactId>cloud-plugin-api-ai-services</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <name>Apache CloudStack Plugin - AI Services</name>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- ADR-0003: 4.23.0.0 is the target; 4.22 LTS is the compile floor. -->
+    <cs.version>4.23.0.0</cs.version>
+    <!-- CloudStack 4.23 targets JDK 11 bytecode (cs.jdk.version in its pom). -->
+    <maven.compiler.release>11</maven.compiler.release>
+    <junit.version>5.11.4</junit.version>
+    <mockito.version>5.14.2</mockito.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.cloudstack</groupId>
+      <artifactId>cloud-api</artifactId>
+      <version>${cs.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.cloudstack</groupId>
+      <artifactId>cloud-utils</artifactId>
+      <version>${cs.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.cloudstack</groupId>
+      <artifactId>cloud-framework-config</artifactId>
+      <version>${cs.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.cloudstack</groupId>
+      <artifactId>cloud-framework-db</artifactId>
+      <version>${cs.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-params</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <version>${mockito.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.2</version>
+      </plugin>
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>0.8.12</version>
+        <executions>
+          <execution>
+            <goals><goal>prepare-agent</goal></goals>
+          </execution>
+          <execution>
+            <id>report</id>
+            <phase>test</phase>
+            <goals><goal>report</goal></goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
