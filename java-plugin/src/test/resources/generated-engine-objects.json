@@ -1,0 +1,87 @@
+{
+  "AiApiKeyResponse": {
+    "allowed_models": "sample",
+    "expires_at": "sample",
+    "id": "sample",
+    "last_used": "sample",
+    "name": "sample",
+    "secret": "sample"
+  },
+  "AiBudgetResponse": {
+    "account": "sample",
+    "currency": "sample",
+    "id": "sample",
+    "monthly": 1.5,
+    "on_exceed": "sample",
+    "spent": 1.5
+  },
+  "AiEffectiveParameterResponse": {
+    "locked": true,
+    "locked_at": "sample",
+    "name": "sample",
+    "policy": "sample",
+    "source": "sample",
+    "value": "sample"
+  },
+  "AiEndpointResponse": {
+    "base_url": "sample",
+    "model": "sample",
+    "price_tier": "sample",
+    "task": "sample"
+  },
+  "AiGpuCapacityResponse": {
+    "gpu_class": "sample",
+    "gpus_free": 7,
+    "gpus_total": 7,
+    "nodes_healthy": 7,
+    "nodes_total": 7,
+    "zone": "sample"
+  },
+  "AiHfCheckResponse": {
+    "architecture": "sample",
+    "compatible": true,
+    "context_length": 7,
+    "download_bytes": 1234,
+    "gated": true,
+    "license": "sample",
+    "repo_id": "sample",
+    "requires_remote_code": true,
+    "revision": "sample"
+  },
+  "AiHfModelResponse": {
+    "gated": true,
+    "license": "sample",
+    "repo_id": "sample",
+    "task": "sample"
+  },
+  "AiPlaygroundSessionResponse": {
+    "base_url": "sample",
+    "expires_at": "sample",
+    "model": "sample",
+    "session_key": "sample"
+  },
+  "AiProfileResponse": {
+    "id": "sample",
+    "kind": "sample",
+    "name": "sample",
+    "scope": "sample",
+    "target": "sample"
+  },
+  "AiReconcilerRunResponse": {
+    "dry_run": true,
+    "finished_at": "sample",
+    "id": "sample",
+    "started_at": "sample",
+    "status": "sample",
+    "zone": "sample"
+  },
+  "AiUsageResponse": {
+    "account": "sample",
+    "cost": 1.5,
+    "currency": "sample",
+    "gpu_hours": 1.5,
+    "input_tokens": 1234,
+    "model": "sample",
+    "output_tokens": 1234
+  }
+}

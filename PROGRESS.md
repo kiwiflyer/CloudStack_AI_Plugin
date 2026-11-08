@@ -421,10 +421,11 @@ model". The catalog still lists during an outage, with `mirrored: false`.
 4. **mTLS is configured but never exercised.** `uvicorn_options` is unit-tested; no test has
    completed a handshake with a client certificate.
 
-## Milestone 5 — Native API plugin (mostly done)
+## Milestone 5 — Native API plugin (commands done)
 
-**State:** 133 JUnit tests pass against real CloudStack 4.23.0.0 classes, **73% line
-coverage** — past the 70% the spec sets for the Java plugin. 730 Python tests still pass.
+**State:** **all 35 v1 commands** from section 9 are implemented and registered. 361 JUnit
+tests pass against real CloudStack 4.23.0.0 classes at **74% line coverage**, past the 70% the
+spec sets. 730 Python tests still pass.
 
 ```
 make test-java
@@ -512,21 +513,42 @@ been written without a build: `ConfigKey` has **no `getScope()`** in 4.23 — it
 returning a list — and `com.sun.net.httpserver.Headers` only offers `getFirst` on its own type,
 not through the `Map` supertype.
 
+### The commands are generated
+
+Thirty-five commands and a dozen response types differ only in name, verb, path, parameters
+and response shape. Hand-writing them invites the one transposed path or wrong role no
+reviewer would catch, so the leaves come from `tools/generate_commands.py` and the interesting
+parts — base classes, engine client, async bridge, DAO — stay hand-written. Generated files
+say so in their header.
+
+Three base classes carry the behaviour: `AiServicesSyncCmd` (call, check, map),
+`AiServicesListCmd` (extract the collection, map each item) and `AiServicesAsyncCmd` (202,
+then poll). A command is then a path, a verb, its parameters and a response type.
+
+The generator also emits a test fixture — a fully-populated engine object per response type —
+so `GeneratedSurfaceTest` checks every mapped field, every path placeholder being substituted,
+every body being valid JSON and every read carrying no body, across all 35 commands, without
+that list existing twice.
+
+`CommandRegistrationTest` holds the registration to section 9's table in both directions:
+nothing missing, nothing extra, the async set exactly the twelve the spec marks async, and
+every async command going through our bridge rather than extending `BaseAsyncCmd` directly and
+skipping the 202 check.
+
 ### What milestone 5 still needs
 
-1. **22 more v1 commands.** Three of the 25 are written; the rest are mechanical now that
-   `AiServicesAsyncCmd` and the response-mapping pattern exist. `aisvc/api/commands.py` is the
-   list, and the Python tests track how many lack an engine route.
-2. **The account deletion hook is not wired.** `cleanupAccount` works and is tested, but
+1. **The account deletion hook is not wired.** `cleanupAccount` works and is tested, but
    CloudStack 4.23 exposes no plugin-facing account-cleanup interface — `AccountCleanupTask`
    is internal to `AccountManagerImpl` in the `server` module. This needs either an upstream
    extension point or an event listener, and it is the one place where "deleting an account
    removes its deployments" (section 14) is not yet true.
-3. **The host maintenance listener.** Section 7's drain-before-maintenance flow.
+2. **The host maintenance listener.** Section 7's drain-before-maintenance flow.
 4. **The schema upgrade is not wired.** `schema-ai-services.sql` exists but nothing applies it.
 5. **Marvin tests** per default role, allowed and denied. These need a running CloudStack, so
    they belong with a simulator environment rather than this repo's unit suite.
 6. The **4.22 LTS compile job** from [ADR-0003](docs/adr/0003-cloudstack-release.md), which
    needs a second CloudStack build.
-7. `AiDeploymentDaoImpl` is untested — CloudStack's `GenericDaoBase` needs a database, so it
+6. `AiDeploymentDaoImpl` is untested — CloudStack's `GenericDaoBase` needs a database, so it
    wants the integration environment rather than JUnit.
+7. The commands are tested for shape, not behaviour against a real engine. That is what the
+   Marvin tests and the integration environment are for.

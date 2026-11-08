@@ -38,6 +38,24 @@ what CloudStack 4.23 sets as `cs.jdk.version`. `openjdk@17` is keg-only, so set
 | `api/command/`, `api/response/` | API commands and their responses |
 | `META-INF/db/schema-ai-services.sql` | The `ai_deployment` ownership table |
 
+## Generated code
+
+Thirty-five v1 commands and a dozen response types differ only in name, verb, engine path,
+parameters and response shape. Writing them out by hand invites the one transposed path or
+wrong role no reviewer would spot, so the leaves are generated:
+
+```bash
+python3 tools/generate_commands.py
+```
+
+Generated files say so in their header. **Edit `tools/generate_commands.py`, not them.** The
+interesting parts — the base classes, the engine client, the async bridge, the DAO — are
+hand-written.
+
+The generator also emits `src/test/resources/generated-engine-objects.json`, a fully-populated
+engine object per response type, so `GeneratedSurfaceTest` exercises every mapped field
+without that list being maintained twice.
+
 ## Two rules worth keeping
 
 **The caller context is built from `CallContext`, never from request parameters.** The engine

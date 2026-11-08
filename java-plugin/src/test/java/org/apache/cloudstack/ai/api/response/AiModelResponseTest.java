@@ -12,7 +12,7 @@
 // WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 // License for the specific language governing permissions and limitations
 // under the License.
-package org.apache.cloudstack.ai.api.command;
+package org.apache.cloudstack.ai.api.response;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -21,8 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 
-import org.apache.cloudstack.ai.api.response.AiModelResponse;
-import org.apache.cloudstack.api.APICommand;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -32,7 +30,20 @@ import org.junit.jupiter.api.Test;
  * lowercase-concatenated, so this mapping is exactly where a field goes
  * quietly missing.
  */
-class ListAiModelsCmdTest {
+class AiModelResponseTest {
+
+    /** Map every entry of a catalog body, as the list command does. */
+    private static List<AiModelResponse> mapAll(String body) {
+        List<AiModelResponse> mapped = new java.util.ArrayList<>();
+        com.google.gson.JsonObject root =
+                com.google.gson.JsonParser.parseString(body).getAsJsonObject();
+        if (root.has("models")) {
+            for (com.google.gson.JsonElement element : root.getAsJsonArray("models")) {
+                mapped.add(AiModelResponse.from(element.getAsJsonObject()));
+            }
+        }
+        return mapped;
+    }
 
     private static final String CATALOG =
             "{\"count\": 2, \"models\": ["
@@ -48,7 +59,7 @@ class ListAiModelsCmdTest {
 
     @Test
     void everyModelIsMapped() {
-        List<AiModelResponse> models = ListAiModelsCmd.parse(CATALOG);
+        List<AiModelResponse> models = mapAll(CATALOG);
 
         assertEquals(2, models.size());
         assertEquals("llama-3.3-70b-instruct", models.get(0).getName());
@@ -57,7 +68,7 @@ class ListAiModelsCmdTest {
     @Test
     void theMirroredFlagSurvives() {
         // A tenant needs to know a model cannot be deployed yet.
-        List<AiModelResponse> models = ListAiModelsCmd.parse(CATALOG);
+        List<AiModelResponse> models = mapAll(CATALOG);
 
         assertTrue(models.get(0).getMirrored());
         assertFalse(models.get(1).getMirrored());
@@ -65,18 +76,18 @@ class ListAiModelsCmdTest {
 
     @Test
     void anEmptyCatalogIsNotAnError() {
-        assertEquals(0, ListAiModelsCmd.parse("{\"count\": 0, \"models\": []}").size());
+        assertEquals(0, mapAll("{\"count\": 0, \"models\": []}").size());
     }
 
     @Test
     void aBodyWithoutModelsYieldsNothing() {
-        assertEquals(0, ListAiModelsCmd.parse("{\"count\": 0}").size());
+        assertEquals(0, mapAll("{\"count\": 0}").size());
     }
 
     @Test
     void aMissingOptionalFieldIsNullNotAnError() {
         List<AiModelResponse> models =
-                ListAiModelsCmd.parse("{\"models\": [{\"name\": \"m\"}]}");
+                mapAll("{\"models\": [{\"name\": \"m\"}]}");
 
         assertEquals("m", models.get(0).getName());
         assertFalse(models.get(0).getMirrored());
@@ -84,7 +95,7 @@ class ListAiModelsCmdTest {
 
     @Test
     void anExplicitNullIsTreatedAsAbsent() {
-        List<AiModelResponse> models = ListAiModelsCmd.parse(
+        List<AiModelResponse> models = mapAll(
                 "{\"models\": [{\"name\": \"m\", \"price_tier\": null,"
                         + " \"max_model_len\": null}]}");
 
@@ -94,40 +105,15 @@ class ListAiModelsCmdTest {
 
     @Test
     void everyEntryIsNamedForTheResponseSerialiser() {
-        for (AiModelResponse model : ListAiModelsCmd.parse(CATALOG)) {
+        for (AiModelResponse model : mapAll(CATALOG)) {
             assertEquals("aimodel", model.getObjectName());
         }
     }
 
     @Test
-    void theCommandIsAnnotatedWithTheSpecName() {
-        APICommand annotation = ListAiModelsCmd.class.getAnnotation(APICommand.class);
-
-        assertEquals("listAiModels", annotation.name());
-        assertEquals(AiModelResponse.class, annotation.responseObject());
-    }
-
-    @Test
-    void theCommandDeclaresNoSensitiveInfo() {
-        // The catalog carries no keys or prompts, and saying so keeps it
-        // out of CloudStack's sensitive-parameter redaction.
-        APICommand annotation = ListAiModelsCmd.class.getAnnotation(APICommand.class);
-
-        assertFalse(annotation.requestHasSensitiveInfo());
-        assertFalse(annotation.responseHasSensitiveInfo());
-    }
-
-    @Test
-    void theApiNameConstantMatchesTheAnnotation() {
-        assertEquals(
-                ListAiModelsCmd.class.getAnnotation(APICommand.class).name(),
-                ListAiModelsCmd.APINAME);
-    }
-
-    @Test
     void anUnsetMaxModelLenStaysUnset() {
         List<AiModelResponse> models =
-                ListAiModelsCmd.parse("{\"models\": [{\"name\": \"m\"}]}");
+                mapAll("{\"models\": [{\"name\": \"m\"}]}");
 
         assertNull(models.get(0).getObjectId());
     }

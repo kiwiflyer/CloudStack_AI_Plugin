@@ -19,11 +19,43 @@ import java.util.List;
 
 import javax.inject.Inject;
 
-import org.apache.cloudstack.ai.api.command.DeleteAiModelDeploymentCmd;
-import org.apache.cloudstack.ai.api.command.DeployAiModelCmd;
-import org.apache.cloudstack.ai.api.command.ListAiModelsCmd;
 import org.apache.cloudstack.ai.engine.CallerContext;
 import org.apache.cloudstack.ai.engine.EngineClient;
+import org.apache.cloudstack.ai.api.command.ApproveAiModelCmd;
+import org.apache.cloudstack.ai.api.command.AssignAiTuningProfileCmd;
+import org.apache.cloudstack.ai.api.command.CheckAiHfModelCmd;
+import org.apache.cloudstack.ai.api.command.CreateAiApiKeyCmd;
+import org.apache.cloudstack.ai.api.command.CreateAiBudgetCmd;
+import org.apache.cloudstack.ai.api.command.CreateAiGenerationProfileCmd;
+import org.apache.cloudstack.ai.api.command.CreateAiPlaygroundSessionCmd;
+import org.apache.cloudstack.ai.api.command.CreateAiServingProfileCmd;
+import org.apache.cloudstack.ai.api.command.DeleteAiBudgetCmd;
+import org.apache.cloudstack.ai.api.command.DeleteAiGenerationProfileCmd;
+import org.apache.cloudstack.ai.api.command.DeleteAiModelDeploymentCmd;
+import org.apache.cloudstack.ai.api.command.DeleteAiServingProfileCmd;
+import org.apache.cloudstack.ai.api.command.DeployAiModelCmd;
+import org.apache.cloudstack.ai.api.command.DrainAiNodeCmd;
+import org.apache.cloudstack.ai.api.command.GetAiEffectiveParametersCmd;
+import org.apache.cloudstack.ai.api.command.ListAiBudgetsCmd;
+import org.apache.cloudstack.ai.api.command.ListAiEndpointsCmd;
+import org.apache.cloudstack.ai.api.command.ListAiGenerationProfilesCmd;
+import org.apache.cloudstack.ai.api.command.ListAiGpuCapacityCmd;
+import org.apache.cloudstack.ai.api.command.ListAiModelDeploymentsCmd;
+import org.apache.cloudstack.ai.api.command.ListAiModelsCmd;
+import org.apache.cloudstack.ai.api.command.ListAiReconcilerRunsCmd;
+import org.apache.cloudstack.ai.api.command.ListAiServingProfilesCmd;
+import org.apache.cloudstack.ai.api.command.ListAiUsageCmd;
+import org.apache.cloudstack.ai.api.command.MirrorAiModelCmd;
+import org.apache.cloudstack.ai.api.command.PromoteAiRolloutCmd;
+import org.apache.cloudstack.ai.api.command.PublishAiModelCmd;
+import org.apache.cloudstack.ai.api.command.RevokeAiApiKeyCmd;
+import org.apache.cloudstack.ai.api.command.RollbackAiRolloutCmd;
+import org.apache.cloudstack.ai.api.command.RunAiSetupSelfTestCmd;
+import org.apache.cloudstack.ai.api.command.SearchAiHfModelsCmd;
+import org.apache.cloudstack.ai.api.command.UpdateAiBudgetCmd;
+import org.apache.cloudstack.ai.api.command.UpdateAiGenerationProfileCmd;
+import org.apache.cloudstack.ai.api.command.UpdateAiModelDeploymentCmd;
+import org.apache.cloudstack.ai.api.command.UpdateAiServingProfileCmd;
 import org.apache.cloudstack.ai.dao.AiDeploymentDao;
 import org.apache.cloudstack.ai.engine.EngineTransport;
 import org.apache.cloudstack.ai.engine.HttpEngineTransport;
@@ -59,12 +91,44 @@ public class AiServicesManagerImpl extends ManagerBase
     @Override
     public List<Class<?>> getCommands() {
         List<Class<?>> commands = new ArrayList<>();
-        commands.add(ListAiModelsCmd.class);
-        commands.add(DeployAiModelCmd.class);
+        commands.add(ApproveAiModelCmd.class);
+        commands.add(AssignAiTuningProfileCmd.class);
+        commands.add(CheckAiHfModelCmd.class);
+        commands.add(CreateAiApiKeyCmd.class);
+        commands.add(CreateAiBudgetCmd.class);
+        commands.add(CreateAiGenerationProfileCmd.class);
+        commands.add(CreateAiPlaygroundSessionCmd.class);
+        commands.add(CreateAiServingProfileCmd.class);
+        commands.add(DeleteAiBudgetCmd.class);
+        commands.add(DeleteAiGenerationProfileCmd.class);
         commands.add(DeleteAiModelDeploymentCmd.class);
-        // Milestones 7-9 add the remaining section 9 commands; the full
-        // list and its role permissions are generated from
-        // aisvc/api/commands.py.
+        commands.add(DeleteAiServingProfileCmd.class);
+        commands.add(DeployAiModelCmd.class);
+        commands.add(DrainAiNodeCmd.class);
+        commands.add(GetAiEffectiveParametersCmd.class);
+        commands.add(ListAiBudgetsCmd.class);
+        commands.add(ListAiEndpointsCmd.class);
+        commands.add(ListAiGenerationProfilesCmd.class);
+        commands.add(ListAiGpuCapacityCmd.class);
+        commands.add(ListAiModelDeploymentsCmd.class);
+        commands.add(ListAiModelsCmd.class);
+        commands.add(ListAiReconcilerRunsCmd.class);
+        commands.add(ListAiServingProfilesCmd.class);
+        commands.add(ListAiUsageCmd.class);
+        commands.add(MirrorAiModelCmd.class);
+        commands.add(PromoteAiRolloutCmd.class);
+        commands.add(PublishAiModelCmd.class);
+        commands.add(RevokeAiApiKeyCmd.class);
+        commands.add(RollbackAiRolloutCmd.class);
+        commands.add(RunAiSetupSelfTestCmd.class);
+        commands.add(SearchAiHfModelsCmd.class);
+        commands.add(UpdateAiBudgetCmd.class);
+        commands.add(UpdateAiGenerationProfileCmd.class);
+        commands.add(UpdateAiModelDeploymentCmd.class);
+        commands.add(UpdateAiServingProfileCmd.class);
+        // Every v1 command from SPEC.md section 9. The list is kept in
+        // step with the engine's routes by aisvc/api/commands.py and the
+        // tests on both sides; v2's commands arrive with milestone 9.
         return commands;
     }
 

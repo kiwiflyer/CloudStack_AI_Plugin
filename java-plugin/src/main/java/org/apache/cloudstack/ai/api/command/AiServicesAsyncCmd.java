@@ -19,6 +19,7 @@ import javax.inject.Inject;
 import org.apache.cloudstack.ai.AiServicesConfig;
 import org.apache.cloudstack.ai.AiServicesService;
 import org.apache.cloudstack.ai.engine.EngineException;
+import org.apache.cloudstack.ai.engine.EnginePaths;
 import org.apache.cloudstack.ai.engine.EngineJob;
 import org.apache.cloudstack.ai.engine.EngineJobPoller;
 import org.apache.cloudstack.ai.engine.EngineResponse;
@@ -130,6 +131,11 @@ public abstract class AiServicesAsyncCmd extends BaseAsyncCmd {
         // mirroring a 70B model is minutes, so the poll budget is
         // separate from the per-request timeout.
         return (seconds == null ? 30L : seconds) * 60L * 1000L;
+    }
+
+    /** Append a query parameter to an engine path. */
+    protected static String withQuery(String path, String name, Object value) {
+        return EnginePaths.withQuery(path, name, value);
     }
 
     @Override

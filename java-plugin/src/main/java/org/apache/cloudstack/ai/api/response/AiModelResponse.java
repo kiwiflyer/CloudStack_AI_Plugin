@@ -16,6 +16,8 @@ package org.apache.cloudstack.ai.api.response;
 
 import org.apache.cloudstack.api.BaseResponse;
 
+import com.google.gson.JsonObject;
+
 import com.cloud.serializer.Param;
 import com.google.gson.annotations.SerializedName;
 
@@ -49,6 +51,34 @@ public class AiModelResponse extends BaseResponse {
     @SerializedName("mirrored")
     @Param(description = "whether the weights are mirrored and the model can be deployed")
     private Boolean mirrored;
+
+    /** Map one engine model object onto this response. */
+    public static AiModelResponse from(JsonObject body) {
+        AiModelResponse mapped = new AiModelResponse();
+        mapped.setObjectName("aimodel");
+        if (body == null) {
+            return mapped;
+        }
+        JsonObject source = body.has("model") && body.get("model").isJsonObject()
+                ? body.getAsJsonObject("model")
+                : body;
+        mapped.name = text(source, "name");
+        mapped.task = text(source, "task");
+        mapped.engine = text(source, "engine");
+        mapped.license = text(source, "license");
+        mapped.priceTier = text(source, "price_tier");
+        if (source.has("max_model_len") && !source.get("max_model_len").isJsonNull()) {
+            mapped.maxModelLen = source.get("max_model_len").getAsInt();
+        }
+        mapped.mirrored = source.has("mirrored") && source.get("mirrored").getAsBoolean();
+        return mapped;
+    }
+
+    private static String text(JsonObject body, String field) {
+        return body.has(field) && !body.get(field).isJsonNull()
+                ? body.get(field).getAsString()
+                : null;
+    }
 
     public void setName(String name) {
         this.name = name;
