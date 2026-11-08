@@ -14,6 +14,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+from aisvc.api.client import EngineClient, EngineError
 from aisvc.cloudstack import CloudStackClient, CloudStackError, Credentials
 from aisvc.db import Base, RunLog, create_session_factory, session_scope
 from aisvc.inventory import take_snapshot
@@ -268,6 +269,69 @@ def apply(
     out.print(f"\n[{colour}]Run {run_id} {status}.[/{colour}]")
     if status != "succeeded":
         raise typer.Exit(code=1)
+
+
+def _engine() -> EngineClient:
+    """The engine client, or a clear error if it is not configured."""
+    client = EngineClient.from_env()
+    if client is None:
+        err.print(
+            "[bold red]No engine configured:[/bold red] set AISVC_ENGINE_URL "
+            "to the engine's base URL (and AISVC_TLS_CERT / AISVC_TLS_KEY for mTLS)."
+        )
+        raise typer.Exit(code=1)
+    return client
+
+
+@app.command()
+def status() -> None:
+    """Show what the engine is serving, through its API.
+
+    Goes through the same REST surface the Java plugin uses, so a
+    response shape that would break the plugin breaks this too.
+    """
+    engine = _engine()
+    try:
+        health = engine.get("/v1/health")
+        models = engine.get("/v1/models")
+        deployments = engine.get("/v1/deployments")
+    except EngineError as exc:
+        err.print(f"[bold red]{exc}[/bold red]")
+        raise typer.Exit(code=1) from exc
+
+    out.print(f"engine: [green]{health.get('status', 'unknown')}[/green]")
+    out.print(f"catalog: {models['count']} model(s)")
+
+    if not deployments["count"]:
+        out.print("deployments: [yellow]none running[/yellow]")
+        return
+
+    out.print("deployments:")
+    for deployment in deployments["deployments"]:
+        state = "[green]ready[/green]" if deployment["ready"] else "[yellow]starting[/yellow]"
+        out.print(
+            f"  {deployment['model']} ({deployment['colour']}) "
+            f"{deployment['replicas_ready']}/{deployment['replicas_desired']} {state}"
+        )
+
+
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option(help="Address to bind.")] = "0.0.0.0",
+    port: Annotated[int, typer.Option(help="Port to bind.")] = 8443,
+) -> None:
+    """Run the engine REST API.
+
+    Without AISVC_TLS_* set it binds loopback only: the engine trusts the
+    caller context its clients assert, and mTLS is what earns that trust.
+    """
+    from aisvc.api.server import TlsConfigError, run
+
+    try:
+        run(host=host, port=port)
+    except TlsConfigError as exc:
+        err.print(f"[bold red]TLS is misconfigured:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
 
 if __name__ == "__main__":  # pragma: no cover

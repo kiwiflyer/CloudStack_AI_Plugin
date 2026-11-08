@@ -7,6 +7,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from aisvc.api.jobs import JobRecord  # noqa: F401  (registers the table)
 from aisvc.db.models import Base
 from aisvc.db.session import database_url
 

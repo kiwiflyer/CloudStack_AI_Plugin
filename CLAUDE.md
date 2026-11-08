@@ -4,18 +4,23 @@ Guidance for Claude Code working in this repository.
 
 ## Current state
 
-**Milestones 1–2 are done, 3 is all but the GPU-lab work; 4–9 are not.** See `PROGRESS.md`.
+**Milestones 1–4 are done, bar milestone 3's GPU-lab work; 5–9 are not.** See `PROGRESS.md`.
 Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`, `db`,
-`reconciler`, `profiles`, `k8s` (renders; does not apply), `registry`, `hf`, `gateway`, the
-`aisvc` CLI (`validate`, `plan`, `apply`), `gateway-hooks/` and `templates/packer/`.
+`reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, the `aisvc` CLI
+(`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
-Not written: `api/` (m4), `autoscale/`, `lifecycle/`, `metering/`, `setup/`, `playground/`,
+Not written: `autoscale/`, `lifecycle/`, `metering/`, `setup/`, `playground/`,
 all v2 modules, `java-plugin/`, `ui/`, `terraform/`, `deploy/`. `make test-java`, `test-ui`,
 `test-tf` and `record` deliberately exit 1 naming the milestone that fills them in.
 
 `aisvc apply` takes an empty zone to a served model in one run — nodes, then deployments, then
 routes — and a second run plans nothing. **Still missing:** LiteLLM as a real dependency, any
 rollout between blue and green, and a single test against a real API server.
+
+**The engine API trusts its callers' asserted identity**, which is only safe because mTLS
+proves who they are. Never weaken `ssl_cert_reqs`, and never bind a non-loopback address
+without TLS configured — `aisvc/api/server.py` enforces both. Caller context arrives in
+`X-Aisvc-*` headers and every response is filtered by `CallerContext.may_see`.
 
 **Change detection is by spec hash.** The rendered manifest is digested and stamped as
 `aisvc.io/spec-hash`; the gateway config's digest goes on its ConfigMap. Plans compare digests

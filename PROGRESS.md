@@ -315,7 +315,71 @@ and the nodes are still built, so the mirror job and the hardware can proceed in
 4. **`ClusterKubernetes` is unexercised.** Every test runs against `FakeKubernetes`; the real
    client's apply-then-create fallback has never touched an API server.
 
-## Milestone 4 — Engine API (next)
+## Milestone 4 — Engine API (done)
 
-FastAPI per section 10, async jobs, caller-context filtering, mTLS, OpenAPI contract tests; CLI
-switched to the API. Nothing blocks it.
+FastAPI per section 10, async jobs, caller-context filtering, mTLS, OpenAPI contract tests,
+CLI switched to the API.
+
+**State:** 618 tests pass, `ruff` clean, `mypy --strict` clean, 94% line coverage.
+
+```
+aisvc serve                      # run the engine API
+aisvc status                     # read it back through the API, as the plugin does
+```
+
+### What landed
+
+| Module | What it does |
+| --- | --- |
+| `aisvc/api/context.py` | `CallerContext` and `Role`, and the visibility rules every response is filtered by |
+| `aisvc/api/jobs.py` | Async jobs whose three states map straight onto CloudStack's, so the plugin needs no translation |
+| `aisvc/api/errors.py` | Every failure as an RFC 9457 problem document, with a stable machine-readable `type` |
+| `aisvc/api/deps.py` | Caller context from `X-Aisvc-*` headers, the admin guard, a transaction per request |
+| `aisvc/api/app.py` | health, ready, jobs, models, capacity, runs, deployments, endpoints, effective parameters, HF search/check, async mirror |
+| `aisvc/api/server.py` | mTLS configuration, with client certificates **required** |
+| `aisvc/api/client.py` | The CLI's client, so `aisvc` exercises the same surface the plugin does |
+
+### Decisions taken, and why
+
+**The engine authenticates nothing; the transport does.** The plugin asserts the caller in
+headers, which is only safe because the engine is unreachable from tenant networks and
+requires a client certificate. So `ssl_cert_reqs` is `CERT_REQUIRED`, never optional, a
+half-configured TLS setup refuses to start, and **with no TLS configured at all the engine
+binds loopback only** — an engine on every interface trusting asserted headers is exactly what
+section 11 forbids.
+
+**A job you may not see returns 404, not 403.** Otherwise job ids could be probed to learn
+that another tenant's work exists.
+
+**`aisvc status` goes through the REST API rather than importing the engine's modules.** If a
+response shape would break the Java client, it breaks the CLI too, in CI, rather than in
+integration.
+
+**A registry outage is 503, never 404.** The distinction drawn in the previous commit is
+carried through to the API: "cannot reach the registry" must not reach a tenant as "no such
+model". The catalog still lists during an outage, with `mirrored: false`.
+
+### Open questions for the next session
+
+1. **Async jobs run inline.** `POST /v1/models/mirror` returns 202 with a job id, but the
+   mirror has already finished by the time it answers. Correct from the plugin's side — it
+   polls and gets a terminal state — but a real mirror takes minutes, so this needs a worker
+   before it meets anyone's timeout.
+
+2. **Only read endpoints and mirror exist.** The section 9 command map lists roughly thirty v1
+   commands; deployments, keys, profiles, budgets, playground, drain and the rest are absent.
+   Several need spec writeback via Git commit (section 10), which is unwritten.
+
+3. **`schemathesis` is installed but unused.** The contract tests assert the schema's shape by
+   hand. Property-based fuzzing against the schema is the obvious next step.
+
+4. **mTLS is configured but never exercised.** `uvicorn_options` is unit-tested; no test has
+   completed a handshake with a client certificate.
+
+## Milestone 5 — Native API plugin (next)
+
+In a CloudStack source checkout of the target release: `plugins/ai-services` with the v1
+commands from section 9, ConfigKeys, ownership table, async bridge, events, role permissions,
+usage types, deletion hooks; JUnit and Marvin tests. **Blocked on** SPEC.md section 14's open
+decision on the target CloudStack release — the plugin is written against a specific version's
+`PluggableService`, Extensions framework and GPU resource limits.

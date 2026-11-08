@@ -13,6 +13,7 @@ from alembic.command import downgrade, upgrade
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect
 
+from aisvc.api.jobs import JobRecord  # noqa: F401  (registers the table)
 from aisvc.db.models import Base
 
 REPO_ROOT = Path(__file__).parents[2]
