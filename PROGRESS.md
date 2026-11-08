@@ -1586,3 +1586,96 @@ nothing.
 - **Adapter artefacts are not fetched**, evaluations are judged rather
   than produced, the guard model is not called, no v2 command reaches
   CloudStack, and the batch worker has no leader election.
+
+## Milestone 9 — the proxy image and certificates
+
+**Status:** the proxy template exists and TLS material can be uploaded,
+validated, stored and served to a proxy. One thing stands between this
+and a working private endpoint with a custom domain, and it is a design
+problem rather than missing code — see "the bootstrap problem".
+
+1536 Python tests, 399 Java, 21 Go, 86 Vitest.
+
+### Validate before nginx does
+
+`aisvc/certificates/` checks an uploaded pair at upload time. Every
+check is there because its failure mode is otherwise late and
+unreadable:
+
+- a key that does not match its certificate stops nginx with "key
+  values mismatch", hours later, with nothing pointing at the upload;
+- a certificate for the wrong domain is a browser warning nobody sees
+  until a customer complains;
+- an encrypted key stops nginx on a passphrase prompt it cannot answer;
+- an expired one is refused rather than deployed and immediately wrong.
+
+Wildcards match one label, as browsers have it: `*.acme.example` covers
+`ai.acme.example` and neither `acme.example` nor `a.b.acme.example`.
+
+`cryptography` is a new dependency — Apache-2.0 OR BSD-3-Clause, both
+Category A, and `make test-security` passes. The alternative was
+shelling out to openssl or parsing ASN.1 by hand.
+
+### The key leaves once
+
+Stored in Postgres rather than a Kubernetes Secret because the proxy is
+a VM outside the cluster and cannot read one. It is returned by exactly
+one endpoint, which is admin-only and **absent from the published
+schema**, and by nothing else: not the upload response, not the list,
+not an error. Refusals never echo key material, since they reach logs,
+tracebacks and the tenant's console.
+
+Verified against a running engine: upload with no key in the response,
+a list with no material, 403 for a tenant fetching material, byte-exact
+certificate and key for the proxy, and a mismatched pair refused with a
+readable reason and no key echoed.
+
+### The image
+
+`templates/packer/proxy.pkr.hcl` builds nginx, certbot and
+`aisvc-fetch-cert`. The fetcher is **baked into the image** rather than
+delivered by cloud-init, which is the entire reason it exists: userdata
+is readable through the CloudStack API, so a private key cannot travel
+in it. certbot is baked in too, so an ACME endpoint does not wait on a
+package download at first boot, and the default nginx site is removed
+so the proxy cannot answer on a tenant's network with a welcome page.
+
+`packer validate` has **not** been run — the binary is not installed
+and fetching it was refused. `tests/unit/test_packer_templates.py`
+checks what breaks a build without it: a file provisioner pointing at
+something uncommitted, missing `sensitive = true` on credentials, a
+public template, unbalanced braces. Weaker than a real validate; it
+catches the mistakes that have actually happened.
+
+### The bootstrap problem
+
+`aisvc-fetch-cert` authenticates to the engine with mTLS, and **nothing
+puts the client material on the proxy**. It cannot come from
+cloud-init: that is the same readable-userdata problem the fetcher
+exists to avoid, and a client key there would be worse than the server
+key it protects.
+
+This needs a decision rather than code. A one-time bootstrap token in
+userdata is the usual answer — short-lived and single-use, so a leaked
+userdata document yields a spent token rather than a key — but it is
+not written, and guessing at it would be worse than leaving it marked.
+
+**So today a private endpoint with an uploaded certificate boots, fails
+to fetch, and serves nothing.** A private endpoint without a custom
+domain works: plain HTTP on the tenant's own network needs no
+certificate at all.
+
+### What is still not true
+
+- **The bootstrap above.** The proxy cannot authenticate to the engine.
+- **`packer validate` has not run**, and neither template has been
+  built against a real CloudStack.
+- **Nothing renews an uploaded certificate.** The expiry is stored;
+  nothing watches it, and no alert fires as it approaches.
+- **ACME is configured but unexercised.** certbot runs at first boot
+  against a domain that has to already point at the proxy; nothing
+  checks that it does, and a failure leaves nginx without a
+  certificate.
+- Adapter artefacts are not fetched, evaluations are judged rather than
+  produced, the guard model is not called, no v2 command reaches
+  CloudStack, and the batch worker has no leader election.

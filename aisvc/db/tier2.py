@@ -16,6 +16,7 @@ from aisvc.adapters import may_use
 from aisvc.db.models import (
     AdapterRecord,
     BatchRecord,
+    CertificateRecord,
     EvaluationRecord,
     GuardrailProfileRecord,
     PrivateEndpointRecord,
@@ -33,6 +34,7 @@ __all__ = [
     "TERMINAL_BATCH_STATES",
     "AdapterStore",
     "BatchStore",
+    "CertificateStore",
     "EvaluationStore",
     "ExposureStore",
     "GuardrailStore",
@@ -267,5 +269,54 @@ class ExposureStore:
         )
 
     def delete(self, record: PrivateEndpointRecord) -> None:
+        self.session.delete(record)
+        self.session.flush()
+
+
+class CertificateStore:
+    """Uploaded TLS material.
+
+    `list_for` deliberately returns the records; every caller that
+    renders them uses the metadata only, and the one place that needs
+    the material asks for it by id.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def add(
+        self,
+        *,
+        account: str,
+        domain: str,
+        custom_domain: str,
+        certificate: str,
+        private_key: str,
+        fingerprint: str,
+        not_after: Any,
+    ) -> CertificateRecord:
+        record = CertificateRecord(
+            id=_new_id(),
+            account=account,
+            domain=domain,
+            custom_domain=custom_domain,
+            certificate=certificate,
+            private_key=private_key,
+            fingerprint=fingerprint,
+            not_after=not_after,
+        )
+        self.session.add(record)
+        self.session.flush()
+        return record
+
+    def get(self, certificate_id: str) -> CertificateRecord | None:
+        return self.session.get(CertificateRecord, certificate_id)
+
+    def all(self) -> list[CertificateRecord]:
+        return list(
+            self.session.scalars(select(CertificateRecord).order_by(CertificateRecord.created_at))
+        )
+
+    def delete(self, record: CertificateRecord) -> None:
         self.session.delete(record)
         self.session.flush()

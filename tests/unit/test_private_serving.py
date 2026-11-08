@@ -528,3 +528,41 @@ class TestObservingProxies:
         from aisvc.endpoints.proxy import observe_proxies
 
         assert await observe_proxies(FakeCloudStack(existing=[])) == {}
+
+
+class TestTheFetcherKnowsWhereToGo:
+    """aisvc-fetch-cert refuses without an engine URL, so the cloud-init
+    has to supply one or the proxy boots and serves nothing."""
+
+    def userdata(self, **kw: Any) -> str:
+        from aisvc.endpoints.proxy import plan_proxy, render_proxy_userdata
+
+        plan = plan_proxy(
+            exposure(
+                custom_domain="ai.acme.example",
+                tls=TlsSource.UPLOADED,
+                certificate_id="cert-1",
+                **kw,
+            ),
+            zone_id="z",
+            gateway_host="gw",
+            engine_url="https://engine.aisvc.internal:8443",
+        )
+        assert plan is not None
+        return render_proxy_userdata(plan)
+
+    def test_the_engine_url_is_in_the_userdata(self) -> None:
+        assert "https://engine.aisvc.internal:8443" in self.userdata()
+
+    def test_it_is_set_where_the_fetcher_reads_it(self) -> None:
+        text = self.userdata()
+
+        assert "AISVC_ENGINE_URL" in text
+
+    def test_a_plain_endpoint_needs_no_engine_url(self) -> None:
+        from aisvc.endpoints.proxy import plan_proxy, render_proxy_userdata
+
+        plan = plan_proxy(exposure(), zone_id="z", gateway_host="gw")
+        assert plan is not None
+
+        assert "aisvc-fetch-cert" not in render_proxy_userdata(plan)

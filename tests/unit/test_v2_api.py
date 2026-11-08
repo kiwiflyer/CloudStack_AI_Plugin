@@ -455,3 +455,141 @@ class TestNetworkOwnershipComesFromCloudStack:
         response = self.attach(self.client_with(("net-7", "net-8")))
 
         assert "net-7" not in response.text
+
+
+class TestCertificates:
+    """Uploading and serving TLS material (SPEC.md section 8).
+
+    The private key is the most sensitive thing a tenant gives us. It
+    goes out exactly once, to the proxy that needs it, and never in a
+    list or an error.
+    """
+
+    def pair(self, domain: str = "ai.acme.example") -> tuple[str, str]:
+        from tests.unit.test_certificates import make_cert
+
+        return make_cert(domains=(domain,))
+
+    def upload(self, client: TestClient, headers: Any = TENANT, **kw: Any) -> Any:
+        cert, key = self.pair()
+        body: dict[str, Any] = {
+            "custom_domain": "ai.acme.example",
+            "certificate": cert,
+            "private_key": key,
+        }
+        body.update(kw)
+        return client.post("/v1/certificates", json=body, headers=headers)
+
+    def test_a_valid_pair_is_accepted(self, client: TestClient) -> None:
+        response = self.upload(client)
+
+        assert response.status_code == 200
+        assert response.json()["id"]
+
+    def test_the_response_carries_no_key(self, client: TestClient) -> None:
+        response = self.upload(client)
+
+        assert "PRIVATE KEY" not in response.text
+
+    def test_the_fingerprint_and_expiry_come_back(self, client: TestClient) -> None:
+        """Enough to tell two uploads apart without the material."""
+        body = self.upload(client).json()
+
+        assert body["fingerprint"]
+        assert body["expires"]
+
+    def test_a_mismatched_key_is_refused(self, client: TestClient) -> None:
+        _, other_key = self.pair()
+        cert, _ = self.pair()
+
+        response = self.upload(client, certificate=cert, private_key=other_key)
+
+        assert response.status_code == 400
+        assert "PRIVATE KEY" not in response.text
+
+    def test_a_certificate_for_another_domain_is_refused(self, client: TestClient) -> None:
+        cert, key = self.pair("elsewhere.example")
+
+        response = self.upload(client, certificate=cert, private_key=key)
+
+        assert response.status_code == 400
+
+    def test_listing_never_includes_material(self, client: TestClient) -> None:
+        self.upload(client)
+
+        body = client.get("/v1/certificates", headers=TENANT).text
+
+        assert "PRIVATE KEY" not in body
+        assert "BEGIN CERTIFICATE" not in body
+
+    def test_a_tenant_sees_only_its_own(self, client: TestClient) -> None:
+        self.upload(client, headers=TENANT)
+
+        assert client.get("/v1/certificates", headers=OTHER_TENANT).json()["count"] == 0
+
+    def test_the_proxy_can_fetch_the_material(self, client: TestClient) -> None:
+        cert_id = self.upload(client).json()["id"]
+
+        response = client.get(f"/v1/certificates/{cert_id}/material", headers=ADMIN)
+
+        assert response.status_code == 200
+        assert "BEGIN CERTIFICATE" in response.json()["certificate"]
+        assert "PRIVATE KEY" in response.json()["privatekey"]
+
+    def test_a_tenant_cannot_fetch_material(self, client: TestClient) -> None:
+        """Not even their own: it leaves the platform once, to the
+        proxy, over mTLS. A tenant already has what they uploaded."""
+        cert_id = self.upload(client).json()["id"]
+
+        response = client.get(f"/v1/certificates/{cert_id}/material", headers=TENANT)
+
+        assert response.status_code == 403
+
+    def test_an_unknown_certificate_is_a_404(self, client: TestClient) -> None:
+        assert client.get("/v1/certificates/nope/material", headers=ADMIN).status_code == 404
+
+    def test_a_certificate_can_be_deleted(self, client: TestClient) -> None:
+        cert_id = self.upload(client).json()["id"]
+
+        assert client.delete(f"/v1/certificates/{cert_id}", headers=TENANT).status_code == 200
+
+    def test_another_tenant_cannot_delete_it(self, client: TestClient) -> None:
+        cert_id = self.upload(client, headers=TENANT).json()["id"]
+
+        assert client.delete(f"/v1/certificates/{cert_id}", headers=OTHER_TENANT).status_code == 404
+
+    def test_an_exposure_can_name_an_uploaded_certificate(self, client: TestClient) -> None:
+        cert_id = self.upload(client).json()["id"]
+
+        response = client.post(
+            "/v1/endpoints/private",
+            json={
+                "deployment": "llama-3.3-70b-instruct",
+                "network_id": "net-1",
+                "public_enabled": False,
+                "custom_domain": "ai.acme.example",
+                "tls": "uploaded",
+                "certificate_id": cert_id,
+            },
+            headers=TENANT,
+        )
+
+        assert response.status_code == 200
+
+    def test_an_exposure_naming_an_unknown_certificate_is_refused(self, client: TestClient) -> None:
+        """Otherwise the proxy boots, cannot fetch its certificate, and
+        serves nothing — with the failure hours from the action."""
+        response = client.post(
+            "/v1/endpoints/private",
+            json={
+                "deployment": "llama-3.3-70b-instruct",
+                "network_id": "net-1",
+                "public_enabled": False,
+                "custom_domain": "ai.acme.example",
+                "tls": "uploaded",
+                "certificate_id": "ghost",
+            },
+            headers=TENANT,
+        )
+
+        assert response.status_code == 400

@@ -35,11 +35,13 @@ from aisvc.api.deps import (
 from aisvc.api.errors import ApiError, register_error_handlers
 from aisvc.batch import BatchRejected, parse_requests
 from aisvc.batch.runner import read_output, store_input
+from aisvc.certificates import CertificateRejected, validate_certificate
 from aisvc.db import BudgetRecord, KeyStore, RunLog, UsageStore
 from aisvc.db.tier2 import (
     TERMINAL_BATCH_STATES,
     AdapterStore,
     BatchStore,
+    CertificateStore,
     EvaluationStore,
     ExposureStore,
     GuardrailStore,
@@ -306,6 +308,26 @@ def _evaluation_row(record: Any) -> dict[str, Any]:
         "summary": record.summary,
         "regressions": record.suites or [],
         "performance": record.performance or [],
+    }
+
+
+class CertificateBody(BaseModel):
+    """An uploaded TLS pair (SPEC.md section 8)."""
+
+    custom_domain: str = Field(min_length=1)
+    certificate: str = Field(min_length=1)
+    private_key: str = Field(min_length=1)
+
+
+def _certificate_row(record: Any) -> dict[str, Any]:
+    """Metadata only: no certificate body, and no key, ever."""
+    return {
+        "id": record.id,
+        "customdomain": record.custom_domain,
+        "fingerprint": record.fingerprint,
+        "expires": record.not_after.isoformat() if record.not_after else None,
+        "account": record.account,
+        "created": record.created_at.isoformat() if record.created_at else None,
     }
 
 
@@ -1287,6 +1309,96 @@ def _register_routes(app: FastAPI) -> None:
             "summary": decision.summary,
         }
 
+    # -- tier 2: certificates ---------------------------------------------
+
+    @app.post(f"{PREFIX}/certificates", tags=["deployments"], summary="Upload a certificate")
+    async def upload_certificate(
+        caller: CallerDep, session: SessionDep, body: CertificateBody
+    ) -> dict[str, Any]:
+        """Accept a TLS pair for a custom domain (SPEC.md section 8).
+
+        Validated here because every failure mode is otherwise late and
+        unreadable: a mismatched key stops nginx hours later with "key
+        values mismatch", and a certificate for the wrong domain is a
+        browser warning nobody sees until a customer complains.
+        """
+        try:
+            info = validate_certificate(
+                body.certificate, body.private_key, domain=body.custom_domain
+            )
+        except CertificateRejected as exc:
+            raise ApiError(status.HTTP_400_BAD_REQUEST, exc.detail, code=exc.reason) from exc
+
+        record = CertificateStore(session).add(
+            account=caller.account,
+            domain=caller.domain_path,
+            custom_domain=body.custom_domain,
+            certificate=body.certificate,
+            private_key=body.private_key,
+            fingerprint=info.fingerprint,
+            not_after=info.not_after,
+        )
+        return _certificate_row(record)
+
+    @app.get(f"{PREFIX}/certificates", tags=["deployments"], summary="List certificates")
+    async def list_certificates(caller: CallerDep, session: SessionDep) -> dict[str, Any]:
+        """Metadata only. Neither the certificate nor the key is here."""
+        rows = [
+            _certificate_row(record)
+            for record in CertificateStore(session).all()
+            if caller.may_see(account=record.account, domain_path=record.domain)
+        ]
+        return {"count": len(rows), "certificates": rows}
+
+    @app.get(
+        f"{PREFIX}/certificates/{{certificate_id}}/material",
+        tags=["deployments"],
+        summary="Fetch certificate material",
+        include_in_schema=False,
+    )
+    async def certificate_material(
+        certificate_id: str, _: AdminDep, session: SessionDep
+    ) -> dict[str, Any]:
+        """The PEM pair, for the proxy that needs it.
+
+        Admin only, and not in the published schema. The engine is
+        reachable only over mTLS from the plugin and the proxies, and
+        this is the one place key material leaves the platform — a
+        tenant has no reason to call it, since they uploaded what it
+        returns.
+        """
+        record = CertificateStore(session).get(certificate_id)
+        if record is None:
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such certificate: {certificate_id}",
+                code="certificate_not_found",
+            )
+        return {
+            "id": record.id,
+            "certificate": record.certificate,
+            "privatekey": record.private_key,
+        }
+
+    @app.delete(
+        f"{PREFIX}/certificates/{{certificate_id}}",
+        tags=["deployments"],
+        summary="Delete a certificate",
+    )
+    async def delete_certificate(
+        certificate_id: str, caller: CallerDep, session: SessionDep
+    ) -> dict[str, Any]:
+        store = CertificateStore(session)
+        record = store.get(certificate_id)
+        if record is None or not caller.may_see(account=record.account, domain_path=record.domain):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such certificate: {certificate_id}",
+                code="certificate_not_found",
+            )
+        store.delete(record)
+        return {"id": certificate_id, "deleted": True}
+
     # -- tier 2: private endpoints ----------------------------------------
 
     @app.post(
@@ -1310,6 +1422,18 @@ def _register_routes(app: FastAPI) -> None:
             tls=TlsSource(body.tls),
             certificate_id=body.certificate_id,
         )
+
+        # A named certificate has to exist and be theirs. Otherwise the
+        # proxy boots, cannot fetch one, and serves nothing — with the
+        # failure hours away from the action that caused it.
+        if body.tls == "uploaded" and body.certificate_id:
+            known = CertificateStore(session).get(body.certificate_id)
+            if known is None or not caller.may_see(account=known.account, domain_path=known.domain):
+                raise ApiError(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"no such certificate: {body.certificate_id}",
+                    code="certificate_not_found",
+                )
 
         try:
             validate_exposure(exposure, owned_networks=_owned_networks(services, caller))

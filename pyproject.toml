@@ -24,6 +24,10 @@ dependencies = [
     "kubernetes>=31.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
+    # X.509 parsing for uploaded TLS certificates (SPEC.md section 8).
+    # Apache-2.0 OR BSD-3-Clause, both Category A. Needed to check a
+    # key matches its certificate before nginx fails on it cryptically.
+    "cryptography>=43",
 ]
 
 [project.optional-dependencies]

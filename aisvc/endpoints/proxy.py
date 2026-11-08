@@ -79,13 +79,23 @@ class ProxyPlan:
     network_id: str
     zone_id: str
     gateway_host: str
+    #: Where aisvc-fetch-cert goes for the certificate material. It
+    #: refuses without one, so a proxy with an uploaded certificate and
+    #: no engine URL would boot and serve nothing.
+    engine_url: str = ""
     custom_domain: str = ""
     tls: TlsSource = TlsSource.NONE
     certificate_id: str = ""
     public_enabled: bool = True
 
 
-def plan_proxy(exposure: EndpointExposure, *, zone_id: str, gateway_host: str) -> ProxyPlan | None:
+def plan_proxy(
+    exposure: EndpointExposure,
+    *,
+    zone_id: str,
+    gateway_host: str,
+    engine_url: str = "",
+) -> ProxyPlan | None:
     """What this exposure needs on the tenant's network, if anything.
 
     A public-only endpoint needs no proxy: it is already served by the
@@ -102,6 +112,7 @@ def plan_proxy(exposure: EndpointExposure, *, zone_id: str, gateway_host: str) -
         network_id=exposure.network_id,
         zone_id=zone_id,
         gateway_host=gateway_host,
+        engine_url=engine_url,
         custom_domain=exposure.custom_domain,
         tls=exposure.tls,
         certificate_id=exposure.certificate_id,
@@ -169,6 +180,7 @@ def render_proxy_userdata(plan: ProxyPlan) -> str:
     lines.append("runcmd:")
     if plan.tls is TlsSource.UPLOADED:
         lines.append("  - mkdir -p /etc/aisvc/tls")
+        lines.append(f"  - echo 'AISVC_ENGINE_URL={plan.engine_url}' >> /etc/environment")
         lines.append("  # Fetched from the engine over mTLS by id: userdata is readable")
         lines.append("  # through the CloudStack API and must not carry a key.")
         lines.append(f"  - aisvc-fetch-cert --id {plan.certificate_id} --out /etc/aisvc/tls")
@@ -215,6 +227,7 @@ class ProxyProvisioner:
         template_id: str,
         offering_id: str,
         gateway_host: str,
+        engine_url: str = "",
         exposures_for: Any = None,
     ) -> None:
         self.client = client
@@ -225,6 +238,7 @@ class ProxyProvisioner:
         self.template_id = template_id
         self.offering_id = offering_id
         self.gateway_host = gateway_host
+        self.engine_url = engine_url
 
     async def _existing(self, name: str) -> dict[str, Any] | None:
         machines = await self.client.call_paged(

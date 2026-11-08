@@ -37,6 +37,7 @@ __all__ = [
     "Base",
     "BatchRecord",
     "BudgetRecord",
+    "CertificateRecord",
     "EvaluationRecord",
     "GuardrailProfileRecord",
     "PrivateEndpointRecord",
@@ -281,4 +282,25 @@ class PrivateEndpointRecord(Base):
     custom_domain: Mapped[str] = mapped_column(String(255), default="")
     tls: Mapped[str] = mapped_column(String(16), default="none")
     certificate_id: Mapped[str] = mapped_column(String(36), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CertificateRecord(Base):
+    """An uploaded TLS certificate and its key (SPEC.md section 8).
+
+    The key is here because the proxy is a VM outside the cluster and
+    cannot read a Kubernetes Secret. It leaves exactly once, to that
+    proxy, over mTLS; nothing else returns it, and it is never logged.
+    """
+
+    __tablename__ = "aisvc_certificate"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    account: Mapped[str] = mapped_column(String(255), index=True)
+    domain: Mapped[str] = mapped_column(String(255), index=True)
+    custom_domain: Mapped[str] = mapped_column(String(255), index=True)
+    certificate: Mapped[str] = mapped_column(Text)
+    private_key: Mapped[str] = mapped_column(Text)
+    fingerprint: Mapped[str] = mapped_column(String(128), index=True)
+    not_after: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

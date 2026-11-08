@@ -229,6 +229,18 @@ COMMANDS: tuple[Command, ...] = (
         release=Release.V2,
     ),
     _c("listAiEvaluations", "GET", "/v1/models/{model_name}/evaluations", ROOT, release=Release.V2),
+    # The material endpoint is deliberately absent: it is the one place
+    # key material leaves the platform, it is served to the proxy over
+    # mTLS, and a tenant has no reason to call it.
+    _c("uploadAiCertificate", "POST", "/v1/certificates", ALL, release=Release.V2),
+    _c("listAiCertificates", "GET", "/v1/certificates", ALL, release=Release.V2),
+    _c(
+        "deleteAiCertificate",
+        "DELETE",
+        "/v1/certificates/{certificate_id}",
+        ALL,
+        release=Release.V2,
+    ),
     _c(
         "createAiPrivateEndpoint",
         "POST",

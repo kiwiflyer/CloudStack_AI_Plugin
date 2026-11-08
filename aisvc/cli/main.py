@@ -232,6 +232,7 @@ async def _proxy_provisioner(client: Any, spec: PlatformSpec, session: Any) -> A
         gateway_host=os.environ.get(
             "AISVC_GATEWAY_SERVICE", "aisvc-gateway.aisvc-serving.svc.cluster.local"
         ),
+        engine_url=os.environ.get("AISVC_ENGINE_URL", ""),
         exposures_for=_exposures_for(session),
     )
 
