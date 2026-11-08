@@ -88,7 +88,9 @@ def _c(
     )
 
 
-#: SPEC.md section 9's command map, verbatim.
+#: SPEC.md section 9's command map, verbatim. Path placeholders use the
+#: engine's own parameter names, so `test_every_engine_route_belongs_to_a_command`
+#: compares like with like rather than tripping over a rename.
 COMMANDS: tuple[Command, ...] = (
     # -- sourcing ---------------------------------------------------------
     _c("searchAiHfModels", "GET", "/v1/hf/search", ROOT, domain_admin_if_enabled=True),
@@ -112,14 +114,14 @@ COMMANDS: tuple[Command, ...] = (
     _c(
         "promoteAiRollout",
         "POST",
-        "/v1/deployments/{id}/rollout/promote",
+        "/v1/deployments/{deployment_id}/rollout/promote",
         ALL,
         is_async=True,
     ),
     _c(
         "rollbackAiRollout",
         "POST",
-        "/v1/deployments/{id}/rollout/rollback",
+        "/v1/deployments/{deployment_id}/rollout/rollback",
         ALL,
         is_async=True,
     ),
@@ -161,7 +163,7 @@ COMMANDS: tuple[Command, ...] = (
     # -- operations -------------------------------------------------------
     _c("runAiSetupSelfTest", "POST", "/v1/setup/selftest", ROOT, is_async=True),
     _c("listAiGpuCapacity", "GET", "/v1/capacity", ROOT),
-    _c("drainAiNode", "POST", "/v1/nodes/{id}/drain", ROOT, is_async=True),
+    _c("drainAiNode", "POST", "/v1/nodes/{node_id}/drain", ROOT, is_async=True),
     _c("listAiReconcilerRuns", "GET", "/v1/runs", ROOT),
     # -- v2 ---------------------------------------------------------------
     _c("listAiAdapters", "GET", "/v1/adapters", ALL, release=Release.V2),

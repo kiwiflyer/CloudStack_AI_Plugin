@@ -552,3 +552,67 @@ skipping the 202 check.
    wants the integration environment rather than JUnit.
 7. The commands are tested for shape, not behaviour against a real engine. That is what the
    Marvin tests and the integration environment are for.
+
+## Milestone 7 — Operations (partly done)
+
+`autoscale`, `lifecycle` and `metering`, plus the engine endpoints the plugin's commands were
+calling into thin air.
+
+**State:** 819 Python tests pass, `ruff` clean, `mypy --strict` clean, 94% line coverage.
+`lifecycle` is at 99%, `metering` 98%, `autoscale` 100%. 361 Java tests still pass.
+
+### What landed
+
+| Module | What it does |
+| --- | --- |
+| `aisvc/lifecycle` | Blue/green rollout as a small state machine producing traffic weights, and `plan_drain` |
+| `aisvc/metering` | Usage records, per-tier pricing, and budget thresholds |
+| `aisvc/autoscale` | Replica scaling on queue depth, TTFT p95 and GPU utilisation |
+| Engine API | Rollout promote and rollback, node drain, usage and budgets |
+
+**19 v1 commands still have no engine route**, down from 25. The count is pinned by a test, so
+it cannot drift quietly.
+
+### Decisions taken, and why
+
+**A rollout never swaps `active` and `candidate`.** The first cut did, and two tests caught
+that it makes the pair ambiguous — the same two fields meaning different things depending on
+how the rollout got there. `active` is what was live when the rollout started, `candidate` is
+the new colour, neither moves, and `live_colour` answers "what is serving now?".
+
+**Rollouts are immutable.** `promote()` and `rollback()` return a new rollout, so a caller
+cannot half-apply a transition and leave the weights disagreeing with the phase.
+
+**Draining destroys rather than stopping**, closing [ADR-0003](docs/adr/0003-cloudstack-release.md)'s
+action item — a stopped node keeps its GPUs allocated and strands capacity nobody is using. A
+drain without room elsewhere refuses until an admin forces it, and a forced drain says in its
+reason what it is costing.
+
+**Input and output tokens are priced separately.** Output runs about three times input in the
+example tiers, so a blended rate would misbill every tenant in one direction or the other.
+
+**A budget threshold fires once.** `already_notified` means a tenant gets one alert at 80%,
+not one per request.
+
+**Scaling is deliberately asymmetric** — up after a minute, down after fifteen, one replica at
+a time. Loading weights costs minutes even with the NVMe cache, so flapping is far more
+expensive than carrying a spare replica; and adding three at once just queues three cold
+starts behind the same bottleneck. A breach outranks idleness, because being over SLO is
+tenant-visible while a spare replica is only cost.
+
+### ADR-0003's LTS mitigation is verified
+
+The plugin **compiles and passes all 361 tests against 4.22.1.1 LTS** as well as 4.23.0.0, so
+nothing 4.23-only has crept in. A CI job runs it on every change, so the eventual retarget
+stays a rebuild rather than a rewrite.
+
+### What milestone 7 still needs
+
+1. **Nothing drives any of this.** `lifecycle`, `autoscale` and `metering` are pure decision
+   functions with no caller: the reconciler does not run rollouts, no loop reads Prometheus,
+   and nothing pulls usage hourly or writes CloudStack usage records.
+2. **No Prometheus client.** `Metrics` is a dataclass somebody has to fill in.
+3. **Alerts and Grafana dashboards** (section 11) are unwritten.
+4. Usage reconciling to gateway token counts within 1% (section 14) cannot be checked until
+   something actually meters.
+

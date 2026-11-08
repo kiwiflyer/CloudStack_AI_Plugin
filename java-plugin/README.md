@@ -56,6 +56,18 @@ The generator also emits `src/test/resources/generated-engine-objects.json`, a f
 engine object per response type, so `GeneratedSurfaceTest` exercises every mapped field
 without that list being maintained twice.
 
+## The 4.22 LTS floor
+
+[ADR-0003](../docs/adr/0003-cloudstack-release.md) targets 4.23, which is **non-LTS**. The
+plugin is held to APIs that also exist in 4.22 LTS so the eventual retarget costs a rebuild
+rather than a rewrite. Verify locally by building 4.22's modules the same way and then:
+
+```bash
+mvn -Dcs.version=4.22.1.1 test
+```
+
+CI runs this on every change.
+
 ## Two rules worth keeping
 
 **The caller context is built from `CallContext`, never from request parameters.** The engine

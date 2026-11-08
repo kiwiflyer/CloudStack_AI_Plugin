@@ -67,3 +67,36 @@ jobs:
 
       - run: mvn -q test
         working-directory: java-plugin
+
+  java-plugin-lts:
+    name: Java plugin against 4.22 LTS
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache: maven
+
+      # ADR-0003: 4.23 is non-LTS. Compiling against 4.22 LTS as well
+      # means a 4.23-only API fails here rather than at the GA retarget.
+      - name: Cache CloudStack 4.22 LTS artifacts
+        id: lts-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/apache/cloudstack
+          key: cloudstack-4.22.1.1-core
+
+      - name: Build CloudStack 4.22 LTS core modules
+        if: steps.lts-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch 4.22.1.1 --single-branch \
+            https://github.com/apache/cloudstack.git /tmp/cloudstack-lts
+          cd /tmp/cloudstack-lts
+          mvn -q install -DskipTests -Dcheckstyle.skip -Dlicense.skip -Drat.skip \
+            -pl api,utils,framework/config,framework/db,engine/schema -am
+
+      - run: mvn -q -Dcs.version=4.22.1.1 test
+        working-directory: java-plugin

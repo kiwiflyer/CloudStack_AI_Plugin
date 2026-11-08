@@ -149,15 +149,17 @@ GPUs they are not using. Worth a test when `lifecycle` lands.
 
 ## Action items
 
-1. [ ] Milestone 5: build `java-plugin/` against 4.23.0.0, and keep a CI job compiling it
-       against 4.22 LTS so a 4.23-only dependency fails fast rather than at retarget time.
+1. [x] **Done, and the mitigation holds.** `java-plugin/` builds against 4.23.0.0, and all
+       361 tests also pass against **4.22.1.1 LTS** (`mvn -Dcs.version=4.22.1.1 test`) — so
+       nothing 4.23-only has crept in. A CI job runs the LTS build on every change, so a
+       4.23-only dependency fails there rather than at the GA retarget.
 2. [ ] Configure `max.account.gpus` / `max.domain.gpus` from the plugin rather than
        implementing GPU quotas in the engine.
 3. [x] **Done.** `aisvc/inventory` reads `listGpuDevices`; `host_tag` selects hosts and
        `gpus_per_node` bounds one node VM, while capacity is counted per device.
        `gpuClasses[].gpu_card` narrows counting on mixed-GPU hosts.
-4. [ ] Milestone 7: ensure `drain` destroys rather than stops, and test that the GPU is
-       released.
+4. [~] `aisvc/lifecycle.plan_drain` destroys rather than stops, asserted by a test naming
+       this ADR. That the GPU is *actually* released still needs the GPU lab.
 5. [ ] Milestone 8: add IOMMU-enabled and Nouveau-disabled to the setup wizard's host checks.
 6. [ ] Re-evaluate the Extensions framework for v2 private endpoints, where a `Vpc` custom
        action is the right shape.

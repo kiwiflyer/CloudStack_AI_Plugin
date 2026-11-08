@@ -440,3 +440,146 @@ class TestDegradedEngine:
 
         assert body["count"] == 1
         assert body["models"][0]["mirrored"] is False
+
+
+class TestRollouts:
+    def test_promoting_returns_a_job(self, client: TestClient) -> None:
+        response = client.post(
+            "/v1/deployments/llama-3.3-70b-instruct-blue/rollout/promote",
+            headers=ADMIN,
+        )
+
+        assert response.status_code == 202
+        assert response.json()["jobid"]
+
+    def test_a_promoted_rollout_moves_all_traffic_to_green(self, client: TestClient) -> None:
+        """ADR-0001: the gateway carries these weights, not the serving layer."""
+        job_id = client.post(
+            "/v1/deployments/llama-3.3-70b-instruct-blue/rollout/promote",
+            headers=ADMIN,
+        ).json()["jobid"]
+
+        result = client.get(f"/v1/jobs/{job_id}", headers=ADMIN).json()["jobresult"]
+
+        assert result["weights"] == {"blue": 0, "green": 100}
+        assert result["deployment"]["colour"] == "green"
+        assert result["retire"] == "blue"
+
+    def test_a_rollback_keeps_traffic_on_blue(self, client: TestClient) -> None:
+        job_id = client.post(
+            "/v1/deployments/llama-3.3-70b-instruct-blue/rollout/rollback",
+            headers=ADMIN,
+        ).json()["jobid"]
+
+        result = client.get(f"/v1/jobs/{job_id}", headers=ADMIN).json()["jobresult"]
+
+        assert result["weights"] == {"blue": 100, "green": 0}
+        assert result["retire"] == "green"
+
+    def test_a_deployment_id_without_a_colour_defaults_to_blue(self, client: TestClient) -> None:
+        job_id = client.post(
+            "/v1/deployments/llama-3.3-70b-instruct/rollout/promote", headers=ADMIN
+        ).json()["jobid"]
+
+        body = client.get(f"/v1/jobs/{job_id}", headers=ADMIN).json()
+
+        assert body["jobstatus"] == 1
+
+
+class TestDrain:
+    def test_draining_is_admin_only(self, client: TestClient) -> None:
+        response = client.post("/v1/nodes/aisvc-h100-pool-001/drain", headers=TENANT)
+
+        assert response.status_code == 403
+
+    def test_an_empty_node_drains(self, client: TestClient) -> None:
+        job_id = client.post("/v1/nodes/aisvc-h100-pool-001/drain", headers=ADMIN).json()["jobid"]
+
+        result = client.get(f"/v1/jobs/{job_id}", headers=ADMIN).json()["jobresult"]
+
+        assert result["action"] == "destroy"
+
+    def test_the_drain_destroys_rather_than_stopping(self, client: TestClient) -> None:
+        """ADR-0003: a stopped node keeps its GPUs allocated."""
+        job_id = client.post("/v1/nodes/aisvc-h100-pool-001/drain", headers=ADMIN).json()["jobid"]
+
+        result = client.get(f"/v1/jobs/{job_id}", headers=ADMIN).json()["jobresult"]
+
+        assert result["action"] != "stop"
+
+    def test_forcing_is_recorded_on_the_job(self, client: TestClient) -> None:
+        response = client.post("/v1/nodes/aisvc-h100-pool-001/drain?force=true", headers=ADMIN)
+
+        assert response.status_code == 202
+
+
+class TestUsageAndBudgets:
+    def test_usage_is_empty_without_records(self, client: TestClient) -> None:
+        body = client.get("/v1/usage", headers=ADMIN).json()
+
+        assert body["count"] == 0
+
+    def test_usage_is_priced_from_the_catalog_tier(self, services: EngineServices) -> None:
+        from aisvc.metering import UsageRecord
+
+        services.usage = [  # type: ignore[attr-defined]
+            UsageRecord(
+                account="acme",
+                domain="/Customers/Acme",
+                model="llama-3.3-70b-instruct",
+                input_tokens=1_000_000,
+                output_tokens=1_000_000,
+            )
+        ]
+        with TestClient(create_app(services)) as client:
+            body = client.get("/v1/usage", headers=ADMIN).json()
+
+        assert body["count"] == 1
+        assert body["usage"][0]["cost"] == pytest.approx(2.40)
+        assert body["usage"][0]["currency"] == "USD"
+
+    def test_another_tenant_sees_none_of_it(self, services: EngineServices) -> None:
+        """SPEC.md section 14: tenants cannot see each other's usage."""
+        from aisvc.metering import UsageRecord
+
+        services.usage = [  # type: ignore[attr-defined]
+            UsageRecord(
+                account="acme",
+                domain="/Customers/Acme",
+                model="llama-3.3-70b-instruct",
+                input_tokens=10,
+            )
+        ]
+        with TestClient(create_app(services)) as client:
+            body = client.get("/v1/usage", headers=OTHER_TENANT).json()
+
+        assert body["count"] == 0
+
+    def test_budgets_report_where_a_tenant_stands(self, registry: ModelRegistry) -> None:
+        doc = yaml.safe_load(MINIMAL)
+        doc["tenants"][0]["budget"] = {"monthly": 5000, "currency": "USD", "on_exceed": "block"}
+        spec = load_spec_from_string(yaml.safe_dump(doc), allowed_licenses=LICENSES)
+        services = EngineServices(spec=spec, registry=registry, session_factory=memory_sessions())
+        services.spend = {"acme": 4000.0}  # type: ignore[attr-defined]
+
+        with TestClient(create_app(services)) as client:
+            body = client.get("/v1/budgets", headers=ADMIN).json()
+
+        assert body["count"] == 1
+        assert body["budgets"][0]["percent_used"] == 80.0
+        assert body["budgets"][0]["blocked"] is False
+
+    def test_a_blocking_budget_at_full_spend_reports_blocked(self, registry: ModelRegistry) -> None:
+        doc = yaml.safe_load(MINIMAL)
+        doc["tenants"][0]["budget"] = {"monthly": 100, "currency": "USD", "on_exceed": "block"}
+        spec = load_spec_from_string(yaml.safe_dump(doc), allowed_licenses=LICENSES)
+        services = EngineServices(spec=spec, registry=registry, session_factory=memory_sessions())
+        services.spend = {"acme": 100.0}  # type: ignore[attr-defined]
+
+        with TestClient(create_app(services)) as client:
+            body = client.get("/v1/budgets", headers=ADMIN).json()
+
+        assert body["budgets"][0]["blocked"] is True
+
+    def test_a_tenant_without_a_budget_is_not_listed(self, client: TestClient) -> None:
+        assert client.get("/v1/budgets", headers=ADMIN).json()["count"] == 0

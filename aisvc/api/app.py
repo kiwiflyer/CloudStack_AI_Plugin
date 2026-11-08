@@ -18,6 +18,8 @@ from aisvc.api.deps import AdminDep, CallerDep, JobsDep, ServicesDep, SessionDep
 from aisvc.api.errors import ApiError, register_error_handlers
 from aisvc.db import RunLog
 from aisvc.k8s.client import observe_deployments
+from aisvc.lifecycle import RolloutError, plan_drain, start_rollout
+from aisvc.metering import evaluate_budget, price_usage
 from aisvc.profiles import Level, ProfileLayer, resolve
 
 if TYPE_CHECKING:
@@ -209,6 +211,165 @@ def _register_routes(app: FastAPI) -> None:
         ]
         return {"count": len(visible), "endpoints": visible}
 
+    # -- rollouts ---------------------------------------------------------
+
+    @app.post(
+        f"{PREFIX}/deployments/{{deployment_id}}/rollout/promote",
+        tags=["deployments"],
+        summary="Promote a rollout",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def promote_rollout(
+        deployment_id: str,
+        caller: CallerDep,
+        services: ServicesDep,
+        jobs: JobsDep,
+        response: Response,
+    ) -> dict[str, Any]:
+        """Send all traffic to the canary and retire the old colour."""
+        return _rollout_job(
+            "promoteAiRollout",
+            deployment_id,
+            caller,
+            services,
+            jobs,
+            response,
+            promote=True,
+        )
+
+    @app.post(
+        f"{PREFIX}/deployments/{{deployment_id}}/rollout/rollback",
+        tags=["deployments"],
+        summary="Roll a rollout back",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def rollback_rollout(
+        deployment_id: str,
+        caller: CallerDep,
+        services: ServicesDep,
+        jobs: JobsDep,
+        response: Response,
+    ) -> dict[str, Any]:
+        """Send all traffic back to the colour that was live."""
+        return _rollout_job(
+            "rollbackAiRollout",
+            deployment_id,
+            caller,
+            services,
+            jobs,
+            response,
+            promote=False,
+        )
+
+    # -- nodes ------------------------------------------------------------
+
+    @app.post(
+        f"{PREFIX}/nodes/{{node_id}}/drain",
+        tags=["admin"],
+        summary="Drain a GPU node",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def drain_node(
+        node_id: str,
+        caller: AdminDep,
+        services: ServicesDep,
+        jobs: JobsDep,
+        response: Response,
+        force: bool = Query(
+            default=False,
+            description="Proceed even without capacity for the replicas elsewhere.",
+        ),
+    ) -> dict[str, Any]:
+        """Move replicas off a node, then destroy it.
+
+        Destroy, not stop: a stopped node keeps its GPUs allocated
+        (ADR-0003), stranding capacity nobody is using.
+        """
+        snapshot = services.snapshot()
+        free_elsewhere = snapshot.gpus_free if snapshot else 0
+        replicas_on_node = _replicas_on(services, node_id)
+
+        plan = plan_drain(
+            node_id,
+            replicas_on_node=replicas_on_node,
+            free_elsewhere=free_elsewhere,
+            force=force,
+        )
+
+        job = jobs.create("drainAiNode", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        if not plan.can_proceed:
+            jobs.fail(job, plan.reason)
+        else:
+            jobs.succeed(
+                job,
+                {
+                    "node": plan.node,
+                    "action": plan.action,
+                    "replicas_moved": plan.replicas_to_move,
+                    "forced": plan.forced,
+                    "reason": plan.reason,
+                },
+            )
+        return {"jobid": job.id}
+
+    # -- usage and budgets ------------------------------------------------
+
+    @app.get(f"{PREFIX}/usage", tags=["billing"], summary="List usage")
+    async def list_usage(caller: CallerDep, services: ServicesDep) -> dict[str, Any]:
+        """Metered usage, priced from the catalog's tiers."""
+        tiers = {t.name: t for t in services.spec.document.price_tiers}
+        records = getattr(services, "usage", None) or []
+
+        rows = []
+        for record in records:
+            if not caller.may_see(account=record.account, domain_path=record.domain):
+                continue
+            model = next(
+                (m for m in services.spec.document.models if m.name == record.model),
+                None,
+            )
+            tier = tiers.get(model.price_tier) if model and model.price_tier else None
+            rows.append(
+                {
+                    "account": record.account,
+                    "model": record.model,
+                    "input_tokens": record.input_tokens,
+                    "output_tokens": record.output_tokens,
+                    "gpu_hours": record.gpu_hours,
+                    "cost": price_usage(record, tier) if tier else None,
+                    "currency": tier.currency if tier else None,
+                }
+            )
+        return {"count": len(rows), "usage": rows}
+
+    @app.get(f"{PREFIX}/budgets", tags=["billing"], summary="List budgets")
+    async def list_budgets(caller: CallerDep, services: ServicesDep) -> dict[str, Any]:
+        """Budgets and where each tenant stands against them."""
+        spend = getattr(services, "spend", None) or {}
+        rows = []
+        for tenant in services.spec.document.tenants:
+            if tenant.budget is None:
+                continue
+            if not caller.may_see(
+                account=tenant.cloudstack_account, domain_path=tenant.cloudstack_domain
+            ):
+                continue
+            state = evaluate_budget(tenant.budget, spent=float(spend.get(tenant.name, 0.0)))
+            rows.append(
+                {
+                    "id": tenant.name,
+                    "account": tenant.cloudstack_account,
+                    "monthly": state.limit,
+                    "currency": state.currency,
+                    "spent": state.spent,
+                    "on_exceed": state.on_exceed,
+                    "percent_used": round(state.percent_used, 1),
+                    "blocked": state.should_block,
+                }
+            )
+        return {"count": len(rows), "budgets": rows}
+
     # -- profiles ---------------------------------------------------------
 
     @app.get(
@@ -324,6 +485,63 @@ def _register_routes(app: FastAPI) -> None:
                 },
             )
         return {"jobid": job.id}
+
+
+def _replicas_on(services: Services, node_id: str) -> int:
+    """How many replicas the node currently carries."""
+    cluster = getattr(services, "cluster", None)
+    if cluster is None:
+        return 0
+    return sum(
+        deployed.replicas_ready
+        for deployed in observe_deployments(cluster).values()
+        if node_id in getattr(deployed, "nodes", (node_id,))
+    )
+
+
+def _rollout_job(
+    command: str,
+    deployment_id: str,
+    caller: Any,
+    services: Services,
+    jobs: Any,
+    response: Response,
+    *,
+    promote: bool,
+) -> dict[str, Any]:
+    """Promote or roll back, recording the outcome on a job.
+
+    The weights this produces are what the gateway applies; nothing in
+    the serving layer moves traffic (ADR-0001).
+    """
+    model, _, colour = deployment_id.rpartition("-")
+    if colour not in {"blue", "green"}:
+        model, colour = deployment_id, "blue"
+
+    job = jobs.create(command, caller)
+    response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+
+    try:
+        rollout = start_rollout(model, active=colour)
+        settled = rollout.promote() if promote else rollout.rollback()
+    except RolloutError as exc:
+        jobs.fail(job, str(exc))
+        return {"jobid": job.id}
+
+    jobs.succeed(
+        job,
+        {
+            "deployment": {
+                "id": deployment_id,
+                "model": settled.model,
+                "colour": settled.live_colour,
+                "state": settled.phase.value,
+            },
+            "weights": settled.weights(),
+            "retire": settled.colour_to_remove,
+        },
+    )
+    return {"jobid": job.id}
 
 
 def _sourcing(services: Services) -> Any:

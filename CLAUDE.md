@@ -4,13 +4,14 @@ Guidance for Claude Code working in this repository.
 
 ## Current state
 
-**Milestones 1–4 are done bar milestone 3's GPU-lab work; milestone 5 has its foundation; 6–9 are not.** See `PROGRESS.md`.
+**Milestones 1–5 are done bar their noted gaps; milestone 7 is partly done; 6, 8 and 9 are not.** See `PROGRESS.md`.
 Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`, `db`,
 `reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, the `aisvc` CLI
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
-Not written: `autoscale/`, `lifecycle/`, `metering/`, `setup/`, `playground/`,
-all v2 modules, `ui/`, `terraform/`, `deploy/`. `make test-java`, `test-ui`,
+Not written: `setup/`, `playground/`, all v2 modules, `ui/`, `terraform/`, `deploy/`.
+`lifecycle`, `autoscale` and `metering` exist but **nothing calls them** — they are decision
+functions waiting for a driver. `make test-java`, `test-ui`,
 `test-tf` and `record` deliberately exit 1 naming the milestone that fills them in.
 
 `aisvc apply` takes an empty zone to a served model in one run — nodes, then deployments, then

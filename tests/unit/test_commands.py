@@ -204,13 +204,13 @@ class TestAgainstTheEngine:
     def test_the_unimplemented_commands_are_known(self) -> None:
         """Fails when an endpoint lands without the count being updated.
 
-        Milestone 4 shipped read endpoints and mirror; the rest of
-        section 9 arrives with milestones 7 to 9.
+        Milestone 7 added rollouts, drain, usage and budgets; the rest
+        arrive with milestones 8 and 9.
         """
         paths = self.engine_paths()
         missing = sorted(c.name for c in V1 if c.path not in paths)
 
-        assert len(missing) == 25, (
+        assert len(missing) == 19, (
             f"{len(missing)} v1 commands still have no engine route: {missing}"
         )
 
