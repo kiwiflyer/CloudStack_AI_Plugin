@@ -378,6 +378,7 @@ def plan_routes(
     state: ActualState,
     *,
     model_actions: Sequence[Action] = (),
+    proxy_actions: Sequence[Action] = (),
     namespace: str = DEFAULT_NAMESPACE,
 ) -> list[Action]:
     """Diff the gateway's routing config against what the spec implies."""
@@ -392,10 +393,20 @@ def plan_routes(
     if state.route_hash == digest:
         return []
 
-    depends_on = tuple(
-        action.key
-        for action in model_actions
-        if action.resource_type == "model-deployment" and action.kind is not ActionKind.DELETE
+    # Creates only. A model leaving the public gateway must wait for
+    # its private route to exist, or the tenant has no route at all for
+    # a whole reconcile. A *delete* re-publishes the model, which
+    # should not wait on tearing a VM down.
+    proxy_dependencies = tuple(
+        action.key for action in proxy_actions if action.kind is ActionKind.CREATE
+    )
+    depends_on = (
+        tuple(
+            action.key
+            for action in model_actions
+            if action.resource_type == "model-deployment" and action.kind is not ActionKind.DELETE
+        )
+        + proxy_dependencies
     )
 
     return [
@@ -426,6 +437,91 @@ def route_config_hash(config: dict[str, object]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
 
 
+def plan_proxies(spec: PlatformSpec, state: ActualState) -> list[Action]:
+    """Diff the per-tenant gateway proxies against the exposures.
+
+    A proxy is created for every exposure attached to a network, and
+    destroyed once its exposure is gone — a VM left behind keeps a NIC
+    on the tenant's tier, which is precisely what removing the endpoint
+    was meant to take away.
+
+    Only names this engine would have minted are ours to remove. A VM
+    on the same network that someone else created is not ours to
+    expunge, however much it looks like one.
+    """
+    from aisvc.endpoints.proxy import NAME_PREFIX, plan_proxy
+
+    actions: list[Action] = []
+    wanted: dict[str, Any] = {}
+
+    for exposure in state.exposures:
+        plan = plan_proxy(exposure, zone_id="", gateway_host="")
+        if plan is None:
+            continue
+
+        zone = _zone_for(spec, exposure)
+        if zone is None or not zone.proxy_template or not zone.proxy_offering:
+            # Warned about in plan_all; planning a VM with no template
+            # would fail at execute time with a CloudStack error an
+            # operator cannot act on.
+            continue
+
+        wanted[plan.name] = exposure
+        if plan.name in state.proxies:
+            continue
+
+        actions.append(
+            Action(
+                kind=ActionKind.CREATE,
+                resource_type="endpoint-proxy",
+                name=plan.name,
+                detail=f"on network {exposure.network_id}",
+                reason=(f"{exposure.account} has a private endpoint for {exposure.deployment}"),
+            )
+        )
+
+    for name in sorted(state.proxies):
+        if name in wanted or not name.startswith(NAME_PREFIX):
+            continue
+        actions.append(
+            Action(
+                kind=ActionKind.DELETE,
+                resource_type="endpoint-proxy",
+                name=name,
+                reason="its private endpoint has been removed",
+            )
+        )
+
+    return actions
+
+
+def _zone_for(spec: PlatformSpec, exposure: Any) -> Any:
+    """The zone a deployment's proxy belongs in.
+
+    One zone per platform today, so this picks the first; it exists so
+    the multi-zone case has somewhere obvious to go.
+    """
+    _ = exposure
+    zones = spec.document.zones
+    return zones[0] if zones else None
+
+
+def proxy_warnings(spec: PlatformSpec, state: ActualState) -> list[str]:
+    """Exposures that cannot be built for want of zone configuration."""
+    warnings: list[str] = []
+    for exposure in state.exposures:
+        if not exposure.network_id:
+            continue
+        zone = _zone_for(spec, exposure)
+        if zone is None or not zone.proxy_template or not zone.proxy_offering:
+            warnings.append(
+                f"{exposure.deployment} has a private endpoint for "
+                f"{exposure.account}, but its zone sets no proxy_template and "
+                "proxy_offering, so no proxy can be built for it"
+            )
+    return warnings
+
+
 def plan_all(
     spec: PlatformSpec,
     state: ActualState,
@@ -447,11 +543,18 @@ def plan_all(
         namespace=namespace,
         capacity_actions=capacity.actions,
     )
-    routes = plan_routes(spec, state, model_actions=models, namespace=namespace)
+    proxies = plan_proxies(spec, state)
+    routes = plan_routes(
+        spec, state, model_actions=models, proxy_actions=proxies, namespace=namespace
+    )
 
     return Plan(
-        actions=[*capacity.actions, *models, *routes],
-        warnings=[*capacity.warnings, *model_warnings],
+        actions=[*capacity.actions, *models, *proxies, *routes],
+        warnings=[
+            *capacity.warnings,
+            *model_warnings,
+            *proxy_warnings(spec, state),
+        ],
         notes=capacity.notes,
     )
 

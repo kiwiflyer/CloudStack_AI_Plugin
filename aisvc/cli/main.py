@@ -27,6 +27,7 @@ from aisvc.batch.runner import (
 from aisvc.cloudstack import CloudStackClient, CloudStackError, Credentials
 from aisvc.db import Base, RunLog, UsageStore, create_session_factory, session_scope
 from aisvc.db.tier2 import AdapterStore, BatchStore, ExposureStore
+from aisvc.endpoints.proxy import ProxyProvisioner, observe_proxies
 from aisvc.inventory import take_snapshot
 from aisvc.k8s import DEFAULT_NAMESPACE
 from aisvc.k8s.client import (
@@ -150,6 +151,30 @@ def _cluster() -> ClusterKubernetes:
     return ClusterKubernetes(kubeconfig=os.environ.get("KUBECONFIG") or None)
 
 
+def _stored_exposures() -> list[Any]:
+    """Private endpoints, from the database.
+
+    Read here rather than passed in because `observe` is where every
+    other piece of actual state is gathered, and a plan drawn without
+    them would re-publish every private deployment.
+    """
+    try:
+        factory = create_session_factory()
+        with session_scope(factory) as session:
+            return list(ExposureStore(session).all())
+    except Exception as exc:
+        # Deliberately not "assume none". Without the exposures the
+        # plan would propose re-publishing every private deployment,
+        # which is the opposite of what the operator asked for and
+        # would read as a routine route change.
+        err.print(
+            "[bold red]Cannot read private endpoints:[/bold red] "
+            f"{exc}\nObserving needs AISVC_DATABASE_URL; without it a plan "
+            "would wrongly re-publish private deployments."
+        )
+        raise typer.Exit(code=1) from exc
+
+
 async def _observe(spec: PlatformSpec) -> ActualState:
     """Read CloudStack capacity and the cluster's serving workloads."""
     credentials = _credentials()
@@ -166,6 +191,48 @@ async def _observe(spec: PlatformSpec) -> ActualState:
         route_hash=observe_route_hash(cluster, namespace=namespace),
         weights=observe_weights(cluster, namespace=namespace),
         health=await _observe_health({model for model, _ in deployments}),
+        exposures=tuple(_stored_exposures()),
+        proxies=await observe_proxies(client),
+    )
+
+
+async def _proxy_provisioner(client: Any, spec: PlatformSpec, session: Any) -> Any:
+    """The per-tenant proxy provisioner, where the zone configures one.
+
+    Returns None when no zone sets `proxy_template` and
+    `proxy_offering`: the planner warns about that and plans nothing,
+    so there is nothing for a provisioner to do.
+    """
+    zone = spec.document.zones[0] if spec.document.zones else None
+    if zone is None or not zone.proxy_template or not zone.proxy_offering:
+        return None
+
+    zones = await client.call_paged("listZones", "zone", name=zone.cloudstack_zone)
+    templates = await client.call_paged(
+        "listTemplates",
+        "template",
+        templatefilter="executable",
+        name=zone.proxy_template,
+    )
+    offerings = await client.call_paged(
+        "listServiceOfferings", "serviceoffering", name=zone.proxy_offering
+    )
+    if not (zones and templates and offerings):
+        err.print(
+            "[yellow]Private endpoints:[/yellow] the zone's proxy_template or "
+            "proxy_offering was not found in CloudStack; proxies will not be built."
+        )
+        return None
+
+    return ProxyProvisioner(
+        client,
+        zone_id=str(zones[0]["id"]),
+        template_id=str(templates[0]["id"]),
+        offering_id=str(offerings[0]["id"]),
+        gateway_host=os.environ.get(
+            "AISVC_GATEWAY_SERVICE", "aisvc-gateway.aisvc-serving.svc.cluster.local"
+        ),
+        exposures_for=_exposures_for(session),
     )
 
 
@@ -244,7 +311,12 @@ async def _apply(
                     adapters_for=_adapters_for(session),
                     exposures_for=_exposures_for(session),
                 )
-                executor = Executor(provisioner, RunLog(session), deployer=deployer)
+                executor = Executor(
+                    provisioner,
+                    RunLog(session),
+                    deployer=deployer,
+                    proxies=await _proxy_provisioner(client, spec, session),
+                )
                 run = await executor.execute(computed, zone=zone, dry_run=dry_run)
                 return run.id, run.status.value
 

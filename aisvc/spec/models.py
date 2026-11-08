@@ -36,6 +36,12 @@ class Zone(Base):
     name: Name
     cloudstack_zone: str
     cks_cluster: str
+    #: Template and offering for per-tenant gateway proxies (SPEC.md
+    #: section 8). Optional: a platform with no private endpoints needs
+    #: neither, and planning one without them warns rather than failing
+    #: at execute time with a CloudStack error nobody can act on.
+    proxy_template: str = ""
+    proxy_offering: str = ""
 
 
 class GpuClass(Base):

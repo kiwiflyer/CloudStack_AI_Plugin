@@ -1511,3 +1511,78 @@ meant to take away.
   than produced, and the guard model is not called.
 - **No v2 command reaches CloudStack**, and the batch worker still has
   no leader election.
+
+## Milestone 9 — wiring the proxy provisioner
+
+**Status:** the reconciler plans, creates and destroys per-tenant proxy
+VMs. Creating an exposure now brings the proxy up and takes the
+deployment off the public gateway, in that order.
+
+1471 Python tests, 399 Java, 21 Go, 86 Vitest.
+
+### Ordering was the substance
+
+The previous commit left an asymmetry worth naming: an exposure
+de-published a deployment immediately and the proxy came up on some
+later reconcile, so a tenant could be left with no route at all.
+
+`plan_routes` now depends on the proxy **creates**, so the gateway
+config is not rewritten until the private route exists. Deletes
+deliberately do not block it: removing an exposure re-publishes the
+model, and that should not wait on tearing a VM down.
+
+### Where a proxy comes from
+
+`Zone` gained `proxy_template` and `proxy_offering`, both optional. A
+platform with no private endpoints needs neither; one that has an
+exposure but no template gets a **warning and no action**, because
+planning a VM with no template would fail at execute time with a
+CloudStack error an operator cannot act on.
+
+Only names this engine would have minted are ours to delete. A VM on
+the same network that someone else created is not ours to expunge,
+however much it resembles one — matched on the `aisvc-gw-` prefix, the
+same rule GPU nodes follow.
+
+### A missing exposure is an error, not an empty plan
+
+`aisvc plan --observe` now reads exposures from the database, so it
+needs `AISVC_DATABASE_URL` where it did not before. If it cannot, it
+**fails** rather than assuming there are none: a plan drawn without
+them would propose re-publishing every private deployment, and it would
+read as a routine route change on the way past.
+
+The same reasoning shapes `ensure_named`: a proxy name with no exposure
+behind it raises rather than doing nothing, because a green run that
+built no proxy leaves the tenant without the endpoint they asked for
+and nobody any the wiser.
+
+### Executor
+
+`Executor` now takes an optional `proxies` provisioner, and its node
+provisioner became optional too — a proxy-only plan has no GPU work.
+A proxy action with no provisioner **fails the action**: a plan that
+prints a proxy and quietly skips it is worse than one that stops,
+because the operator would believe it was built.
+
+### Verified
+
+A rendered plan against the example spec: one `endpoint-proxy` create,
+the gateway config updating after it, and a second apply planning
+nothing.
+
+### What is still not true
+
+- **No CloudStack has run this.** The provisioner is tested against a
+  fake; `deployVirtualMachine` with `networkids` on a tenant tier has
+  not been executed against a real management server, and neither has
+  the template and offering lookup.
+- **`aisvc-fetch-cert` does not exist.** The proxy's cloud-init calls
+  it; nothing implements it, no endpoint serves certificate material by
+  id, and no certificate is stored or renewed.
+- **The proxy image does not exist.** `proxy_template` names a template
+  nothing builds — there is no Packer definition for it beside the GPU
+  node's.
+- **Adapter artefacts are not fetched**, evaluations are judged rather
+  than produced, the guard model is not called, no v2 command reaches
+  CloudStack, and the batch worker has no leader election.

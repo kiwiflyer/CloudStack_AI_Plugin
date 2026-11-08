@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aisvc.autoscale import Metrics
 from aisvc.inventory import CapacitySnapshot
@@ -48,6 +48,10 @@ class ActualState:
     weights: dict[str, dict[str, int]] = field(default_factory=dict)
     #: Prometheus signals per model, where they have been observed.
     health: dict[str, DeploymentHealth] = field(default_factory=dict)
+    #: How deployments are exposed, from the database (SPEC.md section 8).
+    exposures: tuple[Any, ...] = ()
+    #: Per-tenant gateway proxy VMs that exist, by name.
+    proxies: dict[str, str] = field(default_factory=dict)
     observed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def deployment(self, model: str, colour: str) -> DeployedModel | None:

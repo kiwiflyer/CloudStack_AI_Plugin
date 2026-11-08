@@ -15,6 +15,12 @@ zones:
   - name: zone-east-1
     cloudstack_zone: "East-1"
     cks_cluster: aisvc-east-1
+    # Per-tenant gateway proxies for private endpoints
+    # (SPEC.md section 8). Only needed where tenants attach an
+    # endpoint to their own VPC tier; without both, the planner
+    # warns and builds none.
+    proxy_template: aisvc-proxy-1.0
+    proxy_offering: Small Instance
 
 gpuClasses:
   - name: h100-8x

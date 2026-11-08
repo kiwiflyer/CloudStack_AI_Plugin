@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 import yaml
 
 from aisvc.endpoints import EndpointExposure, TlsSource
@@ -442,3 +443,88 @@ class TestProvisioningTheProxy:
         await self.provisioner(client).remove(self.plan())
 
         assert "destroyVirtualMachine" not in client.commands()
+
+
+class TestNameBasedProvisioning:
+    """The executor knows an action's name, not its plan, so the
+    provisioner has to resolve one back to the other."""
+
+    def provisioner(self, client: Any, exposures: Any = ()) -> Any:
+        from aisvc.endpoints.proxy import ProxyProvisioner
+
+        return ProxyProvisioner(
+            client,
+            zone_id="zone-1",
+            template_id="tmpl-1",
+            offering_id="off-1",
+            gateway_host="gw.aisvc.svc.cluster.local",
+            exposures_for=lambda: exposures,
+        )
+
+    async def test_a_named_create_finds_its_exposure(self) -> None:
+        from aisvc.endpoints.proxy import proxy_name
+
+        client = FakeCloudStack()
+        name = proxy_name("acme", BASE)
+
+        await self.provisioner(client, (exposure(),)).ensure_named(name)
+
+        assert client.params_for("deployVirtualMachine")["name"] == name
+
+    async def test_a_name_with_no_exposure_is_an_error(self) -> None:
+        """Silently doing nothing would leave the run green and the
+        tenant without the endpoint they asked for."""
+        client = FakeCloudStack()
+
+        from aisvc.endpoints.proxy import ProxyError
+
+        with pytest.raises(ProxyError, match="no private endpoint"):
+            await self.provisioner(client, ()).ensure_named("aisvc-gw-ghost-model")
+
+    async def test_a_named_delete_does_not_need_an_exposure(self) -> None:
+        """By the time a proxy is removed its exposure is already gone;
+        the name is all there is to go on."""
+        from aisvc.endpoints.proxy import proxy_name
+
+        name = proxy_name("acme", BASE)
+        client = FakeCloudStack(existing=[{"id": "vm-1", "name": name}])
+
+        await self.provisioner(client, ()).remove_named(name)
+
+        assert "destroyVirtualMachine" in client.commands()
+
+    async def test_the_names_it_reports_are_what_it_touched(self) -> None:
+        from aisvc.endpoints.proxy import proxy_name
+
+        client = FakeCloudStack()
+        name = proxy_name("acme", BASE)
+
+        assert await self.provisioner(client, (exposure(),)).ensure_named(name) == [name]
+
+
+class TestObservingProxies:
+    async def test_existing_proxies_are_listed_by_name(self) -> None:
+        from aisvc.endpoints.proxy import observe_proxies, proxy_name
+
+        name = proxy_name("acme", BASE)
+        client = FakeCloudStack(existing=[{"id": "vm-1", "name": name}])
+
+        assert await observe_proxies(client) == {name: "vm-1"}
+
+    async def test_other_machines_are_ignored(self) -> None:
+        """GPU nodes and tenant VMs share the account; only ours count."""
+        from aisvc.endpoints.proxy import observe_proxies
+
+        client = FakeCloudStack(
+            existing=[
+                {"id": "vm-1", "name": "aisvc-h100-pool-001"},
+                {"id": "vm-2", "name": "someones-database"},
+            ]
+        )
+
+        assert await observe_proxies(client) == {}
+
+    async def test_nothing_deployed_observes_nothing(self) -> None:
+        from aisvc.endpoints.proxy import observe_proxies
+
+        assert await observe_proxies(FakeCloudStack(existing=[])) == {}

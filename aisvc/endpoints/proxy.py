@@ -31,8 +31,10 @@ if TYPE_CHECKING:
 
 __all__ = [
     "PROXY_PORT",
+    "ProxyError",
     "ProxyPlan",
     "ProxyProvisioner",
+    "observe_proxies",
     "owned_networks",
     "plan_proxy",
     "proxy_name",
@@ -193,6 +195,10 @@ async def owned_networks(client: Any, *, account: str, domain_id: str) -> list[s
     return [str(network["id"]) for network in networks if network.get("id")]
 
 
+class ProxyError(Exception):
+    """A proxy could not be built or removed."""
+
+
 class ProxyProvisioner:
     """Creates and destroys per-tenant gateway proxies.
 
@@ -209,8 +215,12 @@ class ProxyProvisioner:
         template_id: str,
         offering_id: str,
         gateway_host: str,
+        exposures_for: Any = None,
     ) -> None:
         self.client = client
+        # How a name is resolved back to what it should be: the
+        # executor knows an action's name and nothing else.
+        self.exposures_for = exposures_for
         self.zone_id = zone_id
         self.template_id = template_id
         self.offering_id = offering_id
@@ -248,6 +258,40 @@ class ProxyProvisioner:
             startvm=True,
         )
 
+    def _plan_named(self, name: str) -> ProxyPlan | None:
+        for exposure in self.exposures_for() if self.exposures_for else ():
+            plan = plan_proxy(exposure, zone_id=self.zone_id, gateway_host=self.gateway_host)
+            if plan is not None and plan.name == name:
+                return plan
+        return None
+
+    async def ensure_named(self, name: str, *, dry_run: bool = False) -> list[str]:
+        """Build the proxy this action names.
+
+        A name with no exposure behind it raises rather than doing
+        nothing: a green run that built no proxy would leave the tenant
+        without the endpoint they asked for and nobody any the wiser.
+        """
+        plan = self._plan_named(name)
+        if plan is None:
+            raise ProxyError(
+                f"no private endpoint matches {name!r}; it may have been removed "
+                "since the plan was drawn"
+            )
+        await self.ensure(plan, dry_run=dry_run)
+        return [name]
+
+    async def remove_named(self, name: str, *, dry_run: bool = False) -> list[str]:
+        """Take away the proxy this action names.
+
+        No exposure is needed: by the time a proxy is removed its
+        exposure is already gone, so the name is all there is.
+        """
+        existing = await self._existing(name)
+        if existing is not None and not dry_run:
+            await self.client.call_async("destroyVirtualMachine", id=existing["id"], expunge=True)
+        return [name]
+
     async def remove(self, plan: ProxyPlan, *, dry_run: bool = False) -> None:
         """Take a proxy away once its exposure is gone."""
         existing = await self._existing(plan.name)
@@ -268,3 +312,17 @@ def _encode(text: str) -> str:
     from aisvc.provision.cloudinit import encode_userdata
 
     return encode_userdata(text)
+
+
+async def observe_proxies(client: Any) -> dict[str, str]:
+    """Per-tenant proxy VMs that exist, by name.
+
+    Matched on the name prefix, as GPU nodes are: a VM this engine did
+    not mint is not ours to reconcile, however much it looks like one.
+    """
+    machines = await client.call_paged("listVirtualMachines", "virtualmachine", listall=True)
+    return {
+        str(vm["name"]): str(vm["id"])
+        for vm in machines
+        if str(vm.get("name", "")).startswith(f"{NAME_PREFIX}-")
+    }

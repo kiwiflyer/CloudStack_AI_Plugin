@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from aisvc.db import ActionOutcome, ActionRecord, RunLog, RunRecord
 from aisvc.observability.metrics import record_run
@@ -84,15 +84,22 @@ class Executor:
 
     def __init__(
         self,
-        provisioner: SupportsNodeProvisioning,
+        provisioner: SupportsNodeProvisioning | None,
         run_log: RunLog,
         *,
         deployer: ServingDeployer | None = None,
+        proxies: Any = None,
         action_timeout: float = DEFAULT_ACTION_TIMEOUT,
     ) -> None:
         self.provisioner = provisioner
         self.run_log = run_log
         self.deployer = deployer
+        # Private-endpoint proxies (SPEC.md section 8). Absent where
+        # the engine has no CloudStack client; a proxy action then
+        # fails the run rather than being skipped, because a plan that
+        # prints a proxy and quietly does nothing is worse than one
+        # that stops — the operator would believe it was built.
+        self.proxies = proxies
         self.action_timeout = action_timeout
 
     async def execute(self, plan: Plan, *, zone: str, dry_run: bool = False) -> RunRecord:
@@ -162,13 +169,44 @@ class Executor:
             return self._gpu_node_handler(action)
         if action.resource_type in {"model-deployment", "gateway-config"}:
             return self._serving_handler(action)
+        if action.resource_type == "endpoint-proxy":
+            return self._proxy_handler(action)
         return None
 
-    def _gpu_node_handler(self, action: Action) -> Callable[[bool], Awaitable[list[str]]] | None:
+    def _proxy_handler(self, action: Action) -> Callable[[bool], Awaitable[list[str]]] | None:
+        proxies = self.proxies
+        if proxies is None:
+            return None
+
         if action.kind is ActionKind.CREATE:
 
             async def create(dry_run: bool) -> list[str]:
-                nodes: list[GpuNode] = await self.provisioner.create_nodes(
+                names: list[str] = await proxies.ensure_named(action.name, dry_run=dry_run)
+                return names
+
+            return create
+
+        if action.kind is ActionKind.DELETE:
+
+            async def destroy(dry_run: bool) -> list[str]:
+                names: list[str] = await proxies.remove_named(action.name, dry_run=dry_run)
+                return names
+
+            return destroy
+
+        return None
+
+    def _gpu_node_handler(self, action: Action) -> Callable[[bool], Awaitable[list[str]]] | None:
+        # None where the engine has no CloudStack client. Returning no
+        # handler fails the action with a clear message rather than
+        # raising an AttributeError mid-run.
+        if self.provisioner is None:
+            return None
+        provisioner = self.provisioner
+        if action.kind is ActionKind.CREATE:
+
+            async def create(dry_run: bool) -> list[str]:
+                nodes: list[GpuNode] = await provisioner.create_nodes(
                     action.name, action.count, dry_run=dry_run
                 )
                 return [node.name for node in nodes]
@@ -178,7 +216,7 @@ class Executor:
         if action.kind is ActionKind.DELETE:
 
             async def destroy(dry_run: bool) -> list[str]:
-                nodes: list[GpuNode] = await self.provisioner.destroy_nodes(
+                nodes: list[GpuNode] = await provisioner.destroy_nodes(
                     action.name, action.count, dry_run=dry_run
                 )
                 return [node.name for node in nodes]
