@@ -171,3 +171,46 @@ class TestExpiryAndScopes:
         )
 
         assert minted.key.parameters == {"temperature": 0.2}
+
+
+class TestKeyScopesAndAdapters:
+    """A key allowed a base is allowed that base's adapters.
+
+    The alternative is that every existing key stops working the moment
+    a tenant uploads an adapter, which would make the feature unusable.
+    It is safe because an adapter is the base plus that account's own
+    weights, and `may_use` has already established the account owns it.
+
+    A key can still be narrowed to one adapter by naming it in full.
+    """
+
+    def key(self, *models: str) -> ApiKey:
+        return ApiKey(key_id="k", account="acme", domain="/d", allowed_models=models)
+
+    def allows(self, key: ApiKey, model: str) -> bool:
+        from aisvc.gateway import key_allows
+
+        try:
+            key_allows(key, model=model, source_ip="10.0.0.1")
+        except KeyRejected:
+            return False
+        return True
+
+    def test_a_base_scoped_key_allows_its_adapters(self) -> None:
+        assert self.allows(self.key("llama"), "llama:legal-tone")
+
+    def test_it_does_not_allow_another_bases_adapters(self) -> None:
+        assert not self.allows(self.key("llama"), "gemma:legal-tone")
+
+    def test_a_key_may_be_scoped_to_one_adapter(self) -> None:
+        key = self.key("llama:legal-tone")
+
+        assert self.allows(key, "llama:legal-tone")
+        assert not self.allows(key, "llama:support")
+
+    def test_an_adapter_scoped_key_does_not_allow_the_bare_base(self) -> None:
+        """Scoping to an adapter is narrowing, not widening."""
+        assert not self.allows(self.key("llama:legal-tone"), "llama")
+
+    def test_an_unscoped_key_still_allows_everything(self) -> None:
+        assert self.allows(self.key(), "llama:anything")

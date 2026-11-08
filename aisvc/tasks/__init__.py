@@ -26,6 +26,7 @@ __all__ = [
     "endpoint_for",
     "generates_output",
     "kv_cache_multiplier",
+    "litellm_mode",
     "validate_usage",
 ]
 
@@ -95,3 +96,20 @@ def validate_usage(usage: UsageRecord, *, task: str) -> bool:
             "overcharge"
         )
     return True
+
+
+#: What `model_info.mode` must say for LiteLLM to serve each task on
+#: the right path. Vision is "chat" because OpenAI carries images
+#: inside a chat request and a mode of its own would take the model off
+#: the endpoint every existing client calls.
+LITELLM_MODES = {
+    "chat": "chat",
+    "vision-chat": "chat",
+    "embedding": "embedding",
+    "rerank": "rerank",
+}
+
+
+def litellm_mode(task: str) -> str:
+    """The proxy's routing mode for this task (ADR-0002)."""
+    return LITELLM_MODES[_known(task)]

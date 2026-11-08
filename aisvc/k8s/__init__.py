@@ -23,7 +23,7 @@ import yaml
 from aisvc.spec import engines
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
 from aisvc.spec.models import GpuClass, Model, NodePool, ServingProfile
 
@@ -100,6 +100,13 @@ class DeploymentTarget:
     serving_profile: ServingProfile | None = None
     colour: str = "blue"
     color: str = ""  # accepted spelling; `colour` is canonical
+    #: LoRA adapters to load into this process (SPEC.md section 8), as
+    #: {"name": ..., "uri": ...}. vLLM registers each as a served model
+    #: under its own name, which is what the gateway addresses.
+    adapters: tuple[Mapping[str, str], ...] = ()
+    #: Must match what adapters were validated against, or an adapter
+    #: that passed validation fails to load at request time.
+    max_lora_rank: int = 32
 
     def __post_init__(self) -> None:
         if self.color:
@@ -137,12 +144,22 @@ def _flag(name: str) -> str:
     return "--" + name.replace("_", "-")
 
 
-def engine_args(model: Model, profile: ServingProfile | None) -> list[str]:
+def engine_args(
+    model: Model,
+    profile: ServingProfile | None,
+    *,
+    adapters: Sequence[Mapping[str, str]] = (),
+    max_lora_rank: int = 32,
+) -> list[str]:
     """Engine command-line flags for one deployment.
 
     Parameters the deployment owns — tensor parallelism, context length,
     quantization — always come from the model, so a serving profile
     cannot contradict what `capacity` validated.
+
+    LoRA is off unless adapters are given: `--enable-lora` reserves
+    memory for the adapter slots whether or not any are in use, and a
+    chat deployment with no adapters should not pay for it.
     """
     allowed = engines.allowed_params(model.engine)
     if not allowed:
@@ -166,6 +183,16 @@ def engine_args(model: Model, profile: ServingProfile | None) -> list[str]:
         ]
         if model.quantization not in {"none", "bf16", "fp16"}:
             args += ["--quantization", model.quantization]
+        if adapters:
+            args += [
+                "--enable-lora",
+                "--max-lora-rank",
+                str(max_lora_rank),
+                "--max-loras",
+                str(len(adapters)),
+                "--lora-modules",
+                *[f"{a['name']}={a['uri']}" for a in adapters],
+            ]
     elif model.engine == "sglang":
         args += [
             "--tp-size",
@@ -202,7 +229,12 @@ def _container(target: DeploymentTarget) -> dict[str, Any]:
         "name": "engine",
         "image": target.image,
         "imagePullPolicy": "IfNotPresent",
-        "args": engine_args(target.model, target.serving_profile),
+        "args": engine_args(
+            target.model,
+            target.serving_profile,
+            adapters=target.adapters,
+            max_lora_rank=target.max_lora_rank,
+        ),
         "ports": [{"name": "http", "containerPort": ENGINE_PORT}],
         "env": [
             {"name": "HF_HUB_OFFLINE", "value": "1"},

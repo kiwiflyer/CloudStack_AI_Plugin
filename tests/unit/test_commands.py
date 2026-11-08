@@ -206,13 +206,14 @@ class TestAgainstTheEngine:
 
         Milestone 7 added rollouts, drain, usage and budgets; milestone 8
         added the setup wizard, scoped keys, budget writing and the
-        playground. What is left is mirroring and profile writing
-        (milestone 3's command surface) and the v2 commands.
+        playground; milestone 9 added the whole v2 surface. What is
+        left is milestone 3's: mirroring, approval, and writing serving
+        and generation profiles through the API rather than the spec.
         """
         paths = self.engine_paths()
         missing = sorted(c.name for c in V1 if c.path not in paths)
 
-        assert len(missing) == 13, (
+        assert len(missing) == 12, (
             f"{len(missing)} v1 commands still have no engine route: {missing}"
         )
 

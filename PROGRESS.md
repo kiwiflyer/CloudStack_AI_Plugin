@@ -1240,3 +1240,99 @@ commands is unchanged at 13. Nothing in the UI section exposes any of
 this either; SPEC.md section 9's v2 screens remain unbuilt.
 
 So: v2's thinking is done and tested, and v2 does not work yet.
+
+## Milestone 9 — making v2 execute
+
+**Status:** the v2 features that were decision-only now act. Five of
+six are reachable and wired end to end inside the engine; batch and
+private endpoints stop at accepted-and-stored.
+
+1371 Python tests, 399 Java, 21 Go, 86 Vitest.
+
+### Adapters are served, not just validated
+
+The full path exists now:
+
+- `POST /v1/adapters` validates and stores, against the base's *real*
+  `max_lora_rank` from its serving profile — verified against a running
+  engine, which refused rank 4096 with the example spec's limit of 64.
+- `ServingDeployer` renders `--enable-lora`, `--max-lora-rank` and
+  `--lora-modules` from the adapters belonging to each base, and the
+  CLI supplies them from the database. LoRA stays off where there are
+  none: `--enable-lora` reserves adapter slots whether or not any are
+  used.
+- `build_litellm_config` publishes each as `<base>:<adapter>` pointing
+  at the base's own deployment — one vLLM process, adapter loaded
+  inside it — with the upstream model name being the adapter's, since
+  vLLM registers every `--lora-modules` entry as a served model under
+  its own name. They follow the live colour, so a promotion does not
+  leave an adapter pointing at a retired deployment.
+- The hook refuses an adapter the caller may not see, answering exactly
+  as it would for one that does not exist. Adapter names are guessable
+  — "legal", "support" — so a 403 would enumerate other accounts'.
+- `UsageMeter` applies the premium, looking the tier up for the *base*,
+  since the catalog has never heard of `base:adapter`.
+
+**A key allowed a base is now allowed that base's adapters.** The
+alternative was that every key a tenant held stopped working the moment
+they uploaded one. It is safe because an adapter is the base plus that
+account's own weights and ownership is established separately; naming
+an adapter in full still narrows a key to it.
+
+### Embeddings and rerank are routable
+
+`model_info.mode` is what makes LiteLLM serve a model on
+`/v1/embeddings` rather than `/v1/chat/completions`; without it an
+embedding model is simply not reachable. Checked against LiteLLM's own
+config reference rather than guessed. Vision stays `chat`, because
+OpenAI carries images inside a chat request and a mode of its own would
+take the model off the endpoint every existing client calls.
+
+### The gate now blocks publishing
+
+`POST /v1/models/{model}/publish` reads the latest recorded evaluation
+and refuses on a regression, or on **no evaluation at all** — treating
+"never measured" as "no regression" would defeat the gate entirely. A
+root admin may override with a reason, which is recorded on the
+response.
+
+### Tier 2 storage
+
+Migration `0004` adds five tables. The schema-drift guard from
+milestone 8 confirms the migration and the models agree, and `alembic
+upgrade head` was run against a real database before the smoke test.
+
+`AdapterStore.visible_to` reuses `adapters.may_use` rather than
+repeating the rule — a second copy of a visibility check is a second
+place for it to go wrong — which meant typing `may_use` against a
+protocol so it accepts both the request and the stored record.
+
+### Fixtures moved to conftest
+
+Sharing the engine fixtures by import shadowed them in every test that
+requested one, which ruff caught. They live in `tests/unit/conftest.py`
+now and arrive by injection.
+
+### What is still not true
+
+- **Batch is accepted, not run.** A job is parsed, counted, stored and
+  cancellable; nothing schedules it, executes its requests, applies the
+  preemption rule or writes a result file. `should_preempt` and
+  `price_batch` remain uncalled.
+- **Private endpoints are recorded, not attached.** The exposure is
+  validated and stored; no CloudStack VPC tier is attached, no
+  per-tenant proxy is provisioned, no certificate is issued.
+- **Adapter artefacts are not fetched.** The caller supplies a `uri`;
+  nothing mirrors a LoRA from Hugging Face or verifies what is at that
+  address, so the safetensors check is on the declared file list rather
+  than on bytes.
+- **Evaluations are judged, not produced.** Nothing runs a staging
+  deployment or a benchmark; the suites are supplied by the caller.
+- **The guard model is not called.** Only the deterministic guardrails
+  fire, and the 150 ms p95 target is unmeasured.
+- **No v2 command reaches CloudStack.** The v2 commands are
+  `Release.V2` in `aisvc/api/commands.py` and the Java generator emits
+  V1 only — a deliberate boundary rather than an oversight, but it
+  means every v2 feature here is reachable through the engine API and
+  the operator CLI, and not yet through CloudMonkey, Terraform or the
+  UI. Section 9's v2 screens remain unbuilt.

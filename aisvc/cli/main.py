@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -17,6 +18,7 @@ from rich.console import Console
 from aisvc.api.client import EngineClient, EngineError
 from aisvc.cloudstack import CloudStackClient, CloudStackError, Credentials
 from aisvc.db import Base, RunLog, create_session_factory, session_scope
+from aisvc.db.tier2 import AdapterStore
 from aisvc.inventory import take_snapshot
 from aisvc.k8s import DEFAULT_NAMESPACE
 from aisvc.k8s.client import (
@@ -157,6 +159,20 @@ async def _observe(spec: PlatformSpec) -> ActualState:
     )
 
 
+def _adapters_for(session: Any) -> Callable[[str], list[dict[str, str]]]:
+    """Which adapters each base should load (SPEC.md section 8)."""
+    store = AdapterStore(session)
+
+    def lookup(base_model: str) -> list[dict[str, str]]:
+        return [
+            {"name": record.name, "uri": record.uri}
+            for record in store.all()
+            if record.base_model == base_model and record.uri
+        ]
+
+    return lookup
+
+
 async def _observe_health(models: set[str]) -> dict[str, DeploymentHealth]:
     """Read autoscaling signals, where Prometheus is configured.
 
@@ -191,8 +207,18 @@ async def _apply(
     with ZoneLeadership(engine, zone=zone, required=not dry_run):
         async with CloudStackClient(credentials) as client:
             provisioner = NodeProvisioner(client, spec, join=join)
-            deployer = ServingDeployer(_cluster(), spec, _registry(), namespace=namespace)
             with session_scope(factory) as session:
+                # Adapters come from the database, so the deployer is
+                # built inside the session: without this the LoRA args
+                # are never rendered and an uploaded adapter would be
+                # routed to a process that never loaded it.
+                deployer = ServingDeployer(
+                    _cluster(),
+                    spec,
+                    _registry(),
+                    namespace=namespace,
+                    adapters_for=_adapters_for(session),
+                )
                 executor = Executor(provisioner, RunLog(session), deployer=deployer)
                 run = await executor.execute(computed, zone=zone, dry_run=dry_run)
                 return run.id, run.status.value

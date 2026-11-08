@@ -20,7 +20,7 @@ decides what may be served, under what name, and to whom.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -30,6 +30,7 @@ __all__ = [
     "MAX_ADAPTER_BYTES",
     "AdapterRejected",
     "AdapterRequest",
+    "Owned",
     "gateway_model_name",
     "may_use",
     "price_with_premium",
@@ -166,7 +167,25 @@ def gateway_model_name(base: str, adapter: str | None) -> str:
     return f"{base}{ADAPTER_SEPARATOR}{adapter}"
 
 
-def may_use(adapter: AdapterRequest, *, account: str, domain: str, role: str) -> bool:
+class Owned(Protocol):
+    """What `may_use` needs to know about an adapter.
+
+    A protocol rather than the request type, because the same rule has
+    to apply to a stored `AdapterRecord`, and a second copy of a
+    visibility check is a second place for it to go wrong.
+    """
+
+    @property
+    def account(self) -> str: ...
+
+    @property
+    def domain(self) -> str: ...
+
+    @property
+    def shared_with_domain(self) -> bool: ...
+
+
+def may_use(adapter: Owned, *, account: str, domain: str, role: str) -> bool:
     """Whether this caller may serve requests against this adapter.
 
     An adapter belongs to the account that uploaded it. A domain admin

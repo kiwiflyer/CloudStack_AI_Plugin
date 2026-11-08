@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from sqlalchemy import create_engine
@@ -49,6 +50,16 @@ def issue(keys: KeyStore, **kw: object) -> KeySecret:
     }
     defaults.update(kw)
     return keys.issue(**defaults)  # type: ignore[arg-type]
+
+
+def _record_and_price(seen: list[str]) -> Any:
+    """Remember which model the tier was looked up for."""
+
+    def tier_for(model: str) -> Any:
+        seen.append(model)
+        return STANDARD
+
+    return tier_for
 
 
 class TestIssuing:
@@ -388,3 +399,99 @@ class TestMeteringRaisesBudgetAlerts:
         rows = usage.list_for(account="acme")
         assert len(rows) == 1
         assert rows[0].cost == 0.0
+
+
+class TestMeteringV2Shapes:
+    """Billing has to know about adapters and task types.
+
+    Both were decided in v2 modules that nothing on the billing path
+    called, so an adapter request was billed at the base rate and an
+    embedding model could be billed for output tokens it cannot
+    produce.
+    """
+
+    def meter(self, usage: UsageStore, **kw: Any) -> tuple[UsageMeter, CollectingSink]:
+        sink = CollectingSink()
+        defaults: dict[str, Any] = {
+            "tier_for": lambda _m: STANDARD,
+            "sink": sink,
+        }
+        defaults.update(kw)
+        return UsageMeter(usage, **defaults), sink
+
+    def spend(self, model: str = "llama", **kw: Any) -> UsageRecord:
+        defaults: dict[str, Any] = {
+            "account": "acme",
+            "domain": "/Customers/Acme",
+            "model": model,
+            "input_tokens": 1_000_000,
+            "output_tokens": 0,
+        }
+        defaults.update(kw)
+        return UsageRecord(**defaults)
+
+    async def test_a_plain_model_is_billed_at_its_tier(self, usage: UsageStore) -> None:
+        meter, _ = self.meter(usage)
+
+        await meter(self.spend())
+
+        assert usage.spent(account="acme") == pytest.approx(0.60)
+
+    async def test_an_adapter_adds_its_premium(self, usage: UsageStore) -> None:
+        """SPEC.md section 8: base price plus a configurable premium."""
+        meter, _ = self.meter(usage, adapter_premium=0.25)
+
+        await meter(self.spend(model="llama:legal-tone"))
+
+        assert usage.spent(account="acme") == pytest.approx(0.75)
+
+    async def test_no_premium_configured_bills_the_base_rate(self, usage: UsageStore) -> None:
+        meter, _ = self.meter(usage)
+
+        await meter(self.spend(model="llama:legal-tone"))
+
+        assert usage.spent(account="acme") == pytest.approx(0.60)
+
+    async def test_the_premium_does_not_touch_the_bare_base(self, usage: UsageStore) -> None:
+        meter, _ = self.meter(usage, adapter_premium=0.25)
+
+        await meter(self.spend(model="llama"))
+
+        assert usage.spent(account="acme") == pytest.approx(0.60)
+
+    async def test_the_adapter_is_priced_on_its_bases_tier(self, usage: UsageStore) -> None:
+        """The tier is looked up for the base, not for `base:adapter`,
+        which the catalog has never heard of."""
+        asked: list[str] = []
+        meter, _ = self.meter(
+            usage,
+            tier_for=_record_and_price(asked),
+            adapter_premium=0.25,
+        )
+
+        await meter(self.spend(model="llama:legal-tone"))
+
+        assert asked == ["llama"]
+
+    async def test_an_embedding_billed_for_output_is_refused(self, usage: UsageStore) -> None:
+        """A non-generating task reporting output tokens means
+        something upstream metered it as chat; billing it would
+        overcharge."""
+        meter, _ = self.meter(usage, task_for=lambda _m: "embedding")
+
+        with pytest.raises(ValueError, match="embedding"):
+            await meter(self.spend(output_tokens=50))
+
+    async def test_an_embedding_with_input_alone_is_billed(self, usage: UsageStore) -> None:
+        meter, _ = self.meter(usage, task_for=lambda _m: "embedding")
+
+        await meter(self.spend())
+
+        assert usage.spent(account="acme") == pytest.approx(0.60)
+
+    async def test_without_a_task_lookup_nothing_is_checked(self, usage: UsageStore) -> None:
+        meter, _ = self.meter(usage)
+
+        await meter(self.spend(output_tokens=50))
+
+        assert usage.spent(account="acme") > 0

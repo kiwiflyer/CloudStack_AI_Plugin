@@ -182,16 +182,45 @@ class UsageMeter:
         *,
         tier_for: Callable[[str], PriceTier | None],
         sink: Any,
+        adapter_premium: float = 0.0,
+        task_for: Callable[[str], str] | None = None,
     ) -> None:
         self.store = store
         self.tier_for = tier_for
         self.sink = sink
+        self.adapter_premium = adapter_premium
+        self.task_for = task_for
 
     async def __call__(self, usage: UsageRecord) -> None:
+        from aisvc.adapters import ADAPTER_SEPARATOR
+
+        # An adapter is billed on its base's tier plus a premium
+        # (SPEC.md section 8). The catalog has never heard of
+        # `base:adapter`, so the tier is looked up for the base.
+        base, separator, _ = usage.model.partition(ADAPTER_SEPARATOR)
+        tier = self.tier_for(base) or UNPRICED
+
+        if self.task_for is not None:
+            from aisvc.tasks import validate_usage
+
+            # Raises rather than recording: a non-generating task with
+            # output tokens means something upstream is metering it as
+            # chat, and writing that row would overcharge the tenant.
+            validate_usage(usage, task=self.task_for(base))
+
+        if separator and self.adapter_premium:
+            # A pydantic model, so model_copy rather than dataclasses.replace.
+            tier = tier.model_copy(
+                update={
+                    "input_per_mtok": tier.input_per_mtok * (1 + self.adapter_premium),
+                    "output_per_mtok": tier.output_per_mtok * (1 + self.adapter_premium),
+                }
+            )
+
         # Recorded first and unconditionally. Billing outranks alerting:
         # a row that is never written cannot be recovered, while a
         # missed alert is a missed alert.
-        self.store.record(usage, tier=self.tier_for(usage.model) or UNPRICED)
+        self.store.record(usage, tier=tier)
 
         state = self.store.budget_state(usage.account)
         if state is None:

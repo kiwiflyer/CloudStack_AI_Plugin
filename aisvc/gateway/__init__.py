@@ -29,8 +29,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from aisvc.adapters import ADAPTER_SEPARATOR, gateway_model_name
 from aisvc.k8s import DEFAULT_NAMESPACE, ENGINE_PORT
 from aisvc.profiles import EffectiveParams, ProfileLayer, resolve
+from aisvc.tasks import litellm_mode
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -210,6 +212,25 @@ def mint_key(
     return KeySecret(key=key, secret=secret, salt=salt, hashed=hash_secret(secret, salt=salt))
 
 
+def _scope_allows(api_key: ApiKey, model: str) -> bool:
+    """Whether a key's model scope covers this request.
+
+    A key allowed a base is allowed that base's LoRA adapters
+    (SPEC.md section 8). Otherwise every key a tenant holds would stop
+    working the moment they uploaded an adapter, which would make the
+    feature unusable — and an adapter is the base plus that account's
+    own weights, with ownership already established elsewhere.
+
+    Naming an adapter in full narrows a key to it; it never widens one,
+    so `llama:legal-tone` does not grant the bare base.
+    """
+    if model in api_key.allowed_models:
+        return True
+
+    base, separator, _ = model.partition(ADAPTER_SEPARATOR)
+    return bool(separator) and base in api_key.allowed_models
+
+
 def key_allows(api_key: ApiKey, *, model: str, source_ip: str) -> None:
     """Check a key's scopes, raising `KeyRejected` with the reason."""
     if api_key.expires_at is not None and api_key.expires_at <= datetime.now(UTC):
@@ -218,7 +239,7 @@ def key_allows(api_key: ApiKey, *, model: str, source_ip: str) -> None:
             f"key {api_key.key_id} expired at {api_key.expires_at.isoformat()}",
         )
 
-    if not api_key.allows_any_model and model not in api_key.allowed_models:
+    if not api_key.allows_any_model and not _scope_allows(api_key, model):
         allowed = ", ".join(api_key.allowed_models) or "none"
         raise KeyRejected(
             "model_not_allowed",
@@ -303,6 +324,7 @@ def build_litellm_config(
     spec: PlatformSpec,
     *,
     weights: Mapping[str, Mapping[str, int]] | None = None,
+    adapters: Sequence[Any] = (),
     namespace: str = DEFAULT_NAMESPACE,
 ) -> dict[str, Any]:
     """Render the LiteLLM proxy config from `platform.yaml`.
@@ -310,9 +332,18 @@ def build_litellm_config(
     `weights` carries the canary split per model, as
     `{"model": {"blue": 90, "green": 10}}`. A colour at weight zero is
     left out entirely rather than registered and never chosen.
+
+    `adapters` are LoRA adapters (SPEC.md section 8). Each is published
+    as `<base>:<adapter>` pointing at the base's own deployment — there
+    is one vLLM process and the adapter is loaded inside it — with the
+    upstream model name being the adapter's, because vLLM registers
+    every `--lora-modules` entry as a served model under its own name.
     """
     weights = weights or {}
     model_list: list[dict[str, Any]] = []
+    #: Where each base ended up, so adapters can follow it rather than
+    #: pointing at a colour that may since have been retired.
+    base_routes: dict[str, list[tuple[dict[str, Any], str]]] = {}
 
     for model in spec.document.models:
         split = weights.get(model.name) or {"blue": 100}
@@ -334,7 +365,44 @@ def build_litellm_config(
                     "model_info": {
                         "colour": colour,
                         "task": model.task,
+                        # Without this LiteLLM will not serve an
+                        # embedding model on /v1/embeddings at all.
+                        "mode": litellm_mode(model.task),
                         "price_tier": model.price_tier,
+                    },
+                }
+            )
+            base_routes.setdefault(model.name, []).append((params, colour))
+
+    for adapter in adapters:
+        routes = base_routes.get(adapter.base_model)
+        if not routes:
+            # Registering a route to a base that is not deployed would
+            # answer the tenant with a connection error instead of a
+            # clear "no such model".
+            continue
+        for base_params, colour in routes:
+            params = {
+                "model": f"openai/{adapter.name}",
+                "api_base": base_params["api_base"],
+                "api_key": "none",
+            }
+            if "weight" in base_params:
+                params["weight"] = base_params["weight"]
+            model_list.append(
+                {
+                    "model_name": gateway_model_name(adapter.base_model, adapter.name),
+                    "litellm_params": params,
+                    "model_info": {
+                        "colour": colour,
+                        "mode": "chat",
+                        "adapter": adapter.name,
+                        "base_model": adapter.base_model,
+                        # The hook filters by these: an adapter is
+                        # visible only to its owner (SPEC.md section 8).
+                        "account": adapter.account,
+                        "domain": adapter.domain,
+                        "shared_with_domain": bool(getattr(adapter, "shared_with_domain", False)),
                     },
                 }
             )

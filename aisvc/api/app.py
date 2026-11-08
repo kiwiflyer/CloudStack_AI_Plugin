@@ -18,9 +18,48 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from aisvc.api.deps import AdminDep, CallerDep, JobsDep, ServicesDep, SessionDep
+from aisvc.adapters import (
+    AdapterRejected,
+    AdapterRequest,
+    gateway_model_name,
+    validate_adapter,
+)
+from aisvc.api.deps import (
+    AdminDep,
+    CallerDep,
+    JobsDep,
+    Services,
+    ServicesDep,
+    SessionDep,
+)
 from aisvc.api.errors import ApiError, register_error_handlers
+from aisvc.batch import BatchRejected, parse_requests
 from aisvc.db import BudgetRecord, KeyStore, RunLog, UsageStore
+from aisvc.db.tier2 import (
+    TERMINAL_BATCH_STATES,
+    AdapterStore,
+    BatchStore,
+    EvaluationStore,
+    ExposureStore,
+    GuardrailStore,
+)
+from aisvc.endpoints import (
+    EndpointExposure,
+    ExposureRejected,
+    TlsSource,
+    describe_exposure,
+    validate_exposure,
+)
+from aisvc.evaluation import (
+    EvaluationRun,
+    GateBlocked,
+    GateDecision,
+    PerformanceResult,
+    SuiteResult,
+    gate,
+    override_gate,
+)
+from aisvc.guardrails import presets
 from aisvc.k8s.client import observe_deployments, observe_weights
 from aisvc.lifecycle import RolloutError, plan_drain, start_rollout
 from aisvc.metering import evaluate_budget
@@ -37,6 +76,9 @@ if TYPE_CHECKING:
 __all__ = ["API_VERSION", "create_app"]
 
 API_VERSION = "v1"
+#: vLLM's own default, used where no serving profile sets one.
+DEFAULT_MAX_LORA_RANK = 32
+
 PREFIX = f"/{API_VERSION}"
 
 DESCRIPTION = """
@@ -110,6 +152,158 @@ def _all_usage(session: Any) -> list[Any]:
     from aisvc.db import UsageRow
 
     return list(session.scalars(select(UsageRow).order_by(UsageRow.recorded_at)))
+
+
+class AdapterBody(BaseModel):
+    """A LoRA adapter a tenant is registering (SPEC.md section 8)."""
+
+    name: str = Field(min_length=1, max_length=255)
+    base_model: str = Field(min_length=1)
+    rank: int = Field(ge=1)
+    size_bytes: int = Field(ge=0)
+    files: list[str] = Field(default_factory=list)
+    uri: str = ""
+    shared_with_domain: bool = False
+
+
+class BatchBody(BaseModel):
+    model: str = Field(min_length=1)
+    #: The JSONL itself. Large files arrive by reference instead.
+    input: str = ""
+    input_uri: str = ""
+
+
+class GuardrailBody(BaseModel):
+    name: str = Field(min_length=1)
+    scope: str = "account"
+    target: str = ""
+    checks: dict[str, Any] | None = None
+    #: Use a shipped profile instead of spelling the checks out.
+    preset: str = ""
+
+
+class GuardrailPatch(BaseModel):
+    checks: dict[str, Any] | None = None
+    target: str | None = None
+
+
+class SuiteBody(BaseModel):
+    name: str
+    score: float
+    baseline: float | None = None
+    customer: str = ""
+
+
+class PerformanceBody(BaseModel):
+    gpu_class: str
+    ttft_p95_ms: float
+    tokens_per_second: float
+
+
+class EvaluationBody(BaseModel):
+    revision: str = Field(min_length=1)
+    suites: list[SuiteBody] = Field(default_factory=list)
+    performance: list[PerformanceBody] = Field(default_factory=list)
+
+
+class PublishBody(BaseModel):
+    price_tier: str = ""
+    #: A root admin's recorded reason for publishing past the gate.
+    override_reason: str = ""
+
+
+class PrivateEndpointBody(BaseModel):
+    deployment: str = Field(min_length=1)
+    network_id: str = ""
+    public_enabled: bool = True
+    custom_domain: str = ""
+    tls: Literal["none", "acme", "uploaded"] = "none"
+    certificate_id: str = ""
+
+
+def _max_lora_rank(services: Services, base_model: str) -> int:
+    """The serving profile's max_lora_rank for this base.
+
+    Adapters have to be validated against the same number vLLM was
+    started with, or a valid adapter fails to load at request time.
+    """
+    model = next((m for m in services.spec.document.models if m.name == base_model), None)
+    if model is None:
+        return DEFAULT_MAX_LORA_RANK
+    profile = services.spec.serving_profile_for(model)
+    if profile is None:
+        return DEFAULT_MAX_LORA_RANK
+    raw = profile.params.get("max_lora_rank", DEFAULT_MAX_LORA_RANK)
+    return int(raw) if isinstance(raw, int | float | str) else DEFAULT_MAX_LORA_RANK
+
+
+def _adapter_limit(services: Services, base_model: str) -> int:
+    model = next((m for m in services.spec.document.models if m.name == base_model), None)
+    if model is None:
+        return 20
+    return model.lora.max_adapters_per_account
+
+
+def _owned_networks(services: Services, caller: Any) -> list[str]:
+    """Networks this caller may attach to.
+
+    Supplied by the plugin, which asked CloudStack: the engine has no
+    view of a tenant's VPC tiers and must not guess at one.
+    """
+    lookup = getattr(services, "networks_for", None)
+    if lookup is None:
+        return []
+    networks: list[str] = list(lookup(caller.account, caller.domain_path))
+    return networks
+
+
+def _adapter_row(record: Any) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "name": record.name,
+        "basemodel": record.base_model,
+        "servedmodelname": gateway_model_name(record.base_model, record.name),
+        "rank": record.rank,
+        "sizebytes": record.size_bytes,
+        "account": record.account,
+        "shared": record.shared_with_domain,
+        "created": record.created_at.isoformat() if record.created_at else None,
+    }
+
+
+def _batch_row(record: Any) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "model": record.model,
+        "status": record.state,
+        "requestcount": record.request_count,
+        "account": record.account,
+        "created": record.created_at.isoformat() if record.created_at else None,
+        "finished": record.finished_at.isoformat() if record.finished_at else None,
+    }
+
+
+def _guardrail_row(record: Any) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "name": record.name,
+        "scope": record.scope,
+        "target": record.target,
+        "checks": record.checks or {},
+    }
+
+
+def _evaluation_row(record: Any) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "model": record.model,
+        "revision": record.revision,
+        "passed": record.passed,
+        "overridden": record.overridden,
+        "summary": record.summary,
+        "regressions": record.suites or [],
+        "performance": record.performance or [],
+    }
 
 
 def create_app(services: Services) -> FastAPI:
@@ -749,6 +943,360 @@ def _register_routes(app: FastAPI) -> None:
         session.delete(record)
         session.flush()
         return {"account": account, "deleted": True}
+
+    # -- tier 2: adapters -------------------------------------------------
+
+    @app.post(f"{PREFIX}/adapters", tags=["adapters"], summary="Upload a LoRA adapter")
+    async def upload_adapter(
+        caller: CallerDep, session: SessionDep, services: ServicesDep, body: AdapterBody
+    ) -> dict[str, Any]:
+        """Register a tenant's adapter (SPEC.md section 8).
+
+        Validated here rather than at load time because every one of
+        these failures is otherwise silent until the first request.
+        """
+        store = AdapterStore(session)
+        request = AdapterRequest(
+            name=body.name,
+            base_model=body.base_model,
+            account=caller.account,
+            domain=caller.domain_path,
+            rank=body.rank,
+            size_bytes=body.size_bytes,
+            files=tuple(body.files),
+            shared_with_domain=body.shared_with_domain,
+        )
+
+        try:
+            validate_adapter(
+                request,
+                bases=[m.name for m in services.spec.document.models],
+                max_lora_rank=_max_lora_rank(services, body.base_model),
+                max_adapters_per_account=_adapter_limit(services, body.base_model),
+                existing=len(store.list_for(account=caller.account, domain=caller.domain_path)),
+            )
+        except AdapterRejected as exc:
+            raise ApiError(status.HTTP_400_BAD_REQUEST, exc.detail, code=exc.reason) from exc
+
+        record = store.add(request, uri=body.uri)
+        return _adapter_row(record)
+
+    @app.get(f"{PREFIX}/adapters", tags=["adapters"], summary="List LoRA adapters")
+    async def list_adapters(caller: CallerDep, session: SessionDep) -> dict[str, Any]:
+        rows = [
+            _adapter_row(record)
+            for record in AdapterStore(session).visible_to(
+                account=caller.account, domain=caller.domain_path, role=caller.role.value
+            )
+        ]
+        return {"count": len(rows), "adapters": rows}
+
+    @app.delete(f"{PREFIX}/adapters/{{adapter_id}}", tags=["adapters"], summary="Delete an adapter")
+    async def delete_adapter(
+        adapter_id: str, caller: CallerDep, session: SessionDep
+    ) -> dict[str, Any]:
+        store = AdapterStore(session)
+        record = store.get(adapter_id)
+        # Someone else's adapter answers as a missing one: the names
+        # are guessable and a 403 would confirm which exist.
+        if record is None or not caller.may_see(account=record.account, domain_path=record.domain):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such adapter: {adapter_id}",
+                code="adapter_not_found",
+            )
+        store.delete(record)
+        return {"id": adapter_id, "deleted": True}
+
+    # -- tier 2: batches --------------------------------------------------
+
+    @app.post(f"{PREFIX}/batches", tags=["batches"], summary="Submit a batch")
+    async def create_batch(
+        caller: CallerDep, session: SessionDep, services: ServicesDep, body: BatchBody
+    ) -> dict[str, Any]:
+        """Accept a JSONL batch (SPEC.md section 8)."""
+        if not any(m.name == body.model for m in services.spec.document.models):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such model: {body.model}",
+                code="model_not_found",
+            )
+
+        try:
+            requests = parse_requests(body.input)
+        except BatchRejected as exc:
+            raise ApiError(status.HTTP_400_BAD_REQUEST, exc.detail, code=exc.reason) from exc
+
+        record = BatchStore(session).add(
+            account=caller.account,
+            domain=caller.domain_path,
+            model=body.model,
+            request_count=len(requests),
+            input_uri=body.input_uri,
+        )
+        return _batch_row(record)
+
+    @app.get(f"{PREFIX}/batches", tags=["batches"], summary="List batches")
+    async def list_batches(caller: CallerDep, session: SessionDep) -> dict[str, Any]:
+        rows = [
+            _batch_row(record)
+            for record in BatchStore(session).all()
+            if caller.may_see(account=record.account, domain_path=record.domain)
+        ]
+        return {"count": len(rows), "batches": rows}
+
+    @app.post(f"{PREFIX}/batches/{{batch_id}}/cancel", tags=["batches"], summary="Cancel a batch")
+    async def cancel_batch(batch_id: str, caller: CallerDep, session: SessionDep) -> dict[str, Any]:
+        store = BatchStore(session)
+        record = store.get(batch_id)
+        if record is None or not caller.may_see(account=record.account, domain_path=record.domain):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such batch: {batch_id}",
+                code="batch_not_found",
+            )
+        if record.state in TERMINAL_BATCH_STATES:
+            raise ApiError(
+                status.HTTP_409_CONFLICT,
+                f"this batch is already {record.state} and cannot be cancelled",
+                code="batch_not_cancellable",
+            )
+        store.cancel(record)
+        return _batch_row(record)
+
+    # -- tier 2: guardrail profiles ---------------------------------------
+
+    @app.post(
+        f"{PREFIX}/profiles/guardrail",
+        tags=["profiles"],
+        summary="Create a guardrail profile",
+    )
+    async def create_guardrail_profile(
+        _: AdminDep, session: SessionDep, body: GuardrailBody
+    ) -> dict[str, Any]:
+        """Admin only: a guardrail an account can remove is not one."""
+        checks = body.checks
+        if body.preset:
+            available = presets()
+            if body.preset not in available:
+                raise ApiError(
+                    status.HTTP_404_NOT_FOUND,
+                    f"no such guardrail preset: {body.preset}",
+                    code="preset_not_found",
+                )
+            checks = {
+                name: check.model_dump(exclude_none=True)
+                for name, check in available[body.preset].items()
+            }
+
+        record = GuardrailStore(session).add(
+            name=body.name, scope=body.scope, target=body.target, checks=checks or {}
+        )
+        return _guardrail_row(record)
+
+    @app.get(f"{PREFIX}/profiles/guardrail", tags=["profiles"], summary="List guardrail profiles")
+    async def list_guardrail_profiles(_: AdminDep, session: SessionDep) -> dict[str, Any]:
+        rows = [_guardrail_row(r) for r in GuardrailStore(session).all()]
+        return {"count": len(rows), "profiles": rows}
+
+    @app.patch(
+        f"{PREFIX}/profiles/guardrail/{{profile_id}}",
+        tags=["profiles"],
+        summary="Update a guardrail profile",
+    )
+    async def update_guardrail_profile(
+        profile_id: str, _: AdminDep, session: SessionDep, body: GuardrailPatch
+    ) -> dict[str, Any]:
+        store = GuardrailStore(session)
+        record = store.get(profile_id)
+        if record is None:
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such guardrail profile: {profile_id}",
+                code="profile_not_found",
+            )
+        store.update(record, checks=body.checks, target=body.target)
+        return _guardrail_row(record)
+
+    @app.delete(
+        f"{PREFIX}/profiles/guardrail/{{profile_id}}",
+        tags=["profiles"],
+        summary="Delete a guardrail profile",
+    )
+    async def delete_guardrail_profile(
+        profile_id: str, _: AdminDep, session: SessionDep
+    ) -> dict[str, Any]:
+        store = GuardrailStore(session)
+        record = store.get(profile_id)
+        if record is None:
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such guardrail profile: {profile_id}",
+                code="profile_not_found",
+            )
+        store.delete(record)
+        return {"id": profile_id, "deleted": True}
+
+    # -- tier 2: evaluations ----------------------------------------------
+
+    @app.post(
+        f"{PREFIX}/models/{{model_name}}/evaluations",
+        tags=["models"],
+        summary="Record an evaluation",
+    )
+    async def run_evaluation(
+        model_name: str,
+        _: AdminDep,
+        session: SessionDep,
+        services: ServicesDep,
+        body: EvaluationBody,
+    ) -> dict[str, Any]:
+        """Judge a staging evaluation (SPEC.md section 8).
+
+        The suites are produced elsewhere; this applies the gate and
+        records the verdict against the catalog entry.
+        """
+        if not any(m.name == model_name for m in services.spec.document.models):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such model: {model_name}",
+                code="model_not_found",
+            )
+
+        decision = gate(
+            EvaluationRun(
+                model=model_name,
+                revision=body.revision,
+                suites=tuple(SuiteResult(**suite.model_dump()) for suite in body.suites),
+                performance=tuple(PerformanceResult(**p.model_dump()) for p in body.performance),
+            )
+        )
+        record = EvaluationStore(session).add(model_name, body.revision, decision)
+        return _evaluation_row(record)
+
+    @app.get(
+        f"{PREFIX}/models/{{model_name}}/evaluations",
+        tags=["models"],
+        summary="List evaluations",
+    )
+    async def list_evaluations(model_name: str, _: AdminDep, session: SessionDep) -> dict[str, Any]:
+        rows = [_evaluation_row(r) for r in EvaluationStore(session).for_model(model_name)]
+        return {"count": len(rows), "evaluations": rows}
+
+    @app.post(
+        f"{PREFIX}/models/{{model_name}}/publish",
+        tags=["models"],
+        summary="Publish a model to tenants",
+    )
+    async def publish_model(
+        model_name: str,
+        caller: AdminDep,
+        session: SessionDep,
+        services: ServicesDep,
+        body: PublishBody,
+    ) -> dict[str, Any]:
+        """Publish, if the evaluation gate allows it (SPEC.md section 8).
+
+        A model with no evaluation at all is refused: an unevaluated
+        revision is exactly what the gate exists to stop, and treating
+        "never measured" as "no regression" would defeat it.
+        """
+        if not any(m.name == model_name for m in services.spec.document.models):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such model: {model_name}",
+                code="model_not_found",
+            )
+
+        latest = EvaluationStore(session).latest(model_name)
+        if latest is None:
+            raise ApiError(
+                status.HTTP_409_CONFLICT,
+                f"{model_name} has never been evaluated; run an evaluation before publishing it",
+                code="not_evaluated",
+            )
+
+        decision = GateDecision(
+            passed=latest.passed,
+            summary=latest.summary,
+            overridden=latest.overridden,
+        )
+        if not decision.passed:
+            if not body.override_reason or not body.override_reason.strip():
+                raise ApiError(
+                    status.HTTP_409_CONFLICT,
+                    latest.summary,
+                    code="evaluation_regressed",
+                )
+            try:
+                decision = override_gate(
+                    decision, role=caller.role.value, reason=body.override_reason
+                )
+            except GateBlocked as exc:
+                raise ApiError(status.HTTP_409_CONFLICT, str(exc), code="override_refused") from exc
+
+        return {
+            "model": model_name,
+            "published": True,
+            "pricetier": body.price_tier,
+            "overridden": decision.overridden,
+            "summary": decision.summary,
+        }
+
+    # -- tier 2: private endpoints ----------------------------------------
+
+    @app.post(
+        f"{PREFIX}/endpoints/private",
+        tags=["deployments"],
+        summary="Attach a private endpoint",
+    )
+    async def create_private_endpoint(
+        caller: CallerDep,
+        session: SessionDep,
+        services: ServicesDep,
+        body: PrivateEndpointBody,
+    ) -> dict[str, Any]:
+        exposure = EndpointExposure(
+            deployment=body.deployment,
+            account=caller.account,
+            domain=caller.domain_path,
+            public_enabled=body.public_enabled,
+            network_id=body.network_id,
+            custom_domain=body.custom_domain,
+            tls=TlsSource(body.tls),
+            certificate_id=body.certificate_id,
+        )
+
+        try:
+            validate_exposure(exposure, owned_networks=_owned_networks(services, caller))
+        except ExposureRejected as exc:
+            raise ApiError(status.HTTP_400_BAD_REQUEST, exc.detail, code=exc.reason) from exc
+
+        record = ExposureStore(session).add(exposure)
+        return {
+            "id": record.id,
+            "deployment": record.deployment,
+            "exposure": describe_exposure(exposure),
+        }
+
+    @app.delete(
+        f"{PREFIX}/endpoints/private/{{exposure_id}}",
+        tags=["deployments"],
+        summary="Remove a private endpoint",
+    )
+    async def delete_private_endpoint(
+        exposure_id: str, caller: CallerDep, session: SessionDep
+    ) -> dict[str, Any]:
+        store = ExposureStore(session)
+        record = store.get(exposure_id)
+        if record is None or not caller.may_see(account=record.account, domain_path=record.domain):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such private endpoint: {exposure_id}",
+                code="exposure_not_found",
+            )
+        store.delete(record)
+        return {"id": exposure_id, "deleted": True}
 
     # -- profiles ---------------------------------------------------------
 

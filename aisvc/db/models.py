@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
@@ -31,9 +32,14 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 __all__ = [
     "ActionOutcome",
     "ActionRecord",
+    "AdapterRecord",
     "ApiKeyRecord",
     "Base",
+    "BatchRecord",
     "BudgetRecord",
+    "EvaluationRecord",
+    "GuardrailProfileRecord",
+    "PrivateEndpointRecord",
     "RunRecord",
     "RunStatus",
     "UsageRow",
@@ -191,3 +197,88 @@ class BudgetRecord(Base):
     on_exceed: Mapped[str] = mapped_column(String(16), default="alert")
     notified: Mapped[list[int]] = mapped_column(JsonColumn, default=list)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AdapterRecord(Base):
+    """A tenant's LoRA adapter (SPEC.md section 8).
+
+    Owned by an (account, domain) pair, not an account name: CloudStack
+    account names are unique only within a domain.
+    """
+
+    __tablename__ = "aisvc_adapter"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    base_model: Mapped[str] = mapped_column(String(255), index=True)
+    account: Mapped[str] = mapped_column(String(255), index=True)
+    domain: Mapped[str] = mapped_column(String(255), index=True)
+    rank: Mapped[int] = mapped_column(Integer)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    uri: Mapped[str] = mapped_column(String(1024))
+    shared_with_domain: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BatchRecord(Base):
+    """A submitted batch job (SPEC.md section 8)."""
+
+    __tablename__ = "aisvc_batch"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    account: Mapped[str] = mapped_column(String(255), index=True)
+    domain: Mapped[str] = mapped_column(String(255), index=True)
+    model: Mapped[str] = mapped_column(String(255))
+    state: Mapped[str] = mapped_column(String(16), default="validating", index=True)
+    request_count: Mapped[int] = mapped_column(Integer, default=0)
+    input_uri: Mapped[str] = mapped_column(String(1024), default="")
+    output_uri: Mapped[str] = mapped_column(String(1024), default="")
+    error_text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EvaluationRecord(Base):
+    """One pre-publish evaluation of a model revision (SPEC.md section 8)."""
+
+    __tablename__ = "aisvc_evaluation"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    model: Mapped[str] = mapped_column(String(255), index=True)
+    revision: Mapped[str] = mapped_column(String(64), index=True)
+    passed: Mapped[bool] = mapped_column(Boolean, default=False)
+    overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    suites: Mapped[list[dict[str, object]]] = mapped_column(JsonColumn, default=list)
+    performance: Mapped[list[dict[str, object]]] = mapped_column(JsonColumn, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GuardrailProfileRecord(Base):
+    """A guardrail profile and where it is bound (SPEC.md sections 6, 8)."""
+
+    __tablename__ = "aisvc_guardrail_profile"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    scope: Mapped[str] = mapped_column(String(32), default="account")
+    target: Mapped[str] = mapped_column(String(255), default="", index=True)
+    checks: Mapped[dict[str, object]] = mapped_column(JsonColumn, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PrivateEndpointRecord(Base):
+    """How one deployment is exposed (SPEC.md section 8)."""
+
+    __tablename__ = "aisvc_private_endpoint"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    deployment: Mapped[str] = mapped_column(String(255), index=True)
+    account: Mapped[str] = mapped_column(String(255), index=True)
+    domain: Mapped[str] = mapped_column(String(255), index=True)
+    network_id: Mapped[str] = mapped_column(String(36), default="")
+    public_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    custom_domain: Mapped[str] = mapped_column(String(255), default="")
+    tls: Mapped[str] = mapped_column(String(16), default="none")
+    certificate_id: Mapped[str] = mapped_column(String(36), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

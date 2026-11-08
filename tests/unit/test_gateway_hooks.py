@@ -50,6 +50,16 @@ def hook(model: str = "llama-3.3-70b-instruct") -> AisvcEnforcement:
     return AisvcEnforcement(resolve_context=lambda _key, _data: context_for(model))
 
 
+def _record_name(seen: list[str]) -> Any:
+    """Remember which adapter name was looked up, and find none."""
+
+    def lookup(name: str) -> None:
+        seen.append(name)
+        return None
+
+    return lookup
+
+
 class TestPreCallHook:
     async def test_it_applies_the_resolved_parameters(self) -> None:
         data: dict[str, Any] = {"model": "llama-3.3-70b-instruct", "temperature": 1.9}
@@ -487,3 +497,97 @@ class TestGuardrailsOnThePath:
             )
 
         assert caught.value.code == "model_not_allowed"
+
+
+class TestAdapterVisibility:
+    """An adapter is visible only to its owner (SPEC.md section 8).
+
+    The gateway config publishes every adapter as `<base>:<adapter>`,
+    so without this any tenant could address another's by name — and
+    adapter names are guessable, being things like "legal" and
+    "support".
+    """
+
+    def adapter(self, **kw: Any) -> Any:
+        from aisvc.adapters import AdapterRequest
+
+        defaults: dict[str, Any] = {
+            "name": "legal-tone",
+            "base_model": "llama-3.3-70b-instruct",
+            "account": "acme",
+            "domain": "/Customers/Acme",
+            "rank": 16,
+            "size_bytes": 1024,
+            "files": ("adapter_model.safetensors", "adapter_config.json"),
+        }
+        defaults.update(kw)
+        return AdapterRequest(**defaults)
+
+    def hook_for(self, adapter: Any) -> AisvcEnforcement:
+        return AisvcEnforcement(
+            resolve_context=lambda _k, _d: context_for("llama-3.3-70b-instruct:legal-tone"),
+            lookup_adapter=lambda _name: adapter,
+        )
+
+    async def call(self, hook: AisvcEnforcement) -> dict[str, Any]:
+        return await hook.async_pre_call_hook(
+            None,
+            None,
+            {"model": "llama-3.3-70b-instruct:legal-tone"},
+            "completion",
+        )
+
+    async def test_the_owner_may_use_their_adapter(self) -> None:
+        assert await self.call(self.hook_for(self.adapter()))
+
+    async def test_another_tenant_may_not(self) -> None:
+        hook = self.hook_for(self.adapter(account="other", domain="/Customers/Other"))
+
+        with pytest.raises(HttpError) as caught:
+            await self.call(hook)
+
+        assert caught.value.status_code == 404
+
+    async def test_the_refusal_does_not_confirm_it_exists(self) -> None:
+        """A 403 would tell a tenant which adapters other accounts have,
+        and the names are guessable."""
+        hook = self.hook_for(self.adapter(account="other", domain="/Customers/Other"))
+
+        with pytest.raises(HttpError) as caught:
+            await self.call(hook)
+
+        assert caught.value.code == "model_not_found"
+
+    async def test_an_unknown_adapter_is_refused_the_same_way(self) -> None:
+        hook = AisvcEnforcement(
+            resolve_context=lambda _k, _d: context_for("llama-3.3-70b-instruct:ghost"),
+            lookup_adapter=lambda _name: None,
+        )
+
+        with pytest.raises(HttpError) as caught:
+            await hook.async_pre_call_hook(
+                None, None, {"model": "llama-3.3-70b-instruct:ghost"}, "completion"
+            )
+
+        assert caught.value.code == "model_not_found"
+
+    async def test_a_plain_model_is_not_looked_up(self) -> None:
+        """Only a `<base>:<adapter>` name is an adapter request."""
+        looked_up: list[str] = []
+        hook = AisvcEnforcement(
+            resolve_context=lambda _k, _d: context_for(),
+            lookup_adapter=_record_name(looked_up),
+        )
+
+        await hook.async_pre_call_hook(
+            None, None, {"model": "llama-3.3-70b-instruct"}, "completion"
+        )
+
+        assert looked_up == []
+
+    async def test_without_a_lookup_nothing_is_checked(self) -> None:
+        hook = AisvcEnforcement(
+            resolve_context=lambda _k, _d: context_for("llama-3.3-70b-instruct:legal-tone")
+        )
+
+        assert await self.call(hook)

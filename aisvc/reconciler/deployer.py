@@ -10,7 +10,7 @@ anything else.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -29,6 +29,7 @@ from aisvc.reconciler.plan import route_config_hash
 if TYPE_CHECKING:
     from aisvc.registry import ModelRegistry
     from aisvc.spec import PlatformSpec
+    from aisvc.spec.models import ServingProfile
 
 __all__ = [
     "GATEWAY_CONFIGMAP",
@@ -55,11 +56,17 @@ class ServingDeployer:
         registry: ModelRegistry,
         *,
         namespace: str = DEFAULT_NAMESPACE,
+        adapters_for: Callable[[str], Sequence[Mapping[str, str]]] | None = None,
     ) -> None:
         self.cluster = cluster
         self.spec = spec
         self.registry = registry
         self.namespace = namespace
+        # Supplied by the caller, which has the database; the deployer
+        # has no session of its own. Without it no adapter is loaded,
+        # and a gateway route to an adapter the engine never loaded
+        # answers with a 404 the tenant cannot explain.
+        self.adapters_for = adapters_for
 
     def _target_for(self, name: str) -> DeploymentTarget:
         """Resolve an action name like `my-model-blue` back to a target."""
@@ -74,15 +81,19 @@ class ServingDeployer:
                 if pool is None:
                     raise DeployerError(f"{model.name}: node pool {model.node_pool!r} is gone")
                 revision = model.revision or ""
+                adapters = tuple(self.adapters_for(model.name) if self.adapters_for else ())
+                profile = self.spec.serving_profile_for(model)
                 return DeploymentTarget(
                     model=model,
                     pool=pool,
                     gpu_class=self.spec.gpu_class(pool.gpu_class),
-                    serving_profile=self.spec.serving_profile_for(model),
+                    serving_profile=profile,
                     image=image_for(model),
                     replicas=model.replicas.min,
                     weights_uri=self.registry.uri_for(model.repo_id, revision),
                     colour=colour,
+                    adapters=adapters,
+                    max_lora_rank=_max_lora_rank(profile),
                 )
         raise DeployerError(f"no model in the spec matches deployment {name!r}")
 
@@ -160,3 +171,20 @@ class ServingDeployer:
         }
         apply_objects(self.cluster, [configmap], dry_run=dry_run)
         return [f"ConfigMap/{GATEWAY_CONFIGMAP}"]
+
+
+#: vLLM's own default, used where no serving profile sets one.
+DEFAULT_MAX_LORA_RANK = 32
+
+
+def _max_lora_rank(profile: ServingProfile | None) -> int:
+    """What vLLM is started with, and what adapters are checked against.
+
+    The two have to agree: an adapter validated against a larger rank
+    than the process was started with fails to load at request time,
+    which the tenant sees as a broken endpoint.
+    """
+    if profile is None:
+        return DEFAULT_MAX_LORA_RANK
+    raw = profile.params.get("max_lora_rank", DEFAULT_MAX_LORA_RANK)
+    return int(raw) if isinstance(raw, int | float | str) else DEFAULT_MAX_LORA_RANK

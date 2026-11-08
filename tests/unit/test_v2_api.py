@@ -1,0 +1,339 @@
+"""The v2 engine surface (SPEC.md sections 8 and 10).
+
+Every v2 feature had decision logic nothing could reach: no endpoint,
+so no CloudStack command, so nothing a tenant or operator could call.
+These are the endpoints, and they are where the decision modules get
+used rather than merely imported.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi.testclient import TestClient
+
+from tests.unit.conftest import ADMIN, OTHER_TENANT, TENANT
+
+ADAPTER = {
+    "name": "legal-tone",
+    "base_model": "llama-3.3-70b-instruct",
+    "rank": 16,
+    "size_bytes": 1024,
+    "files": ["adapter_model.safetensors", "adapter_config.json"],
+    "uri": "s3://adapters/legal-tone/",
+}
+BATCH_LINE = (
+    '{"custom_id":"a","method":"POST","url":"/v1/chat/completions",'
+    '"body":{"model":"llama-3.3-70b-instruct","messages":[]}}'
+)
+
+
+class TestAdapters:
+    def upload(self, client: TestClient, headers: dict[str, str] = TENANT, **kw: Any) -> Any:
+        body = dict(ADAPTER)
+        body.update(kw)
+        return client.post("/v1/adapters", json=body, headers=headers)
+
+    def test_an_adapter_is_accepted(self, client: TestClient) -> None:
+        response = self.upload(client)
+
+        assert response.status_code == 200
+        assert response.json()["id"]
+
+    def test_it_is_listed_afterwards(self, client: TestClient) -> None:
+        self.upload(client)
+
+        body = client.get("/v1/adapters", headers=TENANT).json()
+
+        assert [a["name"] for a in body["adapters"]] == ["legal-tone"]
+
+    def test_the_gateway_name_is_reported(self, client: TestClient) -> None:
+        """A tenant needs the `<base>:<adapter>` form to call it."""
+        body = self.upload(client).json()
+
+        assert body["servedmodelname"] == "llama-3.3-70b-instruct:legal-tone"
+
+    def test_a_rank_over_the_limit_is_refused_with_a_reason(self, client: TestClient) -> None:
+        response = self.upload(client, rank=4096)
+
+        assert response.status_code == 400
+        assert "rank" in response.json()["detail"].lower()
+
+    def test_pickle_weights_are_refused(self, client: TestClient) -> None:
+        response = self.upload(client, files=["adapter_model.bin", "adapter_config.json"])
+
+        assert response.status_code == 400
+
+    def test_an_unknown_base_is_refused(self, client: TestClient) -> None:
+        response = self.upload(client, base_model="ghost")
+
+        assert response.status_code == 400
+
+    def test_another_tenant_does_not_see_it(self, client: TestClient) -> None:
+        self.upload(client, headers=TENANT)
+
+        body = client.get("/v1/adapters", headers=OTHER_TENANT).json()
+
+        assert body["count"] == 0
+
+    def test_an_adapter_can_be_deleted(self, client: TestClient) -> None:
+        adapter_id = self.upload(client).json()["id"]
+
+        assert client.delete(f"/v1/adapters/{adapter_id}", headers=TENANT).status_code == 200
+
+    def test_another_tenant_cannot_delete_it(self, client: TestClient) -> None:
+        adapter_id = self.upload(client, headers=TENANT).json()["id"]
+
+        response = client.delete(f"/v1/adapters/{adapter_id}", headers=OTHER_TENANT)
+
+        assert response.status_code == 404
+
+    def test_the_account_limit_is_enforced(self, client: TestClient) -> None:
+        """SPEC.md section 8: count limits per account."""
+        for index in range(20):
+            self.upload(client, name=f"a{index}")
+
+        assert self.upload(client, name="one-too-many").status_code == 400
+
+
+class TestBatches:
+    def create(self, client: TestClient, headers: dict[str, str] = TENANT, **kw: Any) -> Any:
+        body: dict[str, Any] = {
+            "model": "llama-3.3-70b-instruct",
+            "input": BATCH_LINE,
+        }
+        body.update(kw)
+        return client.post("/v1/batches", json=body, headers=headers)
+
+    def test_a_batch_is_accepted(self, client: TestClient) -> None:
+        response = self.create(client)
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "validating"
+
+    def test_the_request_count_is_reported(self, client: TestClient) -> None:
+        body = self.create(
+            client, input="\n".join([BATCH_LINE, BATCH_LINE.replace('"a"', '"b"')])
+        ).json()
+
+        assert body["requestcount"] == 2
+
+    def test_a_malformed_file_is_refused_with_the_line(self, client: TestClient) -> None:
+        response = self.create(client, input=f"{BATCH_LINE}\nnot json")
+
+        assert response.status_code == 400
+        assert "line 2" in response.json()["detail"]
+
+    def test_batches_are_listed(self, client: TestClient) -> None:
+        self.create(client)
+
+        assert client.get("/v1/batches", headers=TENANT).json()["count"] == 1
+
+    def test_another_tenant_sees_none(self, client: TestClient) -> None:
+        self.create(client, headers=TENANT)
+
+        assert client.get("/v1/batches", headers=OTHER_TENANT).json()["count"] == 0
+
+    def test_a_batch_can_be_cancelled(self, client: TestClient) -> None:
+        batch_id = self.create(client).json()["id"]
+
+        response = client.post(f"/v1/batches/{batch_id}/cancel", headers=TENANT)
+
+        assert response.json()["status"] == "cancelled"
+
+    def test_cancelling_a_finished_batch_is_refused(self, client: TestClient) -> None:
+        batch_id = self.create(client).json()["id"]
+        client.post(f"/v1/batches/{batch_id}/cancel", headers=TENANT)
+
+        response = client.post(f"/v1/batches/{batch_id}/cancel", headers=TENANT)
+
+        assert response.status_code == 409
+
+
+class TestGuardrailProfiles:
+    def create(self, client: TestClient, headers: dict[str, str] = ADMIN, **kw: Any) -> Any:
+        body: dict[str, Any] = {
+            "name": "school-safe",
+            "scope": "domain",
+            "target": "/Customers/Acme",
+            "checks": {"pii": {"action": "block", "policy": "locked"}},
+        }
+        body.update(kw)
+        return client.post("/v1/profiles/guardrail", json=body, headers=headers)
+
+    def test_a_profile_is_created(self, client: TestClient) -> None:
+        assert self.create(client).status_code == 200
+
+    def test_profiles_are_listed(self, client: TestClient) -> None:
+        self.create(client)
+
+        assert client.get("/v1/profiles/guardrail", headers=ADMIN).json()["count"] == 1
+
+    def test_a_tenant_cannot_create_one(self, client: TestClient) -> None:
+        """A guardrail an account could remove is not a guardrail."""
+        assert self.create(client, headers=TENANT).status_code == 403
+
+    def test_a_preset_can_be_used(self, client: TestClient) -> None:
+        body = self.create(client, preset="education-safe", checks=None).json()
+
+        assert body["checks"]["topics"]["action"] == "block"
+
+    def test_an_unknown_preset_is_refused(self, client: TestClient) -> None:
+        assert self.create(client, preset="nonsense", checks=None).status_code == 404
+
+    def test_a_profile_can_be_updated(self, client: TestClient) -> None:
+        profile_id = self.create(client).json()["id"]
+
+        response = client.patch(
+            f"/v1/profiles/guardrail/{profile_id}",
+            json={"checks": {"pii": {"action": "flag", "policy": "default"}}},
+            headers=ADMIN,
+        )
+
+        assert response.json()["checks"]["pii"]["action"] == "flag"
+
+    def test_a_profile_can_be_deleted(self, client: TestClient) -> None:
+        profile_id = self.create(client).json()["id"]
+
+        assert (
+            client.delete(f"/v1/profiles/guardrail/{profile_id}", headers=ADMIN).status_code == 200
+        )
+
+
+class TestEvaluations:
+    def run(self, client: TestClient, headers: dict[str, str] = ADMIN, **kw: Any) -> Any:
+        body: dict[str, Any] = {
+            "revision": "0f3f4a6c",
+            "suites": [{"name": "mmlu", "score": 70.0, "baseline": 70.0}],
+            "performance": [
+                {"gpu_class": "h100-8x", "ttft_p95_ms": 320, "tokens_per_second": 1800}
+            ],
+        }
+        body.update(kw)
+        return client.post(
+            "/v1/models/llama-3.3-70b-instruct/evaluations", json=body, headers=headers
+        )
+
+    def test_a_passing_evaluation_is_recorded(self, client: TestClient) -> None:
+        body = self.run(client).json()
+
+        assert body["passed"] is True
+
+    def test_a_regression_blocks(self, client: TestClient) -> None:
+        body = self.run(client, suites=[{"name": "gsm8k", "score": 60.0, "baseline": 70.0}]).json()
+
+        assert body["passed"] is False
+        assert "gsm8k" in body["summary"]
+
+    def test_evaluations_are_listed_for_the_model(self, client: TestClient) -> None:
+        self.run(client)
+
+        body = client.get("/v1/models/llama-3.3-70b-instruct/evaluations", headers=ADMIN).json()
+        assert body["count"] == 1
+
+    def test_a_tenant_cannot_run_one(self, client: TestClient) -> None:
+        assert self.run(client, headers=TENANT).status_code == 403
+
+    def test_an_unknown_model_is_refused(self, client: TestClient) -> None:
+        response = client.post(
+            "/v1/models/ghost/evaluations",
+            json={"revision": "x", "suites": []},
+            headers=ADMIN,
+        )
+
+        assert response.status_code == 404
+
+
+class TestPublishIsGated:
+    """SPEC.md section 8: publishing is blocked by a regression."""
+
+    def evaluate(self, client: TestClient, score: float) -> None:
+        client.post(
+            "/v1/models/llama-3.3-70b-instruct/evaluations",
+            json={
+                "revision": "0f3f4a6c",
+                "suites": [{"name": "mmlu", "score": score, "baseline": 70.0}],
+            },
+            headers=ADMIN,
+        )
+
+    def publish(self, client: TestClient, **kw: Any) -> Any:
+        return client.post(
+            "/v1/models/llama-3.3-70b-instruct/publish",
+            json={"price_tier": "standard", **kw},
+            headers=ADMIN,
+        )
+
+    def test_publishing_after_a_passing_evaluation_works(self, client: TestClient) -> None:
+        self.evaluate(client, 70.0)
+
+        assert self.publish(client).status_code == 200
+
+    def test_publishing_after_a_regression_is_blocked(self, client: TestClient) -> None:
+        self.evaluate(client, 50.0)
+
+        response = self.publish(client)
+
+        assert response.status_code == 409
+        assert "mmlu" in response.json()["detail"]
+
+    def test_publishing_without_any_evaluation_is_blocked(self, client: TestClient) -> None:
+        """An unevaluated model is exactly what the gate exists for."""
+        response = self.publish(client)
+
+        assert response.status_code == 409
+
+    def test_a_root_admin_may_override_with_a_reason(self, client: TestClient) -> None:
+        self.evaluate(client, 50.0)
+
+        response = self.publish(client, override_reason="known contamination")
+
+        assert response.status_code == 200
+        assert response.json()["overridden"] is True
+
+    def test_an_override_without_a_reason_does_not_count(self, client: TestClient) -> None:
+        self.evaluate(client, 50.0)
+
+        assert self.publish(client, override_reason="   ").status_code == 409
+
+
+class TestPrivateEndpoints:
+    def create(self, client: TestClient, headers: dict[str, str] = TENANT, **kw: Any) -> Any:
+        body: dict[str, Any] = {
+            "deployment": "llama-3.3-70b-instruct",
+            "network_id": "net-1",
+            "public_enabled": False,
+        }
+        body.update(kw)
+        return client.post("/v1/endpoints/private", json=body, headers=headers)
+
+    def test_an_exposure_is_created(self, client: TestClient) -> None:
+        assert self.create(client).status_code == 200
+
+    def test_it_describes_how_it_is_reachable(self, client: TestClient) -> None:
+        body = self.create(client).json()
+
+        assert "private" in body["exposure"]
+
+    def test_an_unreachable_exposure_is_refused(self, client: TestClient) -> None:
+        response = self.create(client, network_id="", public_enabled=False)
+
+        assert response.status_code == 400
+        assert "reach" in response.json()["detail"].lower()
+
+    def test_a_network_the_tenant_does_not_own_is_refused(self, client: TestClient) -> None:
+        response = self.create(client, network_id="net-someone-else")
+
+        assert response.status_code == 400
+
+    def test_acme_on_a_private_only_endpoint_is_refused(self, client: TestClient) -> None:
+        response = self.create(client, custom_domain="ai.acme.example", tls="acme")
+
+        assert response.status_code == 400
+
+    def test_an_exposure_can_be_removed(self, client: TestClient) -> None:
+        exposure_id = self.create(client).json()["id"]
+
+        assert (
+            client.delete(f"/v1/endpoints/private/{exposure_id}", headers=TENANT).status_code == 200
+        )

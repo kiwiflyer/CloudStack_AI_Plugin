@@ -11,6 +11,7 @@ import inspect
 import logging
 from typing import Any
 
+from aisvc.adapters import ADAPTER_SEPARATOR, may_use
 from aisvc.gateway import KeyRejected, RequestContext, enforce_request
 from aisvc.guardrails import check_input
 from aisvc.metering import UsageRecord
@@ -83,7 +84,11 @@ class GuardrailBlocked(Exception):
 def to_http_error(exc: Exception) -> HttpError:
     """Map an enforcement failure onto a tenant-visible error."""
     if isinstance(exc, KeyRejected):
-        return HttpError(exc.status_code, exc.detail, code=exc.reason)
+        # "You may not see this" and "this does not exist" answer the
+        # same way. A 403 here would confirm which adapters other
+        # accounts hold, and adapter names are guessable.
+        status = 404 if exc.reason == "model_not_found" else exc.status_code
+        return HttpError(status, exc.detail, code=exc.reason)
     if isinstance(exc, GuardrailBlocked):
         return HttpError(
             403,
@@ -118,12 +123,14 @@ class AisvcEnforcement(_Base):  # type: ignore[misc]  # base is Any without Lite
         meter: Any = None,
         guardrails: Any = None,
         on_guardrail: Any = None,
+        lookup_adapter: Any = None,
     ) -> None:
         self.resolve_context = resolve_context
         self.budget = budget
         self.meter = meter
         self.guardrails = guardrails
         self.on_guardrail = on_guardrail
+        self.lookup_adapter = lookup_adapter
         self.last_record: dict[str, Any] | None = None
         self._last_context: RequestContext | None = None
 
@@ -139,6 +146,7 @@ class AisvcEnforcement(_Base):  # type: ignore[misc]  # base is Any without Lite
         try:
             # Scopes first, then the budget: a key that may not use this
             # model should hear that, not a billing message it cannot act on.
+            self._check_adapter(context)
             enforced = enforce_request(context, data)
             self._check_budget(context)
             self._check_guardrails(context, enforced.body)
@@ -154,6 +162,32 @@ class AisvcEnforcement(_Base):  # type: ignore[misc]  # base is Any without Lite
         self.last_record = enforced.metering_record()
         self._last_context = context
         return enforced.body
+
+    def _check_adapter(self, context: RequestContext) -> None:
+        """Refuse an adapter this caller may not see (SPEC.md section 8).
+
+        The gateway config publishes every adapter as
+        `<base>:<adapter>`, so without this a tenant could address
+        another account's by name — and the names are guessable, being
+        things like "legal" and "support".
+
+        An adapter they may not see answers exactly as one that does
+        not exist: a 403 would confirm which adapters other accounts
+        have.
+        """
+        if self.lookup_adapter is None or ADAPTER_SEPARATOR not in context.model:
+            return
+
+        _, _, name = context.model.partition(ADAPTER_SEPARATOR)
+        adapter = self.lookup_adapter(name)
+        allowed = adapter is not None and may_use(
+            adapter,
+            account=context.key.account,
+            domain=context.key.domain,
+            role="User",
+        )
+        if not allowed:
+            raise KeyRejected("model_not_found", f"no such model: {context.model}")
 
     def _check_budget(self, context: RequestContext) -> None:
         if self.budget is None:
