@@ -74,7 +74,19 @@ class TestSnapshot:
         assert capacity.nodes_healthy == 2
         assert capacity.nodes_unhealthy == 1
 
-    async def test_nodes_running_the_class_offering_count_as_allocated(
+    async def test_gpus_are_counted_per_device_not_per_host(
+        self, client: CloudStackClient, spec: PlatformSpec
+    ) -> None:
+        """ADR-0003: capacity comes from listGpuDevices, not host tags."""
+        async with client:
+            snapshot = await take_snapshot(client, spec)
+
+        capacity = snapshot.for_class("zone-east-1", "h100-8x")
+        assert capacity is not None
+        # host-1 has 4 devices, host-2 has 4; host-3 is in maintenance.
+        assert capacity.gpus_total == 8
+
+    async def test_allocation_is_read_from_the_device_not_inferred(
         self, client: CloudStackClient, spec: PlatformSpec
     ) -> None:
         async with client:
@@ -82,9 +94,9 @@ class TestSnapshot:
 
         capacity = snapshot.for_class("zone-east-1", "h100-8x")
         assert capacity is not None
-        assert capacity.nodes_allocated == 1  # vm-1 on host-1
+        assert capacity.gpus_allocated == 2  # gpu-1 and gpu-2 hold vm-1
 
-    async def test_free_nodes_exclude_allocated_and_unhealthy(
+    async def test_a_disabled_device_is_neither_free_nor_usable(
         self, client: CloudStackClient, spec: PlatformSpec
     ) -> None:
         async with client:
@@ -92,9 +104,22 @@ class TestSnapshot:
 
         capacity = snapshot.for_class("zone-east-1", "h100-8x")
         assert capacity is not None
-        assert capacity.nodes_free == 1  # host-2 only
+        assert capacity.gpus_unusable == 1  # gpu-4 is Disabled
+        # host-1: 4 devices, 2 allocated, 1 disabled -> 1 free. host-2: 4 free.
+        assert capacity.gpus_free == 5
 
-    async def test_gpu_counts_scale_by_gpus_per_node(
+    async def test_free_gpus_are_tracked_per_host(
+        self, client: CloudStackClient, spec: PlatformSpec
+    ) -> None:
+        """A replica never spans hosts, so the per-host split is what matters."""
+        async with client:
+            snapshot = await take_snapshot(client, spec)
+
+        capacity = snapshot.for_class("zone-east-1", "h100-8x")
+        assert capacity is not None
+        assert capacity.free_by_host == {"host-1": 1, "host-2": 4}
+
+    async def test_an_unhealthy_host_contributes_no_capacity(
         self, client: CloudStackClient, spec: PlatformSpec
     ) -> None:
         async with client:
@@ -102,22 +127,33 @@ class TestSnapshot:
 
         capacity = snapshot.for_class("zone-east-1", "h100-8x")
         assert capacity is not None
-        assert capacity.gpus_total == 3 * 8
-        assert capacity.gpus_allocated == 1 * 8
-        assert capacity.gpus_free == 1 * 8
+        assert "host-3" not in capacity.free_by_host
+        assert capacity.nodes_unhealthy == 1
 
-    async def test_a_vm_with_an_unrelated_offering_does_not_allocate(
+    async def test_vgpu_capacity_counts_the_mdevs_not_the_host(
         self, client: CloudStackClient
     ) -> None:
-        """host-4 runs a Medium-Instance VM, which is not the l40s offering."""
+        """The whole point of ADR-0003: one shared host is not one GPU."""
         async with client:
             snapshot = await take_snapshot(client, spec_with_two_classes())
 
         capacity = snapshot.for_class("zone-east-1", "l40s-1x")
         assert capacity is not None
         assert capacity.nodes_total == 1
-        assert capacity.nodes_allocated == 0
-        assert capacity.nodes_free == 1
+        # Four vGPUs carved from one card; the parent is not double-counted.
+        assert capacity.gpus_total == 4
+
+    async def test_vgpu_allocation_is_per_tenant_not_per_host(
+        self, client: CloudStackClient
+    ) -> None:
+        """Two tenants share host-4; host-tag counting could not see that."""
+        async with client:
+            snapshot = await take_snapshot(client, spec_with_two_classes())
+
+        capacity = snapshot.for_class("zone-east-1", "l40s-1x")
+        assert capacity is not None
+        assert capacity.gpus_allocated == 2
+        assert capacity.gpus_free == 2
 
     async def test_unknown_class_returns_none(
         self, client: CloudStackClient, spec: PlatformSpec
@@ -137,17 +173,35 @@ class TestSnapshot:
 
 
 class TestClassCapacity:
-    def test_can_host_asks_whether_free_gpus_cover_a_replica(self) -> None:
+    def test_can_host_asks_whether_one_host_has_the_gpus(self) -> None:
         capacity = ClassCapacity(
             zone="zone-east-1",
             gpu_class="h100-8x",
             gpus_per_node=8,
             nodes_total=3,
             nodes_healthy=2,
-            nodes_allocated=1,
+            gpus_total=16,
+            free_by_host={"host-1": 8, "host-2": 2},
         )
+
         assert capacity.can_host(tensor_parallel=8)
-        assert not capacity.can_host(tensor_parallel=16)
+        assert capacity.can_host(tensor_parallel=2)
+
+    def test_scattered_free_gpus_do_not_add_up_across_hosts(self) -> None:
+        """Eight free GPUs spread over four hosts cannot run an 8-way replica."""
+        capacity = ClassCapacity(
+            zone="zone-east-1",
+            gpu_class="h100-8x",
+            gpus_per_node=8,
+            nodes_total=4,
+            nodes_healthy=4,
+            gpus_total=32,
+            free_by_host={"a": 2, "b": 2, "c": 2, "d": 2},
+        )
+
+        assert capacity.gpus_free == 8
+        assert not capacity.can_host(tensor_parallel=8)
+        assert capacity.can_host(tensor_parallel=2)
 
     def test_tensor_parallel_beyond_one_node_never_fits(self) -> None:
         """A replica is capped at one 8-GPU host (SPEC.md section 1)."""
@@ -157,20 +211,80 @@ class TestClassCapacity:
             gpus_per_node=8,
             nodes_total=4,
             nodes_healthy=4,
-            nodes_allocated=0,
+            gpus_total=32,
+            free_by_host={"a": 8, "b": 8, "c": 8, "d": 8},
         )
+
         assert not capacity.can_host(tensor_parallel=16)
 
-    def test_derived_counts_are_consistent(self) -> None:
+    def test_nothing_free_hosts_nothing(self) -> None:
         capacity = ClassCapacity(
-            zone="zone-east-1",
-            gpu_class="h100-8x",
-            gpus_per_node=8,
-            nodes_total=5,
-            nodes_healthy=4,
-            nodes_allocated=2,
+            zone="z", gpu_class="c", gpus_per_node=8, nodes_total=1, nodes_healthy=1
         )
-        assert capacity.nodes_unhealthy == 1
+
+        assert capacity.gpus_free == 0
+        assert not capacity.can_host(tensor_parallel=1)
+
+    def test_free_nodes_counts_hosts_with_room_for_a_whole_node(self) -> None:
+        capacity = ClassCapacity(
+            zone="z",
+            gpu_class="c",
+            gpus_per_node=8,
+            nodes_total=3,
+            nodes_healthy=3,
+            free_by_host={"a": 8, "b": 4, "c": 8},
+        )
+
         assert capacity.nodes_free == 2
-        assert capacity.gpus_total == 40
-        assert capacity.gpus_free == 16
+        assert capacity.hosts_with_free(4) == 3
+
+    def test_the_largest_free_block_is_reported(self) -> None:
+        capacity = ClassCapacity(
+            zone="z",
+            gpu_class="c",
+            gpus_per_node=8,
+            nodes_total=2,
+            nodes_healthy=2,
+            free_by_host={"a": 3, "b": 6},
+        )
+
+        assert capacity.largest_free_block() == 6
+
+    def test_a_partly_used_host_counts_as_allocated(self) -> None:
+        capacity = ClassCapacity(
+            zone="z",
+            gpu_class="c",
+            gpus_per_node=8,
+            nodes_total=2,
+            nodes_healthy=2,
+            free_by_host={"a": 8, "b": 5},
+            allocated_by_host={"a": 0, "b": 3},
+            host_ids=("a", "b"),
+        )
+
+        assert capacity.nodes_allocated == 1
+
+    def test_a_vgpu_host_is_both_allocated_and_free(self) -> None:
+        """Subtracting free from capacity cannot express this; two counts can."""
+        capacity = ClassCapacity(
+            zone="z",
+            gpu_class="l40s-1x",
+            gpus_per_node=1,
+            nodes_total=1,
+            nodes_healthy=1,
+            gpus_total=4,
+            free_by_host={"host-4": 2},
+            allocated_by_host={"host-4": 2},
+            host_ids=("host-4",),
+        )
+
+        assert capacity.nodes_allocated == 1
+        assert capacity.nodes_free == 1
+        assert capacity.gpus_free == 2
+
+    def test_unhealthy_nodes_are_derived(self) -> None:
+        capacity = ClassCapacity(
+            zone="z", gpu_class="c", gpus_per_node=8, nodes_total=5, nodes_healthy=4
+        )
+
+        assert capacity.nodes_unhealthy == 1

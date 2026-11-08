@@ -13,6 +13,8 @@ import httpx
 
 __all__ = ["FakeCloudStack"]
 
+GPUS_PER_HOST = 8
+
 GPU_HOSTS = [
     {
         "id": f"host-{i}",
@@ -84,6 +86,9 @@ class FakeCloudStack:
                 return {"count": len(self.zones), "zone": self.zones}
             case "listHosts":
                 return {"count": len(self.hosts), "host": self.hosts}
+            case "listGpuDevices":
+                devices = self._gpu_devices()
+                return {"count": len(devices), "gpudevice": devices}
             case "listTemplates":
                 return {"count": len(self.templates), "template": self.templates}
             case "listServiceOfferings":
@@ -112,6 +117,33 @@ class FakeCloudStack:
             case "queryAsyncJobResult":
                 return {"jobstatus": 1, "jobresult": {"ok": True}}
         raise AssertionError(f"unscripted command {command}")
+
+    def _gpu_devices(self) -> list[dict[str, Any]]:
+        """Eight passthrough GPUs per host, allocated to whatever runs there.
+
+        Mirrors CloudStack 4.21+ `listGpuDevices`, so capacity is counted
+        per GPU rather than inferred from host tags (ADR-0003).
+        """
+        holder = {vm["hostid"]: vm["id"] for vm in self.vms if vm.get("hostid")}
+        devices: list[dict[str, Any]] = []
+        for host in self.hosts:
+            for index in range(GPUS_PER_HOST):
+                device: dict[str, Any] = {
+                    "id": f"{host['id']}-gpu-{index}",
+                    "hostid": host["id"],
+                    "hostname": host["name"],
+                    "gpucardid": "card-h100",
+                    "gpucardname": "NVIDIA H100 80GB HBM3",
+                    "gpudevicetype": "PCI",
+                    "busaddress": f"0000:{17 + index:02x}:00.0",
+                    "managedstate": "Enabled",
+                    "numanode": "0",
+                }
+                if host["id"] in holder:
+                    device["virtualmachineid"] = holder[host["id"]]
+                    device["vmstate"] = "Running"
+                devices.append(device)
+        return devices
 
     def _deploy(self, params: dict[str, Any]) -> dict[str, Any]:
         """Place the VM on the first host with no aisvc VM already on it."""

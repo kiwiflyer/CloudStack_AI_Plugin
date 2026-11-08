@@ -39,6 +39,11 @@ class TestRecordedShapes:
                 {"id", "name", "serviceofferingname", "state"},
             ),
             ("listserviceofferings", "serviceoffering", {"id", "name"}),
+            (
+                "listgpudevices",
+                "gpudevice",
+                {"id", "hostid", "gpucardname", "managedstate"},
+            ),
         ],
     )
     def test_every_record_carries_the_fields_we_read(
@@ -97,7 +102,12 @@ class TestClientAgainstRecordings:
                 assert capacity is not None
                 assert capacity.nodes_healthy <= capacity.nodes_total
                 assert capacity.nodes_allocated <= capacity.nodes_healthy
-                assert capacity.gpus_total == capacity.nodes_total * gpu_class.gpus_per_node
+                # GPUs are counted per device now, so the total is whatever
+                # CloudStack reports. `gpus_per_node` bounds one node VM,
+                # not a host: a vGPU host can hold more free GPUs than a
+                # single node would ever take.
+                assert capacity.gpus_allocated + capacity.gpus_free <= capacity.gpus_total
+                assert capacity.gpus_free == sum(capacity.free_by_host.values())
 
 
 class TestExampleSpecContract:

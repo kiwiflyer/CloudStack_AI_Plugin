@@ -91,6 +91,8 @@ class FakeCloudStack:
                 group = {"id": f"ag-{len(self.affinity_groups) + 1}", "name": params["name"]}
                 self.affinity_groups.append(group)
                 return {"affinitygroup": group}
+            case "listGpuDevices":
+                return {"count": 0, "gpudevice": []}
             case "listVirtualMachines":
                 return {"count": len(self.vms), "virtualmachine": self.vms}
             case "deployVirtualMachine":

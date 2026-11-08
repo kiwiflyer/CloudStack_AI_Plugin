@@ -100,10 +100,15 @@ recorded the limitation: *"Node allocation is counted per host, not per GPU. Tha
 passthrough; vgpu and mig classes will need per-GPU accounting."*
 
 4.21+ reports actual GPU devices per host. That is a better source of truth and it resolves
-the open question: per-GPU accounting comes from CloudStack rather than from us. **Follow-up:
-move `inventory` onto the GPU device APIs and treat `host_tag` as a placement hint rather than
-the capacity source.** Until then, `mode: vgpu` and `mode: mig` in `platform.yaml` will
-mis-count.
+the open question: per-GPU accounting comes from CloudStack rather than from us.
+
+**Done.** `inventory` now reads `listGpuDevices`, counting allocation from each device's
+`virtualmachineid`. A physical GPU carved into vGPUs is treated as a container rather than a
+unit, so parent and children are never double-counted, and `free_by_host` is tracked
+alongside `allocated_by_host` because a vGPU host is partly allocated and partly free at the
+same time — something subtracting one from a total cannot express. `host_tag` now selects
+hosts; `gpus_per_node` bounds one node VM and `tensor_parallel`, not a host's physical GPU
+count.
 
 ### Stopping a GPU node does not release its GPU
 
@@ -148,8 +153,9 @@ GPUs they are not using. Worth a test when `lifecycle` lands.
        against 4.22 LTS so a 4.23-only dependency fails fast rather than at retarget time.
 2. [ ] Configure `max.account.gpus` / `max.domain.gpus` from the plugin rather than
        implementing GPU quotas in the engine.
-3. [ ] Move `aisvc/inventory` onto the GPU device APIs; treat `host_tag` as placement only.
-       Until then, document that `mode: vgpu` and `mode: mig` mis-count.
+3. [x] **Done.** `aisvc/inventory` reads `listGpuDevices`; `host_tag` selects hosts and
+       `gpus_per_node` bounds one node VM, while capacity is counted per device.
+       `gpuClasses[].gpu_card` narrows counting on mixed-GPU hosts.
 4. [ ] Milestone 7: ensure `drain` destroys rather than stops, and test that the GPU is
        released.
 5. [ ] Milestone 8: add IOMMU-enabled and Nouveau-disabled to the setup wizard's host checks.

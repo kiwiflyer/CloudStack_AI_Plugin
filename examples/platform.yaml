@@ -20,15 +20,21 @@ gpuClasses:
   - name: h100-8x
     host_tag: h100-sxm
     service_offering: "GPU-H100-8x"
+    # GPUs one node VM gets, which also bounds tensor_parallel. Not the
+    # host's physical GPU count: capacity is read from CloudStack's GPU
+    # devices (docs/adr/0003-cloudstack-release.md).
     gpus_per_node: 8
     gpu_mem_gb: 80
     mode: passthrough
+    # Optional: narrows counting on hosts carrying more than one card.
+    gpu_card: "NVIDIA H100 80GB HBM3"
   - name: l40s-1x
     host_tag: l40s
     service_offering: "GPU-L40S-1x"
     gpus_per_node: 1
     gpu_mem_gb: 48
     mode: passthrough
+    gpu_card: "NVIDIA L40S"
 
 nodePools:
   - name: h100-pool

@@ -59,7 +59,9 @@ def state(
                 gpus_per_node=8,
                 nodes_total=8,
                 nodes_healthy=8,
-                nodes_allocated=0,
+                gpus_total=64,
+                free_by_host={f"host-{i}": 8 for i in range(8)},
+                host_ids=tuple(f"host-{i}" for i in range(8)),
             )
         },
         pools={

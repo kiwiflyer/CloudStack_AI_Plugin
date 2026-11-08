@@ -224,12 +224,30 @@ Providers run LTS. The ADR's mitigation is to hold the plugin's compile-time sur
 that also exist in 4.22 LTS, with a CI job proving it, so retargeting 4.24 LTS for GA costs a
 rebuild rather than a rewrite.
 
-**Two findings change existing code.** GPU devices are discovered natively per host since
-4.21, which is a better capacity source than our `host_tag` inference and resolves the
-per-GPU accounting question left open in milestone 2 — until `inventory` moves onto those
-APIs, `mode: vgpu` and `mode: mig` mis-count. And `gpu.detach.on.stop` defaults to false, so
+**Two findings changed existing code.** GPU devices are discovered natively per host since
+4.21; `inventory` now reads `listGpuDevices` rather than inferring capacity from `host_tag`,
+which fixes vGPU and MIG counting (see below). And `gpu.detach.on.stop` defaults to false, so
 milestone 7's drain must destroy rather than stop, or drained nodes will hold GPUs they are
 not using.
+
+### Per-GPU capacity (ADR-0003 action item 3, done)
+
+`inventory` reads `listGpuDevices` and counts allocation from each device's
+`virtualmachineid`. Three things fell out of doing it properly:
+
+- **A carved physical GPU is a container, not a unit.** Counting a parent and its vGPU
+  children would double-count the same silicon, so only leaf devices count — and a child
+  whose parent is missing from a page still counts, so paging can never lose capacity.
+- **`free_by_host` and `allocated_by_host` are tracked separately.** A vGPU host is partly
+  allocated and partly free at once, which subtracting free from a total cannot express.
+  `nodes_allocated` was briefly wrong for exactly this reason.
+- **`gpus_per_node` means GPUs per node VM, not per host.** It bounds `tensor_parallel`; the
+  host's physical count comes from CloudStack. A contract assertion conflating the two is
+  what surfaced the distinction.
+
+`can_host` is now a real answer rather than a guess: it asks whether *one host* has that many
+free GPUs, so eight GPUs scattered across four hosts correctly cannot run an 8-way replica.
+`gpuClasses[].gpu_card` is new and optional, narrowing counting on hosts with mixed cards.
 
 ## Licensing
 

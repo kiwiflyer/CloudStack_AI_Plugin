@@ -43,7 +43,9 @@ def snapshot_with(
                 gpus_per_node=8,
                 nodes_total=hosts_free,
                 nodes_healthy=hosts_free,
-                nodes_allocated=0,
+                gpus_total=hosts_free * 8,
+                free_by_host={f"host-{i}": 8 for i in range(hosts_free)},
+                host_ids=tuple(f"host-{i}" for i in range(hosts_free)),
             )
         },
         pools=pools,
