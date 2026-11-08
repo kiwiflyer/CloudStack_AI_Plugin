@@ -317,6 +317,34 @@ class CertificateStore:
             self.session.scalars(select(CertificateRecord).order_by(CertificateRecord.created_at))
         )
 
+    def replace_material(
+        self,
+        record: CertificateRecord,
+        *,
+        certificate: str,
+        private_key: str,
+        fingerprint: str,
+        not_after: Any,
+    ) -> CertificateRecord:
+        """Swap the material, keeping the id.
+
+        The id stays because exposures name it; a new one would mean
+        rewriting every exposure by hand at the moment the old
+        certificate is about to stop working.
+
+        The serial moves, which is what tells the planner a proxy is
+        serving superseded material. The notified thresholds reset,
+        since the new expiry is a new countdown.
+        """
+        record.certificate = certificate
+        record.private_key = private_key
+        record.fingerprint = fingerprint
+        record.not_after = not_after
+        record.serial = (record.serial or 1) + 1
+        record.notified = []
+        self.session.flush()
+        return record
+
     def delete(self, record: CertificateRecord) -> None:
         self.session.delete(record)
         self.session.flush()

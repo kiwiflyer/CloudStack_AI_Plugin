@@ -283,6 +283,11 @@ class PrivateEndpointRecord(Base):
     custom_domain: Mapped[str] = mapped_column(String(255), default="")
     tls: Mapped[str] = mapped_column(String(16), default="none")
     certificate_id: Mapped[str] = mapped_column(String(36), default="")
+    #: Which certificate serial this exposure's proxy was built with.
+    #: A proxy fetched once at boot, so a difference from the
+    #: certificate's current serial means it is serving superseded
+    #: material and has to be replaced.
+    proxy_certificate_serial: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -304,6 +309,12 @@ class CertificateRecord(Base):
     private_key: Mapped[str] = mapped_column(Text)
     fingerprint: Mapped[str] = mapped_column(String(128), index=True)
     not_after: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    #: Bumped on every replacement. A proxy fetched its material once
+    #: at boot, so this is how the planner tells one is serving
+    #: superseded material and needs redeploying.
+    serial: Mapped[int] = mapped_column(Integer, default=1)
+    #: Renewal thresholds already announced, so each fires once.
+    notified: Mapped[list[int]] = mapped_column(JsonColumn, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

@@ -69,6 +69,11 @@ class EndpointExposure:
     custom_domain: str = ""
     tls: TlsSource = TlsSource.NONE
     certificate_id: str = ""
+    #: The certificate serial this exposure's proxy was built from.
+    #: Zero until one has been built. A difference from the
+    #: certificate's current serial means the proxy is serving
+    #: superseded material (SPEC.md section 8).
+    proxy_certificate_serial: int = 0
 
 
 def validate_exposure(exposure: EndpointExposure, *, owned_networks: Sequence[str]) -> bool:

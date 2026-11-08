@@ -286,3 +286,62 @@ def test_every_command_is_well_formed(command: Command) -> None:
     assert command.method in {"GET", "POST", "PATCH", "DELETE"}
     assert command.path.startswith("/v1/")
     assert command.roles <= {Role.ADMIN, Role.DOMAIN_ADMIN, Role.USER}
+
+
+class TestTheGuardIsMethodAware:
+    """A path and a method together make an endpoint.
+
+    Comparing paths alone let `PATCH /v1/certificates/{id}` ship with no
+    command: `DELETE` on the same path already had one, so the set of
+    paths was unchanged and the guard saw nothing.
+    """
+
+    def engine_operations(self) -> set[tuple[str, str]]:
+        from fastapi.testclient import TestClient
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        from aisvc.api.app import create_app
+        from aisvc.api.deps import Services
+        from aisvc.db import Base
+        from aisvc.registry import InMemoryObjectStore, ModelRegistry
+        from aisvc.spec import load_spec_from_string
+        from tests.unit.test_spec import LICENSES, MINIMAL
+
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        app = create_app(
+            Services(
+                spec=load_spec_from_string(MINIMAL, allowed_licenses=LICENSES),
+                registry=ModelRegistry(InMemoryObjectStore(), bucket="models"),
+                session_factory=sessionmaker(engine),
+            )
+        )
+        with TestClient(app) as client:
+            paths = client.get("/v1/openapi.json").json()["paths"]
+
+        return {(method.upper(), path) for path, methods in paths.items() for method in methods}
+
+    def test_every_operation_has_a_command(self) -> None:
+        engine_only = {
+            ("GET", "/v1/health"),
+            ("GET", "/v1/ready"),
+            ("GET", "/v1/jobs/{job_id}"),
+        }
+        mapped = {(c.method.upper(), c.path) for c in COMMANDS}
+
+        orphans = self.engine_operations() - engine_only - mapped
+
+        assert not orphans, f"engine operations with no command: {sorted(orphans)}"
+
+    def test_it_would_notice_a_new_method_on_a_known_path(self) -> None:
+        """The failure the path-only guard missed."""
+        mapped = {(c.method.upper(), c.path) for c in COMMANDS}
+
+        assert ("PATCH", "/v1/certificates/{certificate_id}") in mapped
+        assert ("DELETE", "/v1/certificates/{certificate_id}") in mapped

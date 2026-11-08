@@ -1793,3 +1793,83 @@ With the actual shipped `aisvc-fetch-cert`, not a stand-in:
 - Adapter artefacts are not fetched, evaluations are judged rather than
   produced, the guard model is not called, no v2 command reaches
   CloudStack, and the batch worker has no leader election.
+
+## Milestone 9 — certificate renewal
+
+**Status:** expiry is watched and alerted on, a certificate can be
+replaced in place, and a renewal marks its proxy for replacement.
+
+1628 Python tests, 399 Java, 21 Go, 86 Vitest.
+
+### Noticing
+
+A certificate does not degrade, it stops, and the first sign is a
+tenant's own customers seeing a browser warning. `sweep_renewals` runs
+from the apply path — nothing else runs often enough — and fires at 30,
+14, 7 and 1 days, **once each**. That is the property that makes the
+last warning readable: an alert per reconcile is an alert nobody reads,
+and the one that matters would arrive looking like the two hundred
+before it.
+
+Alerts go to the owning **tenant**, not the operator's pager. They are
+the only ones who can upload a replacement. They carry the domain, the
+days left and nothing else; certificate material has no business in a
+webhook.
+
+`days_until` floors rather than rounds. Claiming a day that is not
+there is how a certificate expires over a weekend.
+
+### Replacing
+
+`PATCH /v1/certificates/{id}` swaps the material and keeps the id,
+because exposures name it: a new id would mean rewriting every exposure
+by hand at exactly the moment the old certificate is about to stop.
+The domain is not in the request — it comes from the record — so a
+renewal cannot quietly become a different endpoint's certificate.
+
+A replacement that expires **sooner** is refused. It is a mistake every
+time, and accepting it silently shortens the endpoint's life with
+nothing to show for it.
+
+### The cost of the one-time-token design
+
+A running proxy fetched its material once at first boot and has no way
+to be told about a replacement. So renewing bumps a serial, the
+exposure remembers which serial its proxy was built from, and the
+planner turns a difference into a delete-then-create. **That is
+downtime**, and the response says `proxyredeploy: true` rather than
+leaving an operator to discover it when the old certificate stops.
+
+An unknown serial deliberately does not count: a certificate the engine
+cannot see must not make the planner replace a working proxy on every
+run.
+
+### The drift guard was comparing paths, not operations
+
+`PATCH /v1/certificates/{id}` shipped with no command and the guard saw
+nothing, because `DELETE` on the same path already had one and the set
+of *paths* was unchanged. It compares `(method, path)` now, and the
+missing command is added.
+
+### Verified against a running engine
+
+Uploaded a certificate ten days from expiry; the first sweep raised two
+alerts (30 and 14 days crossed) and the second raised none; renewed it
+to 365 days, which returned serial 2 and `proxyredeploy: true`; the
+sweep then went quiet because the countdown had reset; and a
+shorter-lived replacement was refused.
+
+### What is still not true
+
+- **No proxy has been redeployed for a renewal.** The plan is right and
+  tested; no CloudStack has executed one.
+- **ACME is still unexercised.** certbot is baked into the image and
+  renews on its own timer, but nothing here checks it ran, and a
+  failure leaves nginx on an expired certificate with no alert — the
+  renewal sweep only watches uploaded ones.
+- **Renewal is downtime.** Replacing the proxy drops connections. A
+  zero-downtime path needs the proxy to re-fetch, which needs a
+  credential it does not have after boot.
+- Adapter artefacts are not fetched, evaluations are judged rather than
+  produced, the guard model is not called, no v2 command reaches
+  CloudStack, and the batch worker has no leader election.

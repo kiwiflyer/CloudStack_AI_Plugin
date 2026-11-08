@@ -240,6 +240,7 @@ class ProxyProvisioner:
         engine_url: str = "",
         exposures_for: Any = None,
         mint_token: Any = None,
+        record_serial: Any = None,
     ) -> None:
         self.client = client
         # How a name is resolved back to what it should be: the
@@ -250,6 +251,7 @@ class ProxyProvisioner:
         # while a plan was still being reviewed would be spent
         # before the VM ever booted.
         self.mint_token = mint_token
+        self.record_serial = record_serial
         self.zone_id = zone_id
         self.template_id = template_id
         self.offering_id = offering_id

@@ -468,6 +468,29 @@ def plan_proxies(spec: PlatformSpec, state: ActualState) -> list[Action]:
 
         wanted[plan.name] = exposure
         if plan.name in state.proxies:
+            if _superseded(exposure, state):
+                # A proxy fetched its material once at first boot and
+                # cannot be told about a replacement, so renewing means
+                # replacing the VM. Downtime, and better than a proxy
+                # quietly serving a certificate that has expired.
+                delete = Action(
+                    kind=ActionKind.DELETE,
+                    resource_type="endpoint-proxy",
+                    name=plan.name,
+                    reason="its certificate has been renewed",
+                )
+                actions.append(delete)
+                actions.append(
+                    Action(
+                        kind=ActionKind.CREATE,
+                        resource_type="endpoint-proxy",
+                        name=plan.name,
+                        detail=f"on network {exposure.network_id}",
+                        reason="to serve the renewed certificate",
+                        # CloudStack will not hold two VMs of one name.
+                        depends_on=(delete.key,),
+                    )
+                )
             continue
 
         actions.append(
@@ -493,6 +516,24 @@ def plan_proxies(spec: PlatformSpec, state: ActualState) -> list[Action]:
         )
 
     return actions
+
+
+def _superseded(exposure: Any, state: ActualState) -> bool:
+    """Whether this exposure's proxy holds out-of-date material.
+
+    An unknown certificate does not count: the engine not seeing one
+    must not make the planner replace a working proxy on every run.
+    """
+    certificate_id = getattr(exposure, "certificate_id", "")
+    if not certificate_id:
+        return False
+
+    current = state.certificate_serials.get(certificate_id)
+    if current is None:
+        return False
+
+    built_with = getattr(exposure, "proxy_certificate_serial", 0) or 0
+    return bool(built_with) and built_with != current
 
 
 def _zone_for(spec: PlatformSpec, exposure: Any) -> Any:

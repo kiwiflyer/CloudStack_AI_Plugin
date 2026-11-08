@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from aisvc.endpoints import EndpointExposure
+from aisvc.endpoints import EndpointExposure, TlsSource
 from aisvc.endpoints.proxy import proxy_name
 from aisvc.inventory import CapacitySnapshot
 from aisvc.reconciler import ActionKind, plan_all
@@ -263,3 +263,80 @@ class TestExecuting:
         run = await executor.execute(Plan(actions=actions), zone="zone-east-1")
 
         assert run.status.value != "succeeded"
+
+
+class TestARenewalMakesAProxyStale:
+    """A proxy fetched its material once at first boot and has no way
+    to be told about a replacement. So renewing a certificate has to
+    replace the VM, which is downtime — the honest cost of the
+    one-time-token design, and better than a proxy quietly serving an
+    expired certificate.
+    """
+
+    def exposed(self, *, serial: int = 1) -> Any:
+        return exposure(
+            custom_domain="ai.acme.example",
+            tls=TlsSource.UPLOADED,
+            certificate_id="c-1",
+            proxy_certificate_serial=serial,
+        )
+
+    def plan(self, *, built_with: int, current: int) -> list[Any]:
+        name = proxy_name("acme", BASE)
+        return plan_proxies(
+            spec(),
+            state(
+                exposures=(self.exposed(serial=built_with),),
+                proxies={name: "vm-1"},
+                certificate_serials={"c-1": current},
+            ),
+        )
+
+    def test_a_current_proxy_is_left_alone(self) -> None:
+        assert self.plan(built_with=1, current=1) == []
+
+    def test_a_superseded_proxy_is_replaced(self) -> None:
+        actions = self.plan(built_with=1, current=2)
+
+        assert [a.kind for a in actions] == [ActionKind.DELETE, ActionKind.CREATE]
+
+    def test_the_replacement_says_why(self) -> None:
+        actions = self.plan(built_with=1, current=2)
+
+        assert "certificate" in actions[0].reason.lower()
+
+    def test_the_delete_comes_first(self) -> None:
+        """CloudStack will not have two VMs of the same name."""
+        actions = self.plan(built_with=1, current=2)
+
+        assert actions[0].kind is ActionKind.DELETE
+        assert actions[1].depends_on == (actions[0].key,)
+
+    def test_an_unknown_serial_does_not_churn(self) -> None:
+        """A certificate the engine cannot see should not make the
+        planner replace a working proxy on every run."""
+        name = proxy_name("acme", BASE)
+        actions = plan_proxies(
+            spec(),
+            state(
+                exposures=(self.exposed(serial=1),),
+                proxies={name: "vm-1"},
+                certificate_serials={},
+            ),
+        )
+
+        assert actions == []
+
+    def test_a_plain_endpoint_is_never_stale(self) -> None:
+        """No certificate, nothing to supersede."""
+        name = proxy_name("acme", BASE)
+        actions = plan_proxies(
+            spec(),
+            state(
+                exposures=(exposure(),),
+                proxies={name: "vm-1"},
+                certificate_serials={"c-1": 9},
+            ),
+        )
+
+        assert actions == []

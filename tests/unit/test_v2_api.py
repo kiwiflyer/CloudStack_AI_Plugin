@@ -691,3 +691,130 @@ class TestBootstrapRedemption:
     def test_caller_context_is_still_required_everywhere_else(self, client: TestClient) -> None:
         """The exception has to be this one path and no other."""
         assert client.get("/v1/models").status_code == 401
+
+
+class TestReplacingACertificate:
+    """A renewal replaces material in place, keeping the id.
+
+    Keeping it matters: an exposure names a certificate by id, and a
+    new id would mean rewriting every exposure that points at it, by
+    hand, at exactly the moment the old one is about to stop working.
+    """
+
+    def pair(self, domain: str = "ai.acme.example", days: int = 90) -> tuple[str, str]:
+        import datetime as dt
+
+        from tests.unit.test_certificates import make_cert
+
+        now = dt.datetime.now(dt.UTC)
+        return make_cert(
+            domains=(domain,),
+            not_before=now - dt.timedelta(days=1),
+            not_after=now + dt.timedelta(days=days),
+        )
+
+    def upload(self, client: TestClient) -> str:
+        cert, key = self.pair(days=20)
+        body: dict[str, Any] = client.post(
+            "/v1/certificates",
+            json={
+                "custom_domain": "ai.acme.example",
+                "certificate": cert,
+                "private_key": key,
+            },
+            headers=TENANT,
+        ).json()
+        return str(body["id"])
+
+    def replace(self, client: TestClient, cert_id: str, headers: Any = TENANT, **kw: Any) -> Any:
+        cert, key = self.pair(**kw)
+        return client.patch(
+            f"/v1/certificates/{cert_id}",
+            json={"certificate": cert, "private_key": key},
+            headers=headers,
+        )
+
+    def test_a_replacement_is_accepted(self, client: TestClient) -> None:
+        cert_id = self.upload(client)
+
+        assert self.replace(client, cert_id).status_code == 200
+
+    def test_the_id_does_not_change(self, client: TestClient) -> None:
+        cert_id = self.upload(client)
+
+        assert self.replace(client, cert_id).json()["id"] == cert_id
+
+    def test_the_expiry_moves_out(self, client: TestClient) -> None:
+        cert_id = self.upload(client)
+        before = client.get("/v1/certificates", headers=TENANT).json()["certificates"][0]
+
+        self.replace(client, cert_id, days=90)
+
+        after = client.get("/v1/certificates", headers=TENANT).json()["certificates"][0]
+        assert after["expires"] > before["expires"]
+
+    def test_the_fingerprint_changes(self, client: TestClient) -> None:
+        cert_id = self.upload(client)
+        before = client.get("/v1/certificates", headers=TENANT).json()["certificates"][0]
+
+        self.replace(client, cert_id)
+
+        after = client.get("/v1/certificates", headers=TENANT).json()["certificates"][0]
+        assert after["fingerprint"] != before["fingerprint"]
+
+    def test_a_replacement_for_another_domain_is_refused(self, client: TestClient) -> None:
+        """A renewal is the same endpoint's certificate, later. A
+        different domain is a new certificate and a new exposure."""
+        cert_id = self.upload(client)
+
+        response = self.replace(client, cert_id, domain="elsewhere.example")
+
+        assert response.status_code == 400
+
+    def test_an_expired_replacement_is_refused(self, client: TestClient) -> None:
+        cert_id = self.upload(client)
+
+        assert self.replace(client, cert_id, days=-1).status_code == 400
+
+    def test_one_expiring_sooner_is_refused(self, client: TestClient) -> None:
+        """Replacing a certificate with a shorter-lived one is a
+        mistake every time, and silently accepting it shortens the
+        endpoint's life with no sign."""
+        cert_id = self.upload(client)
+
+        response = self.replace(client, cert_id, days=5)
+
+        assert response.status_code == 400
+        assert "sooner" in response.json()["detail"].lower()
+
+    def test_a_mismatched_key_is_still_refused(self, client: TestClient) -> None:
+        cert_id = self.upload(client)
+        cert, _ = self.pair()
+        _, other = self.pair()
+
+        response = client.patch(
+            f"/v1/certificates/{cert_id}",
+            json={"certificate": cert, "private_key": other},
+            headers=TENANT,
+        )
+
+        assert response.status_code == 400
+
+    def test_another_tenant_cannot_replace_it(self, client: TestClient) -> None:
+        cert_id = self.upload(client)
+
+        assert self.replace(client, cert_id, headers=OTHER_TENANT).status_code == 404
+
+    def test_the_response_carries_no_material(self, client: TestClient) -> None:
+        cert_id = self.upload(client)
+
+        assert "PRIVATE KEY" not in self.replace(client, cert_id).text
+
+    def test_the_proxy_is_told_it_is_stale(self, client: TestClient) -> None:
+        """A running proxy fetched once at boot and cannot be told. The
+        response says so rather than leaving an operator to find out."""
+        cert_id = self.upload(client)
+
+        body = self.replace(client, cert_id).json()
+
+        assert body["proxyredeploy"] is True

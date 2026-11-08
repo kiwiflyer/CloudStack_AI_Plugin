@@ -15,8 +15,10 @@ Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`,
 
 v2 is reachable through the engine API and the CLI, not through CloudStack: its
 commands are `Release.V2` and the Java generator emits V1 only. No CloudStack has run the proxy provisioner and no
-proxy has booted. Nothing renews a certificate, fetches an adapter's artefacts,
-produces an evaluation or calls the guard model. The batch
+proxy has booted. Uploaded certificates are watched and can be
+replaced, but renewing one replaces its proxy VM — downtime, because a proxy fetches
+its material once at boot. ACME renewal is unwatched. Nothing fetches an adapter's
+artefacts, produces an evaluation or calls the guard model. The batch
 worker (`aisvc batch`) has no leader election, so run one.
 
 **A Kubernetes LoadBalancer Service cannot be placed on a chosen network.** The

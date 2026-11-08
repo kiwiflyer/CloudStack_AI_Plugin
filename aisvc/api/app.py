@@ -318,6 +318,15 @@ class BootstrapBody(BaseModel):
     token: str = Field(min_length=1)
 
 
+class CertificateReplacement(BaseModel):
+    """A renewal for an existing certificate. The domain is not here:
+    it comes from the record being replaced, so a renewal cannot
+    quietly become a different endpoint's certificate."""
+
+    certificate: str = Field(min_length=1)
+    private_key: str = Field(min_length=1)
+
+
 class CertificateBody(BaseModel):
     """An uploaded TLS pair (SPEC.md section 8)."""
 
@@ -333,6 +342,7 @@ def _certificate_row(record: Any) -> dict[str, Any]:
         "customdomain": record.custom_domain,
         "fingerprint": record.fingerprint,
         "expires": record.not_after.isoformat() if record.not_after else None,
+        "serial": record.serial,
         "account": record.account,
         "created": record.created_at.isoformat() if record.created_at else None,
     }
@@ -1416,6 +1426,69 @@ def _register_routes(app: FastAPI) -> None:
             "certificate": material.certificate,
             "privatekey": material.private_key,
         }
+
+    @app.patch(
+        f"{PREFIX}/certificates/{{certificate_id}}",
+        tags=["deployments"],
+        summary="Replace a certificate",
+    )
+    async def replace_certificate(
+        certificate_id: str,
+        caller: CallerDep,
+        session: SessionDep,
+        body: CertificateReplacement,
+    ) -> dict[str, Any]:
+        """Renew in place, keeping the id (SPEC.md section 8).
+
+        The id stays because exposures name it: a new one would mean
+        rewriting every exposure by hand, at exactly the moment the old
+        certificate is about to stop working.
+        """
+        store = CertificateStore(session)
+        record = store.get(certificate_id)
+        if record is None or not caller.may_see(account=record.account, domain_path=record.domain):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such certificate: {certificate_id}",
+                code="certificate_not_found",
+            )
+
+        try:
+            info = validate_certificate(
+                body.certificate, body.private_key, domain=record.custom_domain
+            )
+        except CertificateRejected as exc:
+            raise ApiError(status.HTTP_400_BAD_REQUEST, exc.detail, code=exc.reason) from exc
+
+        # A replacement that expires sooner is a mistake every time,
+        # and accepting it silently shortens the endpoint's life with
+        # nothing to show for it.
+        current = record.not_after
+        if current is not None:
+            aware = current if current.tzinfo is not None else current.replace(tzinfo=UTC)
+            if info.not_after <= aware:
+                raise ApiError(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"this certificate expires sooner than the one it would "
+                    f"replace ({info.not_after.isoformat()} against "
+                    f"{aware.isoformat()})",
+                    code="expires_sooner",
+                )
+
+        store.replace_material(
+            record,
+            certificate=body.certificate,
+            private_key=body.private_key,
+            fingerprint=info.fingerprint,
+            not_after=info.not_after,
+        )
+
+        row = _certificate_row(record)
+        # A running proxy fetched its material once at first boot and
+        # has no way to be told. Saying so here beats an operator
+        # discovering it when the old certificate stops.
+        row["proxyredeploy"] = True
+        return row
 
     @app.delete(
         f"{PREFIX}/certificates/{{certificate_id}}",

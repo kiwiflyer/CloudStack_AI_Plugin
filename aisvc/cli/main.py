@@ -25,9 +25,15 @@ from aisvc.batch.runner import (
     preemption_signal,
 )
 from aisvc.certificates.bootstrap import BootstrapTokens
+from aisvc.certificates.renewal import sweep_renewals
 from aisvc.cloudstack import CloudStackClient, CloudStackError, Credentials
 from aisvc.db import Base, RunLog, UsageStore, create_session_factory, session_scope
-from aisvc.db.tier2 import AdapterStore, BatchStore, ExposureStore
+from aisvc.db.tier2 import (
+    AdapterStore,
+    BatchStore,
+    CertificateStore,
+    ExposureStore,
+)
 from aisvc.endpoints.proxy import ProxyProvisioner, observe_proxies
 from aisvc.inventory import take_snapshot
 from aisvc.k8s import DEFAULT_NAMESPACE
@@ -152,6 +158,17 @@ def _cluster() -> ClusterKubernetes:
     return ClusterKubernetes(kubeconfig=os.environ.get("KUBECONFIG") or None)
 
 
+def _certificate_serials() -> dict[str, int]:
+    """Each certificate's current serial.
+
+    The planner compares these against what each proxy was built with,
+    which is how a renewal becomes a proxy replacement.
+    """
+    factory = create_session_factory()
+    with session_scope(factory) as session:
+        return {record.id: record.serial or 1 for record in CertificateStore(session).all()}
+
+
 def _stored_exposures() -> list[Any]:
     """Private endpoints, from the database.
 
@@ -194,6 +211,7 @@ async def _observe(spec: PlatformSpec) -> ActualState:
         health=await _observe_health({model for model, _ in deployments}),
         exposures=tuple(_stored_exposures()),
         proxies=await observe_proxies(client),
+        certificate_serials=_certificate_serials(),
     )
 
 
@@ -236,7 +254,29 @@ async def _proxy_provisioner(client: Any, spec: PlatformSpec, session: Any) -> A
         engine_url=os.environ.get("AISVC_ENGINE_URL", ""),
         exposures_for=_exposures_for(session),
         mint_token=_token_minter(session),
+        record_serial=_serial_recorder(session),
     )
+
+
+def _serial_recorder(session: Any) -> Callable[[str, str, str], None]:
+    """Remember which certificate serial a proxy was built from.
+
+    Without it every proxy reads as current forever and a renewal
+    never replaces one.
+    """
+    certificates = CertificateStore(session)
+    exposures = ExposureStore(session)
+
+    def record(deployment: str, account: str, certificate_id: str) -> None:
+        certificate = certificates.get(certificate_id)
+        if certificate is None:
+            return
+        for exposure in exposures.all():
+            if (exposure.deployment, exposure.account) == (deployment, account):
+                exposure.proxy_certificate_serial = certificate.serial or 1
+        session.flush()
+
+    return record
 
 
 def _token_minter(session: Any) -> Callable[[str, str], str]:
@@ -342,6 +382,9 @@ async def _apply(
                     # rows naming a certificate; there is no reason to
                     # keep them, and this is the run that created them.
                     BootstrapTokens(session).sweep()
+                    # Nothing else runs often enough to notice an
+                    # expiry: a certificate does not degrade, it stops.
+                    await sweep_renewals(session, sink=LogSink())
                 return run.id, run.status.value
 
 

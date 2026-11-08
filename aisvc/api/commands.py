@@ -235,6 +235,13 @@ COMMANDS: tuple[Command, ...] = (
     _c("uploadAiCertificate", "POST", "/v1/certificates", ALL, release=Release.V2),
     _c("listAiCertificates", "GET", "/v1/certificates", ALL, release=Release.V2),
     _c(
+        "replaceAiCertificate",
+        "PATCH",
+        "/v1/certificates/{certificate_id}",
+        ALL,
+        release=Release.V2,
+    ),
+    _c(
         "deleteAiCertificate",
         "DELETE",
         "/v1/certificates/{certificate_id}",

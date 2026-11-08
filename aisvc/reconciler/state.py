@@ -52,6 +52,9 @@ class ActualState:
     exposures: tuple[Any, ...] = ()
     #: Per-tenant gateway proxy VMs that exist, by name.
     proxies: dict[str, str] = field(default_factory=dict)
+    #: Each certificate's current serial, so a proxy built from an
+    #: older one can be spotted (SPEC.md section 8).
+    certificate_serials: dict[str, int] = field(default_factory=dict)
     observed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def deployment(self, model: str, colour: str) -> DeployedModel | None:
