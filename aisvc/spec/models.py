@@ -44,6 +44,10 @@ class GpuClass(Base):
     service_offering: str
     gpus_per_node: int = Field(gt=0, le=8)
     gpu_mem_gb: float = Field(gt=0)
+    #: `vgpu` and `mig` are accepted but mis-counted today: `inventory`
+    #: infers capacity from `host_tag` per host, not per GPU. CloudStack
+    #: 4.21+ reports GPU devices natively and is the fix
+    #: (docs/adr/0003-cloudstack-release.md).
     mode: GpuMode = "passthrough"
 
 

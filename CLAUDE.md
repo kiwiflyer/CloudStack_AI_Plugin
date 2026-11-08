@@ -156,6 +156,8 @@ deployment → API key → the request itself, within merged bounds. Policies ar
 or `locked`. `getAiEffectiveParameters` must report both the resolved value and its source level.
 
 **Passthrough GPUs cannot live-migrate.** Drain and replace nodes; never attempt migration.
+Drain must **destroy**, not stop: `gpu.detach.on.stop` defaults to false, so a stopped node
+keeps its GPU allocated (ADR-0003).
 
 **API conventions.** Async calls return `202` with a job id mirroring CloudStack async job states.
 Every engine request carries `{user_id, account, domain_path, role}` set by the plugin from the

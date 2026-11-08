@@ -80,9 +80,11 @@ amended rule and a note recording why.
    `quote` (spaces as `%20`) appears in some clients. Also unverified against a live
    management server — only against the shape pinned in `tests/fixtures/cloudstack/`.
 
-2. **Node allocation is counted per host, not per GPU.** A host counts as allocated when it
-   runs a VM with the class's service offering. That holds for passthrough; `vgpu` and `mig`
-   classes will need per-GPU accounting.
+2. ~~**Node allocation is counted per host, not per GPU.**~~ **Answered by
+   [ADR-0003](docs/adr/0003-cloudstack-release.md):** CloudStack 4.21+ discovers GPU devices
+   per host, so per-GPU accounting comes from CloudStack. `inventory` still infers capacity
+   from `host_tag` and so mis-counts `vgpu` and `mig`; moving it onto the GPU device APIs is
+   an open action item on that ADR.
 
 3. The eight open decisions in SPEC.md section 14 are untouched. None blocked milestone 1;
    the serving-layer and gateway choices now block milestone 3.
@@ -169,6 +171,7 @@ bare 5xx with no CloudStack error in it.
 | --- | --- | --- |
 | [0001](docs/adr/0001-serving-layer.md) | Serving layer: plain Kubernetes Deployments rendered by `k8s`; no KServe, llm-d or vLLM production stack in v1 | Accepted 2026-11-07 |
 | [0002](docs/adr/0002-gateway.md) | Gateway: LiteLLM Proxy, with hooks importing `aisvc.profiles` rather than reimplementing precedence | Accepted 2026-11-07 |
+| [0003](docs/adr/0003-cloudstack-release.md) | Target CloudStack 4.23.0.0; GPU offerings and limits are native, Extensions do not cover the plugin | Accepted 2026-11-07 |
 
 ### ADR-0001 in one paragraph
 
@@ -203,6 +206,30 @@ correctness-critical logic in the platform, and LiteLLM's Python hooks let the g
 same `aisvc.profiles.resolve()` that `getAiEffectiveParameters` calls. Note also that Envoy AI
 Gateway was renamed Agent Router and moved from CNCF to the Agentic AI Foundation in September
 2026 — not disqualifying, but the spec's name for it is already stale.
+
+### ADR-0003 in one paragraph
+
+CloudStack **4.23.0.0** is the target. GPU and vGPU offerings and the `max.*.gpus` resource
+limits have been native since 4.21, so the plugin configures them rather than building a
+parallel quota system. The Extensions framework, which section 9 told us to evaluate before
+writing bespoke Java, **does not** cover this plugin: its custom actions attach only to
+`VirtualMachine`, `Network` and `Vpc`, and it cannot define new first-class resource types
+with their own API commands — so milestone 5's Java plugin is necessary, and that question is
+closed. It stays relevant for v2 private endpoints, where attaching to a tenant VPC tier is
+exactly a `Vpc` custom action.
+
+**One factor to keep in view:** 4.23 is a **non-LTS** release, supported only until the next
+regular or LTS release, while 4.22 is the current LTS and 4.24 is planned as the next one.
+Providers run LTS. The ADR's mitigation is to hold the plugin's compile-time surface to APIs
+that also exist in 4.22 LTS, with a CI job proving it, so retargeting 4.24 LTS for GA costs a
+rebuild rather than a rewrite.
+
+**Two findings change existing code.** GPU devices are discovered natively per host since
+4.21, which is a better capacity source than our `host_tag` inference and resolves the
+per-GPU accounting question left open in milestone 2 — until `inventory` moves onto those
+APIs, `mode: vgpu` and `mode: mig` mis-count. And `gpu.detach.on.stop` defaults to false, so
+milestone 7's drain must destroy rather than stop, or drained nodes will hold GPUs they are
+not using.
 
 ## Licensing
 
@@ -378,8 +405,9 @@ model". The catalog still lists during an outage, with `mirrored: false`.
 
 ## Milestone 5 — Native API plugin (next)
 
-In a CloudStack source checkout of the target release: `plugins/ai-services` with the v1
-commands from section 9, ConfigKeys, ownership table, async bridge, events, role permissions,
-usage types, deletion hooks; JUnit and Marvin tests. **Blocked on** SPEC.md section 14's open
-decision on the target CloudStack release — the plugin is written against a specific version's
-`PluggableService`, Extensions framework and GPU resource limits.
+`plugins/ai-services` with the v1 commands from section 9, ConfigKeys, ownership table, async
+bridge, events, role permissions, usage types, deletion hooks; JUnit and Marvin tests.
+Unblocked by [ADR-0003](docs/adr/0003-cloudstack-release.md): **CloudStack 4.23.0.0**.
+
+Needs a Java toolchain and a CloudStack source checkout or published artifacts to build
+against — neither is set up in this repo yet, and `make test-java` still exits 1.

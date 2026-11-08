@@ -98,6 +98,11 @@ class ClassCapacity:
     def gpus_unhealthy(self) -> int:
         return self.nodes_unhealthy * self.gpus_per_node
 
+    #: Counted per host, from `host_tag`. Correct for passthrough, where a
+    #: node VM takes the whole host; wrong for `vgpu` and `mig`, which
+    #: share one host between tenants. CloudStack 4.21+ discovers GPU
+    #: devices per host and is the proper source
+    #: (docs/adr/0003-cloudstack-release.md).
     def can_host(self, *, tensor_parallel: int) -> bool:
         """Whether a replica of this width fits on one free node.
 
