@@ -135,3 +135,84 @@ class TestTheCertificateFetcher:
 
     def test_it_fails_rather_than_guessing_an_engine(self) -> None:
         assert "no engine URL" in source(self.SCRIPT)
+
+
+class TestPackerItself:
+    """The real thing, when the binary is there.
+
+    Skipped otherwise rather than failing, as the Terraform and
+    Playwright acceptance tests are: a contributor without Packer
+    should still get a green suite, and the structural checks above
+    still run.
+
+    `packer init` is what caught the version constraint that could
+    never resolve, so it is part of this rather than assumed.
+    """
+
+    @staticmethod
+    def packer() -> str | None:
+        import shutil
+
+        return shutil.which("packer")
+
+    @pytest.mark.parametrize("path", TEMPLATES, ids=lambda p: p.name)
+    def test_the_plugin_constraint_resolves(self, path: Path) -> None:
+        """A constraint matching no release refuses the template
+        outright, which is how `>= 1.1.0` sat here unbuildable."""
+        import subprocess
+
+        binary = self.packer()
+        if binary is None:
+            pytest.skip("packer is not installed")
+
+        result = subprocess.run(
+            [binary, "init", path.name],
+            cwd=PACKER,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+
+        # The message goes to stdout, not stderr, and `packer validate`
+        # on its own does not catch this at all — it prints "Did you
+        # run packer init?" and carries on. So this asserts on init's
+        # own exit code and its whole output.
+        output = (result.stdout + result.stderr).strip()
+        assert result.returncode == 0, output
+        assert "no matching version" not in output, output
+
+    @pytest.mark.parametrize("path", TEMPLATES, ids=lambda p: p.name)
+    def test_packer_validates_it(self, path: Path) -> None:
+        import subprocess
+
+        binary = self.packer()
+        if binary is None:
+            pytest.skip("packer is not installed")
+
+        result = subprocess.run(
+            [
+                binary,
+                "validate",
+                # Values that only have to be well formed: validate
+                # does not reach CloudStack.
+                "-var",
+                "image_version=validate-check",
+                "-var",
+                "cloudstack_api_url=https://cloudstack.invalid/client/api",
+                "-var",
+                "cloudstack_api_key=validate-only-key",
+                "-var",
+                "cloudstack_secret_key=validate-only-secret",
+                "-var",
+                "zone=validate-zone",
+                "-var",
+                "network=validate-network",
+                path.name,
+            ],
+            cwd=PACKER,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+
+        assert result.returncode == 0, (result.stdout + result.stderr).strip()

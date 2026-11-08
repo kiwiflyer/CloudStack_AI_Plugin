@@ -9,7 +9,9 @@
 packer {
   required_plugins {
     cloudstack = {
-      version = ">= 1.1.0"
+      # The plugin's newest release is 1.0.2; ">= 1.1.0" resolved to
+      # nothing and `packer init` refused the template outright.
+      version = ">= 1.0.2"
       source  = "github.com/hashicorp/cloudstack"
     }
   }

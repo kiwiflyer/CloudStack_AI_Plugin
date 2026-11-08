@@ -1640,12 +1640,11 @@ in it. certbot is baked in too, so an ACME endpoint does not wait on a
 package download at first boot, and the default nginx site is removed
 so the proxy cannot answer on a tenant's network with a welcome page.
 
-`packer validate` has **not** been run — the binary is not installed
-and fetching it was refused. `tests/unit/test_packer_templates.py`
-checks what breaks a build without it: a file provisioner pointing at
+`packer validate` now runs, and `tests/unit/test_packer_templates.py`
+keeps the structural checks beside it — a file provisioner pointing at
 something uncommitted, missing `sensitive = true` on credentials, a
-public template, unbalanced braces. Weaker than a real validate; it
-catches the mistakes that have actually happened.
+public template, unbalanced braces — because validate does not cover
+them.
 
 ### The bootstrap problem
 
@@ -1668,8 +1667,9 @@ certificate at all.
 ### What is still not true
 
 - **The bootstrap above.** The proxy cannot authenticate to the engine.
-- **`packer validate` has not run**, and neither template has been
-  built against a real CloudStack.
+- **Neither template has been built against a real CloudStack.**
+  `packer validate` passes; a build needs a zone, a base template and
+  network egress.
 - **Nothing renews an uploaded certificate.** The expiry is stored;
   nothing watches it, and no alert fires as it approaches.
 - **ACME is configured but unexercised.** certbot runs at first boot
@@ -1679,3 +1679,44 @@ certificate at all.
 - Adapter artefacts are not fetched, evaluations are judged rather than
   produced, the guard model is not called, no v2 command reaches
   CloudStack, and the batch worker has no leader election.
+
+## Milestone 9 — validating the Packer templates
+
+Packer is installed now, so `packer validate` runs. It found something
+immediately.
+
+### Neither template could ever have been built
+
+Both declared `version = ">= 1.1.0"` for the CloudStack plugin. The
+plugin's newest release is **1.0.2**, so the constraint matched nothing
+and `packer init` refused both outright:
+
+```
+no matching version found in releases. In [{v0.0.1} {v1.0.0} {v1.0.1} {v1.0.2}]
+```
+
+`gpu-golden.pkr.hcl` has carried that since milestone 2, and the
+structural tests could not see it — a version constraint is
+syntactically fine and semantically impossible. Both now pin
+`>= 1.0.2`, `packer init` installs the plugin, and `packer validate`
+passes on both.
+
+### Two things about how Packer reports this
+
+Both shaped the test, and both would have made a careless guard useless:
+
+- **`packer init` writes that failure to stdout, not stderr.** A check
+  reading stderr sees nothing and passes.
+- **`packer validate` does not catch it at all.** With an unresolvable
+  constraint it prints "Did you run packer init for this project?" and
+  carries on. So the guard runs `init` and asserts on its exit code,
+  not just `validate`.
+
+Verified by breaking each on purpose: a bogus field in the source block
+fails `validate`, and `>= 9.9.9` fails `init`.
+
+### Running it
+
+The Packer tests skip when the binary is absent, as the Terraform and
+Playwright acceptance tests do, so a contributor without Packer still
+gets a green suite and the structural checks still run.
