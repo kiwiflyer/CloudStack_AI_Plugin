@@ -259,8 +259,7 @@ It fails with a clear message if the CloudStack artifacts are absent.
 ### Deploy it
 
 Drop the built JAR into the management server's classpath and restart
-it. `META-INF/db/schema-ai-services.sql` creates the `ai_deployment`
-ownership table — deliberately the only table the plugin owns, so
+it. The plugin creates its own `ai_deployment` — deliberately the only table the plugin owns, so
 CloudStack enforces ownership, list filtering and cleanup natively while
 the engine stays the source of truth for runtime state.
 

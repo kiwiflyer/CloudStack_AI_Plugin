@@ -386,6 +386,12 @@ public class AiServicesManagerImpl extends ManagerBase
      */
     @Override
     public boolean start() {
+        // CloudStack has no way for a plugin JAR to join its schema
+        // upgrade chain, so the one table this plugin owns is created
+        // here. See AiServicesSchema for why, and why a failure is
+        // logged rather than fatal.
+        applySchema();
+
         maintenanceListener = new AiMaintenanceListener(
                 new MaintenanceDrain(
                         this::gpuNodesOnHost,
@@ -398,13 +404,29 @@ public class AiServicesManagerImpl extends ManagerBase
     }
 
     /**
+     * Create the plugin's table if it is not there.
+     *
+     * <p>Its own method so startup can be tested without a database,
+     * the same seam {@link #v2Enabled()} uses.
+     */
+    boolean applySchema() {
+        return AiServicesSchema.applyToCloudDb();
+    }
+
+    /**
      * The configured event bus, or null when there is none.
      *
      * <p>No event bus plugin is enabled in a default CloudStack install,
      * so its absence is the normal case and not an error. CloudStack's own
      * code resolves it this way for the same reason.
+     *
+     * <p>Package-private so startup can be tested without a Spring
+     * context, the same seam {@link #v2Enabled()} and
+     * {@link #applySchema()} use. Note that under {@code -ea}
+     * CloudStack's {@code ComponentContext.getComponent} asserts rather
+     * than throwing one of the exceptions caught here.
      */
-    private EventBus resolveEventBus() {
+    EventBus resolveEventBus() {
         try {
             return ComponentContext.getComponent(EventBus.class);
         } catch (NoSuchBeanDefinitionException | IllegalStateException absent) {

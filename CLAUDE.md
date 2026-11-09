@@ -276,6 +276,17 @@ it needs parameter types, response classes and event names the engine's map does
 model. `tests/unit/test_commands.py` compares them, and parses SPEC section 9's table
 against the map as well. Add a command in one place and those guards name the others.
 
+**The plugin creates its own `ai_deployment` table at startup** (`AiServicesSchema`),
+because CloudStack's schema upgrade chain is closed to a plugin JAR and the bundled
+`.sql` had nothing to run it. A failure is logged, never fatal: an optional plugin must
+not stop a management server from starting. Upstream the table belongs in
+`engine/schema` and this class should go.
+
+**Four files in CloudStack's own tree are still needed** to ship this: `plugins/pom.xml`
+and `client/pom.xml` (no auto-discovery; the shade plugin bundles declared dependencies
+only), the `ui/` section plus its `router.js` registration, and — upstream — the table in
+`engine/schema`. Everything else is self-contained.
+
 **In the Java plugin:** build the caller context from `CallContext`, never from request
 parameters — the engine filters every response by what the plugin asserts. Never weaken the
 mTLS requirement to a fallback. Failover retries only *unreachable* replicas; a replica that

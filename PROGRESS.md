@@ -2391,3 +2391,67 @@ units.
   failure path was checked.
 - It does not configure the gateway, build the Packer images, or
   create the object store bucket.
+
+## Milestone 9 — what CloudStack's own tree still needs, and one gap closed
+
+The question was whether any of this requires changes to CloudStack
+itself. Checking produced a list, and found a bug.
+
+### Four touch points in CloudStack's tree
+
+Verified against 4.20's own files rather than assumed:
+
+| File | Why |
+| --- | --- |
+| `plugins/pom.xml` | Modules are listed explicitly; there is no auto-discovery, so Maven never builds a plugin that is not a `<module>`. |
+| `client/pom.xml` | The shade plugin bundles declared dependencies; a plugin that is not one is not in the management server artifact. |
+| `ui/src/…` and `ui/src/config/router.js` | CloudStack's UI has an iframe plugin mechanism but none for a native section, and router.js imports section configs statically. |
+| `engine/schema/…` | Where a plugin's tables belong upstream — Quota's live there, and its pom depends on `cloud-engine-schema`. |
+
+Everything else is genuinely self-contained: the Spring module is
+discovered from `META-INF/cloudstack/ai-services/module.properties`
+(`parent=api`), commands come from `PluggableService.getCommands()`,
+and the nine keys from `Configurable`.
+
+### The gap: a schema file nothing ran
+
+`META-INF/db/schema-ai-services.sql` shipped with **no mechanism to
+apply it**. CloudStack runs schema through `DbUpgrade` classes
+registered in its core upgrade chain; a plugin JAR cannot join that
+chain, and nothing in this repository ran the file either. The table
+was never created, and the first `deployAiModel` would have failed on
+a missing table — on a real management server, which is why no test
+caught it.
+
+`AiServicesSchema` now applies it at startup. Safe because the script
+is `CREATE TABLE IF NOT EXISTS`, so a server that already has the
+table does nothing.
+
+**A failure is logged, not fatal.** An optional plugin that cannot
+create its table must not stop a management server from starting; the
+commands that need the table fail instead, and the reason is logged
+once at startup where an operator sees it.
+
+**The parser is not a split on `;`.** A semicolon inside a `COMMENT`
+string would be cut in half and executed as two broken statements, and
+the real script already contains `the engine''s identifier` — an
+escaped quote that a naive parser ends the string on.
+
+If this is ever merged upstream the table belongs in CloudStack's own
+upgrade path and this class should go. The class says so.
+
+### Two smaller things that fell out
+
+`resolveEventBus()` is package-private now, a seam like `v2Enabled()`
+and `applySchema()`, so startup can be tested without a Spring
+context. Worth knowing: under `-ea` CloudStack's
+`ComponentContext.getComponent` raises an `AssertionError` rather than
+any of the exceptions that method catches, so a management server run
+with assertions enabled would fail there. Not fixed — catching `Error`
+to paper over it would be worse than the bug.
+
+### What is still not true
+
+- **No management server has run this**, so the schema application has
+  never created a real table. It is tested against a recording fake.
+- The four mainline touch points are a PR nobody has opened.
