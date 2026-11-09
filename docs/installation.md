@@ -40,9 +40,18 @@ engine. **The engine is never exposed to tenant networks.**
 - **NVIDIA GPU hosts** with host tags, and matching service offerings.
   A replica is capped at one host; there is no multi-node tensor
   parallelism.
-- **Postgres.** The engine keeps runs, actions, usage, budgets,
-  profiles, hashed keys, mirror requests and evaluations there. Nothing
-  lives only in memory.
+- **Postgres**, in HA, with backups. The engine keeps runs, actions,
+  usage, budgets, profiles, hashed keys, mirror requests and
+  evaluations there. Nothing lives only in memory.
+
+  **Yes, this is a second database**, alongside the MariaDB your
+  management server already runs, and it is the largest piece of
+  infrastructure this product asks for that CloudStack did not already
+  require. It is separate on purpose: the gateway writes a usage row
+  per request, and a disk filled by AI Services should not be every
+  hypervisor operation in the zone failing at once.
+  [ADR-0004](adr/0004-state-store.md) has the full reasoning, including
+  what it would take to support MariaDB instead.
 - **An S3-compatible object store** — Ceph RGW, MinIO or S3 — for
   mirrored model artifacts.
 - **Python 3.12** and **JDK 17** (targeting JDK 11 bytecode).

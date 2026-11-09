@@ -250,6 +250,12 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
   **import `aisvc.profiles` directly** — never reimplement profile precedence, in any
   language. Stay on LiteLLM's MIT side: nothing from `enterprise/`, no licence-gated features.
 
+- **ADR-0004 — state store:** the engine's state lives in **its own Postgres**, not in
+  CloudStack's MariaDB. The reason is blast radius, not the engine: the gateway writes a
+  usage row per request, and the reconciler holds a connection for a whole run. The only
+  Postgres-specific code is the advisory lock in `aisvc/reconciler/leader.py`; JSON columns
+  are already a portable variant. MariaDB as an optional backend stays open.
+
 **Guardrail profiles are scoped to the caller**, not to a role: a caller writes at
 their own level and no higher (`aisvc/guardrails/authority.py`), so a tenant tightens
 their own account and cannot reach the platform profile. Deployment scope stays root
