@@ -253,8 +253,11 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
 - **ADR-0004 — state store:** the engine's state lives in **its own Postgres**, not in
   CloudStack's MariaDB. The reason is blast radius, not the engine: the gateway writes a
   usage row per request, and the reconciler holds a connection for a whole run. The only
-  Postgres-specific code is the advisory lock in `aisvc/reconciler/leader.py`; JSON columns
-  are already a portable variant. MariaDB as an optional backend stays open.
+  Postgres-specific code was the advisory lock in `aisvc/reconciler/leader.py`, which now
+  branches on the dialect and takes a real `GET_LOCK` on MariaDB — **never let a backend
+  fall through to the no-lock branch**, which exists for SQLite only and would let two
+  replicas both provision a pool. MariaDB is supported through the `mariadb` extra
+  (PyMySQL, MIT — not the LGPL package called `mariadb`); Postgres stays the default.
 
 **Guardrail profiles are scoped to the caller**, not to a role: a caller writes at
 their own level and no higher (`aisvc/guardrails/authority.py`), so a tenant tightens

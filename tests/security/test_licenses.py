@@ -102,6 +102,19 @@ class TestInstalledTree:
         assert "psycopg2" not in names
         assert "psycopg2-binary" not in names
 
+    def test_the_mariadb_driver_is_not_the_lgpl_connector(self) -> None:
+        """Oracle's mysql-connector and MariaDB's own are LGPL.
+
+        The `mariadb` extra installs PyMySQL (MIT) instead
+        (docs/adr/0004-state-store.md). An operator who reaches for the
+        obvious package name would pull Category X into the tree.
+        """
+        names = {p.name for p in installed_licenses()}
+
+        assert "mariadb" not in names
+        assert "mysql-connector-python" not in names
+        assert "mysqlclient" not in names
+
     def test_the_tree_is_not_empty(self) -> None:
         """Guards against the scan silently finding nothing."""
         assert len(installed_licenses()) > 20

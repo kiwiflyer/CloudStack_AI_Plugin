@@ -31,6 +31,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# MariaDB or MySQL instead of Postgres (docs/adr/0004-state-store.md).
+# PyMySQL is MIT and pure Python; the official mariadb connector is
+# LGPL and therefore Category X for an ASF project.
+mariadb = [
+    "pymysql>=1.1",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",

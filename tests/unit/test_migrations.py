@@ -6,6 +6,7 @@ forgets the migration, so a fresh deploy and an upgraded one disagree.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -240,3 +241,117 @@ class TestTheCliDoesNotBuildSchemasItself:
 
     def test_the_cli_upgrades_instead(self) -> None:
         assert "upgrade_to_head" in self.source()
+
+
+# --------------------------------------------------------------------------
+# The schema on MariaDB
+# --------------------------------------------------------------------------
+#
+# ADR-0004 keeps MariaDB open as an alternative backend. These compile
+# the schema for MySQL — which is the dialect MariaDB uses — without a
+# server, so the things that only bite on MySQL are caught here rather
+# than on an operator's first migration: a String with no length, a
+# type the dialect cannot render, an index too wide for InnoDB.
+
+
+def mysql_ddl() -> dict[str, str]:
+    """CREATE TABLE for every table, as MySQL would receive it."""
+    from sqlalchemy.dialects.mysql import dialect as mysql_dialect
+    from sqlalchemy.schema import CreateTable
+
+    import aisvc.api.jobs  # noqa: F401  (registers aisvc_job)
+    from aisvc.db.models import Base
+
+    engine = mysql_dialect()
+    return {
+        table.name: str(CreateTable(table).compile(dialect=engine))
+        for table in Base.metadata.sorted_tables
+    }
+
+
+class TestTheSchemaCompilesForMariaDb:
+    def test_every_table_renders(self) -> None:
+        tables = mysql_ddl()
+
+        assert len(tables) >= 13
+        assert "aisvc_job" in tables
+
+    def test_every_string_column_has_a_length(self) -> None:
+        # MySQL cannot create a VARCHAR without one; SQLAlchemy raises
+        # at compile time, which is what the call above would hit.
+        for name, ddl in mysql_ddl().items():
+            assert "VARCHAR NOT NULL" not in ddl, f"{name} has an unsized VARCHAR"
+
+    def test_indexed_strings_stay_inside_the_innodb_key_limit(self) -> None:
+        # utf8mb4 is 4 bytes a character, and InnoDB caps an index at
+        # 3072 bytes, so an indexed VARCHAR over 768 fails to create.
+        from sqlalchemy import String
+
+        import aisvc.api.jobs  # noqa: F401
+        from aisvc.db.models import Base
+
+        for table in Base.metadata.sorted_tables:
+            for column in table.columns:
+                if not (column.index or column.primary_key):
+                    continue
+                if isinstance(column.type, String) and column.type.length:
+                    assert column.type.length <= 768, (
+                        f"{table.name}.{column.name} is indexed and "
+                        f"{column.type.length} characters; too wide for utf8mb4 InnoDB"
+                    )
+
+    def test_json_columns_render_as_json(self) -> None:
+        # The variant falls back from JSONB to JSON off Postgres.
+        assert "JSON" in mysql_ddl()["aisvc_run"]
+
+    def test_timestamps_render_even_though_mysql_drops_the_zone(self) -> None:
+        # MySQL's DATETIME carries no timezone, so stored values read
+        # back naive. Every read path already copes, because SQLite
+        # behaves the same way and the whole suite runs on it.
+        assert "DATETIME" in mysql_ddl()["aisvc_usage"]
+
+
+class TestTheMigrationsRunForMariaDb:
+    """Alembic offline mode compiles every revision without a server.
+
+    Stronger than compiling the models: it exercises the migration
+    scripts themselves, which is what an operator's first `upgrade
+    head` actually runs. A type or an ALTER that MySQL cannot render
+    fails here rather than halfway through their install.
+    """
+
+    def sql(self) -> str:
+        import io
+        from contextlib import redirect_stdout
+
+        from alembic.command import upgrade
+
+        from aisvc.db.migrate import alembic_config
+
+        config = alembic_config("mysql+pymysql://u:p@localhost/aisvc")
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            upgrade(config, "head", sql=True)
+        return buffer.getvalue()
+
+    def test_it_compiles_every_revision(self) -> None:
+        emitted = self.sql()
+
+        # Alembic writes "-- Running upgrade <from> -> <to>" per step.
+        applied = re.findall(r"^-- Running upgrade \S* -> (\d+)", emitted, re.MULTILINE)
+
+        assert applied == ["0001", "0002", "0003", "0004", "0005", "0006", "0007"]
+
+    def test_it_creates_the_tables(self) -> None:
+        emitted = self.sql()
+
+        for table in ("aisvc_run", "aisvc_job", "aisvc_usage", "aisvc_private_endpoint"):
+            assert f"CREATE TABLE {table}" in emitted
+
+    def test_no_postgres_only_type_leaks_through(self) -> None:
+        # JSONB is a variant that must fall back off Postgres.
+        assert "JSONB" not in self.sql()
+
+    def test_the_alters_render(self) -> None:
+        # 0007 adds columns; an unrenderable default would fail here.
+        assert "ALTER TABLE aisvc_certificate ADD COLUMN serial" in self.sql()

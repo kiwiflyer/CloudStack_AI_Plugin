@@ -346,3 +346,136 @@ class TestTheSystemdUnits:
         unit = install.systemd_unit("aisvc-batch", install.REPO_ROOT, "batch")
 
         assert "one" in unit.lower()
+
+
+class TestChoosingTheDatabase:
+    """Postgres or MariaDB, per ADR-0004.
+
+    The ADR keeps MariaDB open for operators who would rather not run
+    a second database server beside the MariaDB CloudStack already
+    uses. The installer has to offer it, and has to install the right
+    driver — the obvious package name is LGPL.
+    """
+
+    def test_postgres_is_the_default(self) -> None:
+        assert install.DEFAULT_ENGINE == "postgres"
+
+    def test_both_engines_are_offered(self) -> None:
+        assert set(install.DATABASE_ENGINES) == {"postgres", "mariadb"}
+
+    def test_a_postgres_url_uses_pg8000(self) -> None:
+        url = install.database_url(
+            "postgres", host="db.example", name="aisvc", user="u", password="p"
+        )
+
+        assert url.startswith("postgresql+pg8000://")
+
+    def test_a_mariadb_url_uses_pymysql(self) -> None:
+        # Not the mariadb connector, which is LGPL.
+        url = install.database_url(
+            "mariadb", host="db.example", name="aisvc", user="u", password="p"
+        )
+
+        assert url.startswith("mysql+pymysql://")
+
+    def test_a_mariadb_url_asks_for_utf8mb4(self) -> None:
+        # The default latin1 would mangle a model name or a tenant's
+        # domain the first time either carried a non-ASCII character.
+        url = install.database_url(
+            "mariadb", host="db.example", name="aisvc", user="u", password="p"
+        )
+
+        assert "charset=utf8mb4" in url
+
+    def test_a_password_with_an_at_sign_does_not_break_the_url(self) -> None:
+        # Otherwise the host is parsed from the middle of the password.
+        url = install.database_url(
+            "mariadb", host="db.example", name="aisvc", user="u", password="p@ss/word"
+        )
+
+        assert install.split_endpoint(url) == ("db.example", 3306)
+
+    def test_each_engine_brings_its_own_default_port(self) -> None:
+        postgres = install.database_url("postgres", host="h", name="n", user="u", password="p")
+        mariadb = install.database_url("mariadb", host="h", name="n", user="u", password="p")
+
+        assert install.split_endpoint(postgres) == ("h", 5432)
+        assert install.split_endpoint(mariadb) == ("h", 3306)
+
+    def test_an_explicit_port_is_kept(self) -> None:
+        url = install.database_url("mariadb", host="h", name="n", user="u", password="p", port=3307)
+
+        assert install.split_endpoint(url) == ("h", 3307)
+
+    def test_an_unknown_engine_is_refused(self) -> None:
+        with pytest.raises(install.AnswerError):
+            install.database_url("oracle", host="h", name="n", user="u", password="p")
+
+    def test_mariadb_needs_an_extra_installed(self) -> None:
+        # Nothing in the default dependency set can talk to MariaDB.
+        assert install.extras_for("mariadb") == ["mariadb"]
+
+    def test_postgres_needs_no_extra(self) -> None:
+        assert install.extras_for("postgres") == []
+
+
+class TestTheMariaDbWarningIsAccurate:
+    def test_it_says_which_driver_and_why(self) -> None:
+        note = install.database_note("mariadb")
+
+        assert "PyMySQL" in note
+        assert "0004" in note
+
+    def test_postgres_has_no_note_to_make(self) -> None:
+        assert install.database_note("postgres") == ""
+
+
+class TestRecognisingTheEngineFromAUrl:
+    """A rerun reads the URL back out of .env and must install the
+    right driver without asking again."""
+
+    def test_a_postgres_url(self) -> None:
+        assert install.engine_of("postgresql+pg8000://u:p@h/db") == "postgres"
+
+    def test_a_mariadb_url(self) -> None:
+        assert install.engine_of("mysql+pymysql://u:p@h/db?charset=utf8mb4") == "mariadb"
+
+    def test_a_bare_mysql_url(self) -> None:
+        assert install.engine_of("mysql://u:p@h/db") == "mariadb"
+
+    def test_sqlite_is_neither(self) -> None:
+        assert install.engine_of("sqlite+pysqlite:////tmp/x.db") == ""
+
+    def test_nothing_is_neither(self) -> None:
+        assert install.engine_of("") == ""
+
+    def test_the_round_trip_holds_for_both(self) -> None:
+        for engine in install.DATABASE_ENGINES:
+            url = install.database_url(engine, host="h", name="n", user="u", password="p")
+            assert install.engine_of(url) == engine
+
+
+class TestInstallingTheRightDriver:
+    def test_a_mariadb_url_pulls_in_the_extra(self, tmp_path: Path) -> None:
+        run = install.Run(
+            root=tmp_path,
+            settings=settings(database_url="mysql+pymysql://u:p@h/db"),
+            dry_run=True,
+        )
+
+        assert run.install_target() == ".[mariadb]"
+
+    def test_a_postgres_url_does_not(self, tmp_path: Path) -> None:
+        run = install.Run(root=tmp_path, settings=settings(), dry_run=True)
+
+        assert run.install_target() == "."
+
+    def test_dev_and_mariadb_together(self, tmp_path: Path) -> None:
+        run = install.Run(
+            root=tmp_path,
+            settings=settings(database_url="mysql+pymysql://u:p@h/db"),
+            dry_run=True,
+            dev=True,
+        )
+
+        assert run.install_target() == ".[dev,mariadb]"

@@ -5,10 +5,18 @@ them. Two replicas reconciling one zone at the same time would observe
 the same state, plan the same actions and both execute them: two sets of
 GPU node VMs for one pool, each believing it created them.
 
-A Postgres advisory lock settles it without another moving part. The
-lock lives in the database the engine already depends on, it is released
+An advisory lock settles it without another moving part. The lock lives
+in the database the engine already depends on, it is released
 automatically if the holder dies, and it needs no table, no heartbeat
 and no lease to expire.
+
+Both supported backends have one, with the same two properties
+([ADR-0004](../../docs/adr/0004-state-store.md)):
+
+- Postgres: `pg_try_advisory_lock(bigint)`.
+- MariaDB and MySQL: `GET_LOCK(name, 0)`. Names are server-wide rather
+  than per database, so ours are prefixed: this engine may share a
+  server with CloudStack's management database.
 
 Two details matter and are easy to get wrong:
 
@@ -34,12 +42,24 @@ from sqlalchemy import text
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-__all__ = ["NotLeader", "ZoneLeadership", "zone_lock_key"]
+__all__ = ["NotLeader", "ZoneLeadership", "zone_lock_key", "zone_lock_name"]
 
 log = logging.getLogger("aisvc.reconciler.leader")
 
 _TRY_LOCK = text("SELECT pg_try_advisory_lock(:key)")
 _UNLOCK = text("SELECT pg_advisory_unlock(:key)")
+
+#: `GET_LOCK(name, 0)` returns immediately, like pg_try_advisory_lock.
+_MYSQL_TRY_LOCK = text("SELECT GET_LOCK(:name, :timeout)")
+_MYSQL_UNLOCK = text("SELECT RELEASE_LOCK(:name)")
+
+#: SQLAlchemy calls the dialect "mysql" for MariaDB too; "mariadb"
+#: is accepted so a driver or release that reports it does not fall
+#: through to the unlocked branch.
+_MYSQL_DIALECTS = frozenset({"mysql", "mariadb"})
+
+#: Keeps a zone's lock clear of anything else on the same server.
+LOCK_PREFIX = "aisvc-zone-"
 
 
 class NotLeader(Exception):
@@ -59,6 +79,17 @@ def zone_lock_key(zone: str) -> int:
     return unsigned - 2**64 if unsigned >= 2**63 else unsigned
 
 
+def zone_lock_name(zone: str) -> str:
+    """A stable lock name for a zone, for backends that name locks.
+
+    Hashed rather than using the zone name directly: MariaDB caps a
+    lock name at 64 characters and a zone name has no such limit, so
+    a long one would be truncated into a collision with its neighbour.
+    """
+    digest = hashlib.sha256(zone.encode()).hexdigest()[:32]
+    return f"{LOCK_PREFIX}{digest}"
+
+
 class ZoneLeadership:
     """Hold this zone's advisory lock for the duration of a run.
 
@@ -72,24 +103,39 @@ class ZoneLeadership:
         self.zone = zone
         self.required = required
         self.key = zone_lock_key(zone)
+        self.name = zone_lock_name(zone)
         self.is_leader = False
         self._connection: Any = None
 
+    @property
+    def _dialect(self) -> str:
+        return str(getattr(self.engine.dialect, "name", ""))
+
     def __enter__(self) -> ZoneLeadership:
-        # Advisory locks are Postgres's. A developer pointed at SQLite
-        # gets a working apply instead of a missing-function error, and
-        # loses nothing: one process cannot race itself.
-        if getattr(self.engine.dialect, "name", "") != "postgresql":
-            log.debug(
-                "%s has no advisory locks; running zone %s unlocked",
-                getattr(self.engine.dialect, "name", "this database"),
+        dialect = self._dialect
+
+        # Anything else — SQLite, in practice — has no advisory lock.
+        # A developer pointed at a file database gets a working apply
+        # instead of a missing-function error, and loses nothing: one
+        # process cannot race itself. This branch is for development
+        # only; both supported production backends lock for real.
+        if dialect != "postgresql" and dialect not in _MYSQL_DIALECTS:
+            log.warning(
+                "%s has no advisory lock; running zone %s unlocked. Safe for one "
+                "process, unsafe for more than one.",
+                dialect or "this database",
                 self.zone,
             )
             self.is_leader = True
             return self
 
         self._connection = self.engine.connect()
-        granted = self._connection.execute(_TRY_LOCK, {"key": self.key}).scalar()
+        if dialect in _MYSQL_DIALECTS:
+            granted = self._connection.execute(
+                _MYSQL_TRY_LOCK, {"name": self.name, "timeout": 0}
+            ).scalar()
+        else:
+            granted = self._connection.execute(_TRY_LOCK, {"key": self.key}).scalar()
         self.is_leader = bool(granted)
 
         if not self.is_leader:
@@ -116,7 +162,10 @@ class ZoneLeadership:
             if self.is_leader:
                 # Only the holder unlocks. Unlocking a lock we never took
                 # is a Postgres warning and tells us nothing.
-                self._connection.execute(_UNLOCK, {"key": self.key})
+                if self._dialect in _MYSQL_DIALECTS:
+                    self._connection.execute(_MYSQL_UNLOCK, {"name": self.name})
+                else:
+                    self._connection.execute(_UNLOCK, {"key": self.key})
                 self._connection.commit()
         finally:
             self._connection.close()

@@ -44,14 +44,19 @@ engine. **The engine is never exposed to tenant networks.**
   usage, budgets, profiles, hashed keys, mirror requests and
   evaluations there. Nothing lives only in memory.
 
-  **Yes, this is a second database**, alongside the MariaDB your
-  management server already runs, and it is the largest piece of
-  infrastructure this product asks for that CloudStack did not already
-  require. It is separate on purpose: the gateway writes a usage row
-  per request, and a disk filled by AI Services should not be every
-  hypervisor operation in the zone failing at once.
-  [ADR-0004](adr/0004-state-store.md) has the full reasoning, including
-  what it would take to support MariaDB instead.
+  **Or MariaDB / MySQL**, if you would rather not run a second database
+  engine: `pip install -e ".[mariadb]"` and use a
+  `mysql+pymysql://…?charset=utf8mb4` URL, or let `install.py
+  --database mariadb` build it. Use the `mariadb` extra, not the
+  package called `mariadb`, which is LGPL and therefore prohibited
+  here.
+
+  **Either way, give it its own server.** The gateway writes a usage
+  row per request and the reconciler holds a connection for a whole
+  run; a disk filled by AI Services should not be every hypervisor
+  operation in the zone failing at once. Sharing CloudStack's MariaDB
+  works and is not recommended.
+  [ADR-0004](adr/0004-state-store.md) has the reasoning.
 - **An S3-compatible object store** — Ceph RGW, MinIO or S3 — for
   mirrored model artifacts.
 - **Python 3.12** and **JDK 17** (targeting JDK 11 bytecode).
@@ -95,6 +100,7 @@ python3.12 install.py --answers answers.json --units /etc/systemd/system
 | `--dry-run` | Write nothing. Prints every command it would run. |
 | `--dev` | Install the test dependencies too. |
 | `--units DIR` | Write `aisvc-api.service` and `aisvc-batch.service`. |
+| `--database postgres\|mariadb` | Which backend the engine's state lives in. Default: taken from your URL, else postgres. |
 | `--skip-migration` | Leave the database alone. |
 
 It is **standard library only** — its first job is to build the

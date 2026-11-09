@@ -222,3 +222,122 @@ class TestNonPostgres:
 
         with ZoneLeadership(as_engine(engine), zone="z", required=True) as lock:
             assert lock.is_leader
+
+
+class TestMariaDb:
+    """MariaDB gets a real lock, not the SQLite exemption.
+
+    [ADR-0004](docs/adr/0004-state-store.md) keeps MariaDB open as an
+    alternative backend, and this is the one piece of the engine that
+    was genuinely Postgres-only. Granting leadership to every replica
+    the way the SQLite branch does would let two of them provision the
+    same node pool — the exact failure this module exists to prevent.
+
+    `GET_LOCK(name, 0)` matches `pg_try_advisory_lock`: connection
+    scoped, released when the connection dies, and returning
+    immediately rather than queueing.
+    """
+
+    def leadership(self, *, granted: bool = True, dialect: str = "mysql") -> tuple[Any, Any]:
+        engine = FakeEngine(granted=granted, dialect=dialect)
+        return engine, ZoneLeadership(as_engine(engine), zone="zone-east-1")
+
+    def test_it_takes_a_real_lock(self) -> None:
+        engine, leadership = self.leadership()
+
+        with leadership:
+            pass
+
+        issued = " ".join(statement for statement, _ in engine.connections[0].statements)
+        assert "GET_LOCK" in issued
+
+    def test_it_does_not_block_waiting_for_the_lock(self) -> None:
+        # Timeout 0: a follower finds out now and goes back to sleep.
+        engine, leadership = self.leadership()
+
+        with leadership:
+            pass
+
+        _, params = engine.connections[0].statements[0]
+        assert params["timeout"] == 0
+
+    def test_mariadb_reported_as_mariadb_also_works(self) -> None:
+        # SQLAlchemy calls the dialect "mysql" for both, but a driver
+        # or a future release reporting "mariadb" must not fall through
+        # to the no-lock branch.
+        engine, leadership = self.leadership(dialect="mariadb")
+
+        with leadership:
+            pass
+
+        assert engine.connections, "no connection was taken, so no lock was attempted"
+
+    def test_a_follower_stands_down(self) -> None:
+        _, leadership = self.leadership(granted=False)
+
+        with leadership:
+            assert not leadership.is_leader
+
+    def test_requiring_leadership_refuses_a_follower(self) -> None:
+        engine = FakeEngine(granted=False, dialect="mysql")
+        leadership = ZoneLeadership(as_engine(engine), zone="zone-east-1", required=True)
+
+        with pytest.raises(NotLeader), leadership:
+            pass
+
+    def test_the_lock_is_released_on_exit(self) -> None:
+        engine, leadership = self.leadership()
+
+        with leadership:
+            pass
+
+        issued = " ".join(statement for statement, _ in engine.connections[0].statements)
+        assert "RELEASE_LOCK" in issued
+
+    def test_a_follower_does_not_release_a_lock_it_never_held(self) -> None:
+        engine, leadership = self.leadership(granted=False)
+
+        with leadership:
+            pass
+
+        issued = " ".join(statement for statement, _ in engine.connections[0].statements)
+        assert "RELEASE_LOCK" not in issued
+
+    def test_one_connection_is_held_for_the_whole_run(self) -> None:
+        # GET_LOCK belongs to a connection, exactly as the Postgres
+        # lock does: a pooled connection handed back mid-run would
+        # drop the lock silently.
+        engine, leadership = self.leadership()
+
+        with leadership:
+            assert len(engine.connections) == 1
+            assert not engine.connections[0].closed
+
+        assert engine.connections[0].closed
+
+
+class TestTheLockName:
+    """MariaDB locks are named strings, server-wide."""
+
+    def test_it_is_stable_for_a_zone(self) -> None:
+        from aisvc.reconciler.leader import zone_lock_name
+
+        assert zone_lock_name("zone-east-1") == zone_lock_name("zone-east-1")
+
+    def test_different_zones_get_different_names(self) -> None:
+        from aisvc.reconciler.leader import zone_lock_name
+
+        assert zone_lock_name("zone-east-1") != zone_lock_name("zone-west-1")
+
+    def test_it_fits_the_64_character_limit(self) -> None:
+        from aisvc.reconciler.leader import zone_lock_name
+
+        for zone in ("a", "zone-east-1", "x" * 500):
+            assert len(zone_lock_name(zone)) <= 64
+
+    def test_it_is_namespaced_so_it_cannot_collide_with_cloudstack(self) -> None:
+        # GET_LOCK names are server-wide, not per database, and this
+        # engine may share a server with the management database.
+        from aisvc.reconciler.leader import zone_lock_name
+
+        assert zone_lock_name("zone-east-1").startswith("aisvc-")

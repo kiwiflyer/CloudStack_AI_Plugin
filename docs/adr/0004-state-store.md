@@ -1,6 +1,6 @@
 # ADR-0004: State store
 
-**Status:** Accepted
+**Status:** Accepted; MariaDB support implemented 2026-11-08
 **Date:** 2026-11-08
 **Deciders:** Simon Weller
 **Resolves:** a choice SPEC.md assumed and never argued — "State lives in Postgres"
@@ -112,10 +112,12 @@ rather than discovered during an install.
 a table without any of it reaching the management database. The engine can be upgraded,
 restored or moved on its own schedule.
 
-**What stays open.** MariaDB as an optional backend. The work is the advisory lock, a
-driver, and a CI matrix — not an architectural change. Worth doing if an operator
-declines the product over the second database, which is a plausible objection and the
-signal to revisit this.
+**MariaDB is now supported as an alternative backend**, done the same day this ADR
+was written. `aisvc/reconciler/leader.py` branches on the dialect and takes a real
+`GET_LOCK` on MariaDB — the SQLite no-lock branch would have let two replicas both
+believe they were leader, which is worse than not supporting it at all. The driver is
+the `mariadb` extra (PyMySQL, MIT). `install.py --database mariadb` builds the URL and
+installs the extra. Postgres remains the default and the recommendation.
 
 **What does not change.** Postgres stays the default and the only tested backend.
 Nothing in the code should start branching on dialect speculatively.
@@ -124,8 +126,11 @@ Nothing in the code should start branching on dialect speculatively.
 
 1. [ ] Say in `docs/installation.md` why Postgres is separate, so an operator reading
    the prerequisite list gets the reason with the requirement.
-2. [ ] If MariaDB support is ever taken up: put the lock behind a dialect branch, add
-   PyMySQL after a licence check, and run the integration suite against both.
+2. [x] MariaDB support: dialect branch on the lock, PyMySQL behind the `mariadb`
+   extra, licence pinned by `tests/security/test_licenses.py`. **Not yet run against a
+   real MariaDB server** — the migrations are verified by compiling them offline, which
+   catches a type MySQL cannot render but not a constraint it refuses at runtime.
+   An integration run against a live server is still owed.
 3. [ ] Revisit if an operator declines over the second database, or if usage row growth
    turns out to need partitioning — which would argue for separation more strongly, not
    less.

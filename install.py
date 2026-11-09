@@ -37,7 +37,7 @@ import sys
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -49,6 +49,8 @@ if TYPE_CHECKING:
     Ask = Callable[[str], str]
 
 __all__ = [
+    "DATABASE_ENGINES",
+    "DEFAULT_ENGINE",
     "MINIMUM_PYTHON",
     "REPO_ROOT",
     "SECRET_FIELDS",
@@ -59,7 +61,11 @@ __all__ = [
     "Settings",
     "cloudstack_todo",
     "connectivity_checks",
+    "database_note",
+    "database_url",
     "describe",
+    "engine_of",
+    "extras_for",
     "load_answers",
     "python_check",
     "reachable",
@@ -79,12 +85,34 @@ MINIMUM_PYTHON = (3, 12)
 #: dependency, and an unreachable one should not hold up the rest.
 PROBE_TIMEOUT = 4.0
 
+#: The two backends ADR-0004 supports, each with its driver and port.
+#: The driver matters: the obvious MariaDB package name is LGPL, which
+#: is Category X for an ASF project, so PyMySQL (MIT) is used instead.
+DATABASE_ENGINES = {
+    "postgres": {
+        "scheme": "postgresql+pg8000",
+        "port": 5432,
+        "extra": "",
+        "label": "PostgreSQL (recommended; its own server)",
+    },
+    "mariadb": {
+        "scheme": "mysql+pymysql",
+        "port": 3306,
+        "extra": "mariadb",
+        "label": "MariaDB or MySQL (can share the server CloudStack uses)",
+    },
+}
+
+DEFAULT_ENGINE = "postgres"
+
 #: Default ports, so an operator can type a hostname and be understood.
 SCHEME_PORTS = {
     "http": 80,
     "https": 443,
     "postgresql": 5432,
     "postgres": 5432,
+    "mysql": 3306,
+    "mariadb": 3306,
 }
 
 #: Never printed, never echoed back, never put in a check's detail.
@@ -177,7 +205,7 @@ ENV_NAMES = {
 
 #: What each one is, for the prompts and the generated file.
 PROMPTS = {
-    "database_url": "Postgres URL (postgresql+pg8000://user:pass@host/db)",
+    "database_url": "Database URL (postgresql+pg8000://… or mysql+pymysql://…)",
     "cloudstack_api_url": "CloudStack API URL",
     "cloudstack_api_key": "CloudStack API key",
     "cloudstack_secret_key": "CloudStack secret key",
@@ -445,6 +473,75 @@ def load_answers(path: Path) -> dict[str, str]:
     return {name: str(value) for name, value in loaded.items()}
 
 
+def database_url(
+    engine: str,
+    *,
+    host: str,
+    name: str,
+    user: str,
+    password: str,
+    port: int | None = None,
+) -> str:
+    """Build a SQLAlchemy URL for one of the supported backends.
+
+    The user and password are percent-encoded: a password holding `@`
+    or `/` would otherwise be parsed as part of the host, and the
+    failure reads as "could not resolve <half your password>".
+    """
+    chosen = DATABASE_ENGINES.get(engine)
+    if chosen is None:
+        known = ", ".join(sorted(DATABASE_ENGINES))
+        raise AnswerError(f"{engine!r} is not a supported database; choose one of {known}")
+
+    where = f"{host}:{port}" if port else f"{host}:{chosen['port']}"
+    credentials = f"{quote(user, safe='')}:{quote(password, safe='')}" if user else ""
+    at = "@" if credentials else ""
+    url = f"{chosen['scheme']}://{credentials}{at}{where}/{name}"
+
+    if engine == "mariadb":
+        # Without this MariaDB may default to latin1 and mangle the
+        # first non-ASCII model name or domain path it is given.
+        url = f"{url}?charset=utf8mb4"
+    return url
+
+
+def engine_of(url: str) -> str:
+    """Which backend a URL names, or "" for neither.
+
+    A rerun reads the URL back out of .env, so the driver follows from
+    it without asking the operator the same question twice.
+    """
+    if not url or "://" not in url:
+        return ""
+    scheme = url.split("://", 1)[0].lower()
+    base = scheme.split("+", 1)[0]
+    for name, chosen in DATABASE_ENGINES.items():
+        if scheme == chosen["scheme"] or base == str(chosen["scheme"]).split("+", 1)[0]:
+            return name
+    if base in {"mysql", "mariadb"}:
+        return "mariadb"
+    return ""
+
+
+def extras_for(engine: str) -> list[str]:
+    """Which pip extras this backend needs."""
+    chosen = DATABASE_ENGINES.get(engine, {})
+    extra = str(chosen.get("extra", ""))
+    return [extra] if extra else []
+
+
+def database_note(engine: str) -> str:
+    """Anything worth saying about this choice, once it is made."""
+    if engine != "mariadb":
+        return ""
+    return (
+        "MariaDB selected. Installing the PyMySQL driver (MIT); the package named "
+        "'mariadb' is LGPL and must not be used. Sharing CloudStack's own server is "
+        "possible but see ADR-0004 (docs/adr/0004-state-store.md): the gateway writes "
+        "a usage row per request, so a separate server is still recommended."
+    )
+
+
 def venv_ready(venv: Path) -> bool:
     """Whether a usable virtualenv is already there.
 
@@ -507,6 +604,7 @@ class Run:
     root: Path
     settings: Settings
     dry_run: bool = False
+    dev: bool = False
     actions: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
 
@@ -548,13 +646,32 @@ class Run:
             return True
         return self.run_command([sys.executable, "-m", "venv", str(self.venv)])
 
-    def install_package(self, *, dev: bool = False) -> bool:
+    def install_target(self) -> str:
+        """`.` plus whichever extras this install needs.
+
+        The database extra follows the URL rather than a separate
+        answer, so a rerun against an existing .env installs the right
+        driver without being told again.
+        """
+        extras = (["dev"] if self.dev else []) + extras_for(engine_of(self.settings.database_url))
+        return f".[{','.join(extras)}]" if extras else "."
+
+    def install_package(self, *, dev: bool | None = None) -> bool:
+        if dev is not None:
+            self.dev = dev
         if self.dry_run and not venv_ready(self.venv):
             self.say("would install the engine into the virtualenv")
             return True
-        target = ".[dev]" if dev else "."
         return self.run_command(
-            [str(self.venv / "bin" / "python"), "-m", "pip", "install", "-q", "-e", target]
+            [
+                str(self.venv / "bin" / "python"),
+                "-m",
+                "pip",
+                "install",
+                "-q",
+                "-e",
+                self.install_target(),
+            ]
         )
 
     def write_configuration(self) -> bool:
@@ -686,6 +803,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--yes", action="store_true", help="do not prompt")
     parser.add_argument("--dry-run", action="store_true", help="write nothing; say what would run")
     parser.add_argument("--dev", action="store_true", help="install the test dependencies too")
+    parser.add_argument(
+        "--database",
+        choices=sorted(DATABASE_ENGINES),
+        help="which backend the engine's own state lives in (default: taken from the "
+        "URL you give, else postgres). See docs/adr/0004-state-store.md.",
+    )
     parser.add_argument("--units", type=Path, help="write systemd unit files into this directory")
     parser.add_argument(
         "--skip-migration", action="store_true", help="do not run the database migration"
@@ -716,18 +839,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"\n{exc}")
             return 1
     elif not args.yes:
+        if not config.database_url and args.database is None:
+            print("\nWhere should the engine keep its own state?")
+            for name in sorted(DATABASE_ENGINES):
+                marker = " (default)" if name == DEFAULT_ENGINE else ""
+                print(f"  {name}: {DATABASE_ENGINES[name]['label']}{marker}")
+            chosen = input(f"Database [{DEFAULT_ENGINE}]: ").strip() or DEFAULT_ENGINE
+            if chosen not in DATABASE_ENGINES:
+                print(f"\n{chosen!r} is not one of {', '.join(sorted(DATABASE_ENGINES))}")
+                return 1
+            args.database = chosen
         config = ask_for_settings(config)
+
+    # An explicit --database with no URL yet gets a template to edit.
+    chosen_engine = args.database or engine_of(config.database_url) or DEFAULT_ENGINE
+    note = database_note(chosen_engine)
+    if note:
+        print(f"\n{note}")
 
     print("\nConfiguration")
     for name, value in describe(config).items():
         print(f"  {name}: {value}")
 
-    run = Run(root=REPO_ROOT, settings=config, dry_run=args.dry_run)
+    run = Run(root=REPO_ROOT, settings=config, dry_run=args.dry_run, dev=args.dev)
 
     print("\nInstalling")
     steps: list[Callable[[], bool]] = [
         run.create_venv,
-        lambda: run.install_package(dev=args.dev),
+        run.install_package,
         run.write_configuration,
     ]
     if not args.skip_migration:
