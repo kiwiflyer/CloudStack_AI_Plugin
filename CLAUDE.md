@@ -305,6 +305,11 @@ skipped `alembic_version` and missed any table whose module that path had not im
 product, who it is for and what it lets an operator sell. Every product claim in it
 is traceable to SPEC.md; keep it that way.
 
+`install.py` at the repository root scripts everything outside CloudStack: virtualenv,
+dependencies, `.env`, migrations, reachability. **Standard library only** — it builds the
+virtualenv the engine lives in, so it can never import `aisvc` or any dependency. It is in
+`ruff`'s targets and mypy's `files`.
+
 `docs/installation.md` is the operator-facing install and setup guide: prerequisites,
 the four pieces and their order, every config key and environment variable, and an
 honest list of what has never been run. Keep it current when any of those change.

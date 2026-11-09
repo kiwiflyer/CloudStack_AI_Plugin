@@ -66,7 +66,7 @@ filterwarnings = ["error"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["aisvc", "tests", "gateway-hooks"]
+files = ["aisvc", "tests", "gateway-hooks", "install.py"]
 mypy_path = "gateway-hooks"
 
 # Third-party packages that ship no type information. Each is used behind

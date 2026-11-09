@@ -7,8 +7,8 @@ install:
 	$(PY) -m pip install -q -e ".[dev]"
 
 lint:
-	.venv/bin/ruff check aisvc tests
-	.venv/bin/ruff format --check aisvc tests
+	.venv/bin/ruff check aisvc tests install.py
+	.venv/bin/ruff format --check aisvc tests install.py
 
 types:
 	.venv/bin/mypy

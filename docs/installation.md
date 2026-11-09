@@ -61,6 +61,49 @@ will ask you for an answer:
 
 ---
 
+## The quick way: `install.py`
+
+Everything in Part 1 — and the reachability checks you would otherwise
+run by hand — is scripted:
+
+```bash
+python3.12 install.py
+```
+
+It prompts for each setting, creates the virtualenv, installs the
+engine, writes a mode-0600 `.env`, runs the migrations, validates your
+spec, and probes every dependency you configured. For a scripted
+install, put the answers in a JSON file:
+
+```bash
+python3.12 install.py --answers answers.json --units /etc/systemd/system
+```
+
+| Flag | What it does |
+| --- | --- |
+| `--answers FILE` | Settings as JSON; implies `--yes`. An unknown key is an error, not a typo it ignores. |
+| `--yes` | Take what is already in `.env` and the environment; ask nothing. |
+| `--dry-run` | Write nothing. Prints every command it would run. |
+| `--dev` | Install the test dependencies too. |
+| `--units DIR` | Write `aisvc-api.service` and `aisvc-batch.service`. |
+| `--skip-migration` | Leave the database alone. |
+
+It is **standard library only** — its first job is to build the
+virtualenv the engine lives in, so it cannot import what it installs.
+It is idempotent: a second run reports `unchanged` rather than redoing
+work, and it reads your previous answers back out of `.env`.
+
+**It does nothing inside CloudStack**, and ends by listing what is
+still yours to do — the plugin JAR, the configuration keys, the UI
+section and the gateway hooks. Those need a management server, a
+restart and decisions it cannot make for you.
+
+The rest of this guide is what the script automates, plus everything it
+deliberately leaves alone. Read it before running the script on
+anything you care about.
+
+---
+
 ## Part 1 — the engine
 
 ### Install

@@ -2326,3 +2326,68 @@ unnoticed the first time.
   first request rather than at startup.
 - The repository has no root `README.md`, so the guide is reachable
   from `CLAUDE.md` and the four sub-READMEs and from nowhere obvious.
+
+## Milestone 9 — an installer for everything outside CloudStack
+
+`install.py` at the repository root. It owns the engine side —
+virtualenv, dependencies, `.env`, the database schema, and whether
+every dependency can actually be reached — and it ends by listing what
+it will not do.
+
+### Standard library only, and not by preference
+
+Its first job is to build the virtualenv the engine lives in, so it
+cannot import anything from that virtualenv, `aisvc` included. That is
+a constraint rather than a style choice, and it is written at the top
+of the file so nobody adds a dependency to it later. It is in ruff's
+targets and mypy's `files` so the rule is enforced by the same checks
+as the rest.
+
+What it can honestly verify without the drivers it has not installed
+yet is a TCP connect. That catches the firewall, the typo and the
+wrong port, and says nothing about credentials — which the first real
+call will. The checks say which they are.
+
+### Three conventions it inherits
+
+- **Idempotent.** A second run reports `unchanged` rather than
+  rewriting the file or recreating the virtualenv, and it reads the
+  previous answers back out of `.env` so a rerun is pressing return.
+- **`--dry-run` writes nothing**, and prints every command it would
+  have run.
+- **Not configured is not a failure.** An unset Prometheus URL is
+  reported as skipped with the consequence spelled out — autoscaling
+  holds at the replica floor — rather than as a red mark an operator
+  learns to ignore. The same distinction `aisvc/setup` already makes.
+
+### What it refuses to pretend
+
+The plugin JAR, the nine configuration keys, the UI section and the
+gateway hooks need a management server, a restart and decisions only
+an operator can make. The run ends with them on a list, and a test
+asserts no line in that list starts with "Installed".
+
+An unknown key in an answers file is an error rather than something
+ignored: a typo would otherwise leave the real setting unset and the
+run looking like it worked.
+
+### Verified by running it
+
+Dry run, then a real run against SQLite: the virtualenv reported
+unchanged, `.env` written at mode 0600, the migration producing all 13
+tables plus the version stamp — `aisvc_job` included, which is the fix
+from the previous entry — the spec validated, and both systemd units
+written. A second run reported `unchanged` for the file and both
+units.
+
+### What is still not true
+
+- **It has never run on a clean machine.** Every run so far has been
+  against this repository, where the virtualenv already existed, so
+  the `python -m venv` branch has only been exercised by its unit
+  test.
+- **It has never been pointed at a real Postgres, S3 or CKS cluster** —
+  only at SQLite and at hosts that do not resolve, which is how the
+  failure path was checked.
+- It does not configure the gateway, build the Packer images, or
+  create the object store bucket.
