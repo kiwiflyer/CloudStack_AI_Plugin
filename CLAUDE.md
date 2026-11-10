@@ -325,6 +325,10 @@ The spec leaves these unresolved. If a task depends on one, ask rather than assu
 skipped `alembic_version` and missed any table whose module that path had not imported
 (`aisvc_job`, on the apply path). A source scan over `aisvc/cli/main.py` guards it.
 
+`docs/feature-spec-sheet.md` is the limits-and-defaults sheet: every threshold, TTL,
+supported value and surface count, each read from the code. A gap is marked **·not built**
+rather than omitted. When you change a default, change it there too.
+
 `docs/why-cloudstack-ai-services.md` is the positioning document: the case for the
 product, who it is for and what it lets an operator sell. Every product claim in it
 is traceable to SPEC.md; keep it that way.
