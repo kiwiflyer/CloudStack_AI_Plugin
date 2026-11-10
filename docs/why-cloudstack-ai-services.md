@@ -133,9 +133,9 @@ inherited rather than built.
 
 **If you are an MSP or systems integrator**, it is a managed-AI
 offering you can stand up for a client in their own tenancy, with the
-compliance story written down rather than improvised: no egress from
-inference pods, prompts never logged by default, artifacts verified by
-checksum, licences enforced at both mirror and deploy time.
+compliance story written down rather than improvised: prompts never
+logged by default, artifacts verified by checksum, licences enforced at
+both mirror and deploy time, and models pinned to a commit SHA.
 
 **If you are a telco or sovereign provider**, it is the inference layer
 for the sovereignty argument you are already making — and the private

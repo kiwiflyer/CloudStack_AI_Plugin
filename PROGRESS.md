@@ -2455,3 +2455,50 @@ to paper over it would be worse than the bug.
 - **No management server has run this**, so the schema application has
   never created a real table. It is tested against a recording fake.
 - The four mainline touch points are a PR nobody has opened.
+
+## Milestone 9 — a security claim the code does not make good
+
+Drawing the end-to-end diagram meant checking each claim against the
+code before putting it on a figure. One did not survive.
+
+### No network policy exists
+
+SPEC.md section 11 and CLAUDE.md both state that inference pods have no
+internet egress, **enforced by network policy**. No `NetworkPolicy` is
+rendered anywhere — not in `aisvc/k8s/`, not in a template, nowhere in
+the tree. SPEC section 12 also names an acceptance test,
+`test_inference_pod_has_no_internet_egress`, which has never been
+written; there is nothing for it to test.
+
+What is real is the supply chain in front of it: a commit SHA pinned at
+mirror time, sha256 before anything loads, pickle weights and
+`trust_remote_code` refused, and the licence allow-list checked twice.
+What is missing is the runtime fence behind them. A pod that got past
+those gates today could reach the internet.
+
+**This is not a small documentation slip.** The claim appeared in four
+places that assert it as fact, and one of them was the positioning
+document, which exists to be read by operators deciding whether to buy.
+Telling a regulated buyer that inference pods cannot reach the internet,
+when nothing stops them, is the kind of claim that is discovered during
+their security review.
+
+All four are corrected:
+
+| Where | Now says |
+| --- | --- |
+| `CLAUDE.md` | The policy does not exist, and not to repeat the claim |
+| `SPEC.md` section 12 | The named test is unwritten, with nothing to test |
+| `docs/installation.md` | Plan to enforce egress at the cluster or network until it is built |
+| `docs/why-cloudstack-ai-services.md` | The claim is removed; the four that are true remain |
+
+SPEC.md section 11 keeps the requirement as written. It is a
+requirement, and it is still the right one — it is the code that has
+not met it.
+
+### What closing it would take
+
+A `NetworkPolicy` rendered beside each deployment denying all egress,
+an exception for the `aisvc-mirror` namespace limited to the Hugging
+Face hosts or a proxy, and the acceptance test the spec already names.
+Not large, and not done.

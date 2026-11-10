@@ -60,8 +60,10 @@ engine. **The engine is never exposed to tenant networks.**
 - **An S3-compatible object store** — Ceph RGW, MinIO or S3 — for
   mirrored model artifacts.
 - **Python 3.12** and **JDK 17** (targeting JDK 11 bytecode).
-- **Egress to Hugging Face from the mirror worker only.** Inference pods
-  get none, enforced by network policy.
+- **Egress to Hugging Face from the mirror worker only.** Note that the
+  network policy meant to deny inference pods any egress is specified
+  and **not yet implemented**, so plan to enforce it at the cluster or
+  the network until it is.
 
 ### Decisions to make first
 

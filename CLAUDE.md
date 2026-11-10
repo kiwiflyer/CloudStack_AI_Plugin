@@ -184,7 +184,11 @@ evaluations. Nothing lives only in memory. `platform.yaml` is the source of trut
 and is updated by Git commit when changes come in through the UI or API.
 
 **Security — non-negotiable.**
-- Only the mirror worker has internet egress; inference pods have none, enforced by network policy.
+- Only the mirror worker is meant to have internet egress. **The network policy that would
+  enforce it does not exist** — no `NetworkPolicy` is rendered anywhere, and SPEC section 12's
+  `test_inference_pod_has_no_internet_egress` has never been written. The supply-chain gates
+  at mirror and deploy time are real; the runtime fence behind them is not. Do not repeat the
+  claim as though it holds.
 - Pickle weights (`*.bin`, `*.pt`) and `trust_remote_code` are blocked by default.
 - Model `source` must pin a commit SHA; artifacts verified by sha256 before load.
 - Licenses enforced against an allow-list at both mirror and deploy time.

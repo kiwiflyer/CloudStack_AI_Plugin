@@ -536,7 +536,7 @@ Nightly runs a real Hugging Face mirror of a tiny test model, a GPU lab smoke te
 | `test_effective_params_report_source_level` | Contract | Audit view is accurate | v1 |
 | `test_serving_profile_change_rolls_out_without_errors` | GPU lab | Zero failed requests during rollout | v1 |
 | `test_tenant_cannot_see_other_tenant_resources` | Marvin + Playwright | Isolation across API, CloudMonkey and UI | v1 |
-| `test_inference_pod_has_no_internet_egress` | Security | Only the mirror worker reaches the internet | v1 |
+| `test_inference_pod_has_no_internet_egress` | Security | Only the mirror worker reaches the internet | v1 — **not written; no NetworkPolicy exists to test** |
 | `test_account_deletion_removes_deployments_and_keys` | Marvin | Lifecycle hook works | v1 |
 | `test_node_loss_recovers_within_slo_window` | Chaos (GPU lab) | Recovery within 15 minutes | v1 |
 | `test_usage_reconciles_with_gateway_within_1pct` | Integration | Billing data is trustworthy | v1 |
