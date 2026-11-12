@@ -91,15 +91,19 @@ class EngineServices(Services):
         self._snapshot = kw.pop("snapshot", None)
         self._networks = kw.pop("networks", ("net-1", "net-2"))
         super().__init__(**kw)
+        # Set rather than overridden: Services carries this as a field,
+        # so a method on the subclass would be a different thing.
+        self.networks_for = self._owned_networks
 
     def snapshot(self) -> Any:
         return self._snapshot
 
-    def networks_for(self, account: str, domain: str) -> Any:
-        """Which VPC tiers this caller owns.
+    def _owned_networks(self, account: str, domain: str) -> Any:
+        """Which networks this caller owns.
 
-        Supplied by the plugin in production: the engine has no view of
-        a tenant's networks and must not guess at one.
+        In production this asks CloudStack
+        (`aisvc.cloudstack.networks.TenantNetworks`), which is the
+        authority on who owns a network; the engine keeps no copy.
         """
         return self._networks
 

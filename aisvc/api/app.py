@@ -10,6 +10,7 @@ with a job id the plugin polls at `/v1/jobs/{id}`.
 
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -248,17 +249,28 @@ def _adapter_limit(services: Services, base_model: str) -> int:
     return model.lora.max_adapters_per_account
 
 
-def _owned_networks(services: Services, caller: Any) -> list[str]:
-    """Networks this caller may attach to.
+async def _owned_networks(services: Services, caller: Any) -> list[str]:
+    """Networks this caller may attach a private endpoint to.
 
-    Supplied by the plugin, which asked CloudStack: the engine has no
-    view of a tenant's VPC tiers and must not guess at one.
+    CloudStack is the authority on who owns a network, and
+    `build_services` wires `networks_for` to ask it
+    (`aisvc.cloudstack.networks`). The engine keeps no second copy of
+    the answer.
+
+    Awaits the lookup when it is a coroutine, so a test can hand in a
+    plain function and production can hand in an API call.
+
+    With no lookup configured this returns nothing, which refuses every
+    attachment to a network. That is the safe direction, and the reason
+    the API refuses rather than guesses.
     """
     lookup = getattr(services, "networks_for", None)
     if lookup is None:
         return []
-    networks: list[str] = list(lookup(caller.account, caller.domain_path))
-    return networks
+    found = lookup(caller.account, caller.domain_path)
+    if inspect.isawaitable(found):
+        found = await found
+    return [str(network) for network in found]
 
 
 def _adapter_row(record: Any) -> dict[str, Any]:
@@ -1675,7 +1687,7 @@ def _register_routes(app: FastAPI) -> None:
                 )
 
         try:
-            validate_exposure(exposure, owned_networks=_owned_networks(services, caller))
+            validate_exposure(exposure, owned_networks=await _owned_networks(services, caller))
         except ExposureRejected as exc:
             raise ApiError(status.HTTP_400_BAD_REQUEST, exc.detail, code=exc.reason) from exc
 

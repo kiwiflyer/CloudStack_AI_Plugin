@@ -2594,3 +2594,71 @@ cannot start another.
   sidestepped, not answered. A bucket deleted under a running engine
   fails the next mirror with a clear error, which is a behaviour rather
   than a plan.
+
+## Milestone 9 — VPC attachment could never have worked
+
+Asked to make sure VPCs are supported. They were designed for, modelled
+and validated against — and the one input that makes the validation
+pass was never supplied.
+
+### The defect
+
+`validate_exposure` refuses a `network_id` the caller does not own, and
+reads the owned list from `_owned_networks`, which read `networks_for`
+off `Services`. **Nothing ever set it.** Only `tests/unit/conftest.py`
+defined one, so every private endpoint test passed while every real
+attempt to attach an endpoint to a VPC tier would have been refused as
+"not available to this account" — a message pointing at permissions,
+for a cause that was a missing wire.
+
+This is the shape of bug a fake hides: the test double supplied the
+one thing production lacked.
+
+### The fix
+
+`aisvc/cloudstack/networks.py` asks CloudStack, which is the authority
+on who owns a network, so the engine keeps no second copy. The domain
+path resolves to a domain id — matched on `path`, not `name`, because
+two domains under different parents may share a name and picking the
+wrong one would list another tenant's networks — and then networks are
+listed scoped to that account and domain.
+
+`build_services` wires it when CloudStack credentials are present. With
+none, there is no lookup and every attachment is refused, which is the
+safe direction: the alternative is trusting a network id the caller
+supplied.
+
+`_owned_networks` awaits the lookup when it is a coroutine, so the
+conftest's plain function and the real API call both work. A test
+covers both shapes and the absent one, because "works in the tests,
+refuses in production" is the failure this entry is about.
+
+A CloudStack failure propagates rather than reading as an empty list.
+Swallowing it would refuse the attachment with a message about
+ownership and send an operator to look at permissions.
+
+### Not changed, and worth knowing
+
+- **`networkid` is an untyped `STRING` in the generated Java command**,
+  so CloudStack's ACL never checks that the caller can see the network
+  and the UUID is not resolved. Typing it (`CommandType.UUID`,
+  `entityType = NetworkResponse.class`) would add that check — and
+  CloudStack hands a UUID parameter back as the **internal `Long` id**,
+  so the command would have to resolve it to a UUID before sending it
+  on. A separable change with a translation in it.
+- **The generator emits `entityType = X.class` and never the import**,
+  so setting `entity=` on any parameter today produces Java that does
+  not compile. No command uses it, which is why nothing caught it.
+- **The UI's network field is a free-text box.** CloudStack builds form
+  controls from API parameter metadata, so typing the parameter above
+  should give the create-endpoint screen a network picker; worth
+  confirming rather than assuming.
+- Attachment is allowed to any network the account owns, VPC tier or
+  plain isolated network. Nothing in the design requires a VPC, and
+  refusing a non-VPC network would reject a legitimate attachment.
+
+### What is still not true
+
+No CloudStack has answered `listNetworks` for this. The lookup is
+tested against a recorded shape, and no proxy VM has ever booted on a
+tenant tier.

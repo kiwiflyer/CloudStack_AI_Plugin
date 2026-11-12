@@ -1052,3 +1052,54 @@ class TestReplacingACertificate:
         body = self.replace(client, cert_id).json()
 
         assert body["proxyredeploy"] is True
+
+
+class TestAnAsyncNetworkLookup:
+    """Production asks CloudStack, which is a coroutine.
+
+    The fake in conftest hands back a plain list; the real lookup is an
+    API call. Both have to work, or VPC attachment succeeds in the
+    tests and fails in production — which is exactly what happened
+    before the lookup was wired at all.
+    """
+
+    async def test_a_coroutine_lookup_is_awaited(self) -> None:
+        from aisvc.api.app import _owned_networks
+
+        async def lookup(account: str, domain: str) -> list[str]:
+            return ["net-async"]
+
+        class Fake:
+            networks_for = staticmethod(lookup)
+
+        class Caller:
+            account = "acme"
+            domain_path = "ROOT/Customers/Acme"
+
+        assert await _owned_networks(cast(Any, Fake()), Caller()) == ["net-async"]
+
+    async def test_a_plain_lookup_still_works(self) -> None:
+        from aisvc.api.app import _owned_networks
+
+        class Fake:
+            networks_for = staticmethod(lambda account, domain: ["net-sync"])
+
+        class Caller:
+            account = "acme"
+            domain_path = "ROOT/Customers/Acme"
+
+        assert await _owned_networks(cast(Any, Fake()), Caller()) == ["net-sync"]
+
+    async def test_no_lookup_refuses_everything(self) -> None:
+        # What shipped: nothing set networks_for, so every attachment
+        # to a network was refused as "not available to this account".
+        from aisvc.api.app import _owned_networks
+
+        class Fake:
+            pass
+
+        class Caller:
+            account = "acme"
+            domain_path = "ROOT/Customers/Acme"
+
+        assert await _owned_networks(cast(Any, Fake()), Caller()) == []

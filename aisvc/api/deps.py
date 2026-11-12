@@ -51,6 +51,11 @@ class Services:
     session_factory: object
     sourcing: object | None = None
     observe: object | None = None
+    #: Which networks an account may attach a private endpoint to.
+    #: Called as `networks_for(account, domain_path)` and awaited when
+    #: it returns a coroutine. None refuses every attachment, which is
+    #: what shipped before `build_services` wired it (SPEC.md 8).
+    networks_for: object | None = None
 
     def snapshot(self) -> CapacitySnapshot | None:
         return None

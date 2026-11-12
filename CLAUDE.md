@@ -274,6 +274,14 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
   because a bucket quota in GiB is a number only an operator can choose. A missing or
   credential-less bucket is an error, never a fallback to the configured endpoint.
 
+**A private endpoint's network is checked against CloudStack**, not against anything
+the engine keeps: `aisvc/cloudstack/networks.py` resolves the caller's domain path to a
+domain id and lists that account's networks, and `build_services` wires it as
+`networks_for`. Before that nothing set it, only the test conftest did, so every real
+VPC attachment was refused as "not available to this account" while every test passed.
+**Never let that lookup return `[]` on an error** — it reads as "owns nothing" and
+refuses the attachment with a message about permissions.
+
 **Guardrail profiles are scoped to the caller**, not to a role: a caller writes at
 their own level and no higher (`aisvc/guardrails/authority.py`), so a tenant tightens
 their own account and cannot reach the platform profile. Deployment scope stays root

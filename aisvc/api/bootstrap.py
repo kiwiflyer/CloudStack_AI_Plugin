@@ -43,4 +43,33 @@ def build_services() -> Services:  # pragma: no cover - needs real services
         registry=registry,
         session_factory=create_session_factory(),
         sourcing=sourcing,
+        networks_for=_networks_lookup(),
     )
+
+
+def _networks_lookup() -> object | None:  # pragma: no cover - needs CloudStack
+    """Ask CloudStack which networks an account owns, or nothing.
+
+    Without CloudStack credentials there is no lookup, and every
+    attempt to attach a private endpoint to a network is refused. That
+    is the safe direction: the alternative is trusting a network id a
+    caller supplied.
+    """
+    endpoint = os.environ.get("CLOUDSTACK_API_URL", "")
+    api_key = os.environ.get("CLOUDSTACK_API_KEY", "")
+    secret_key = os.environ.get("CLOUDSTACK_SECRET_KEY", "")
+    if not (endpoint and api_key and secret_key):
+        return None
+
+    from aisvc.cloudstack import CloudStackClient, Credentials
+    from aisvc.cloudstack.networks import TenantNetworks
+
+    credentials = Credentials(endpoint=endpoint, api_key=api_key, secret_key=secret_key)
+
+    async def lookup(account: str, domain_path: str) -> list[str]:
+        # A client per call: attaching an endpoint is rare, and a
+        # long-lived client here would outlive the request that needs it.
+        async with CloudStackClient(credentials) as client:
+            return await TenantNetworks(client).for_account(account, domain_path)
+
+    return lookup
