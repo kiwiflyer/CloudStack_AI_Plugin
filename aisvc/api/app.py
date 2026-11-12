@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import inspect
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import FastAPI, Query, Response, status
 from fastapi.responses import PlainTextResponse
@@ -38,6 +38,7 @@ from aisvc.batch import BatchRejected, parse_requests
 from aisvc.batch.runner import read_output, store_input
 from aisvc.certificates import CertificateRejected, validate_certificate
 from aisvc.certificates.bootstrap import BootstrapRejected, BootstrapTokens
+from aisvc.cloudstack.clusters import ClusterState
 from aisvc.db import BudgetRecord, KeyStore, RunLog, UsageStore
 from aisvc.db.tier2 import (
     TERMINAL_BATCH_STATES,
@@ -65,7 +66,7 @@ from aisvc.evaluation import (
     override_gate,
 )
 from aisvc.guardrails import presets
-from aisvc.k8s.client import observe_deployments, observe_weights
+from aisvc.k8s.client import Kubernetes, observe_deployments, observe_weights
 from aisvc.lifecycle import RolloutError, plan_drain, start_rollout
 from aisvc.metering import evaluate_budget
 from aisvc.observability.metrics import REGISTRY, register_zones, render
@@ -613,6 +614,20 @@ def _register_routes(app: FastAPI) -> None:
 
     # -- setup ------------------------------------------------------------
 
+    async def _cluster_states(services: Services) -> list[ClusterState] | None:
+        """What CloudStack says about each zone's cluster, or nothing.
+
+        A failure inside `read_clusters` is already recorded per zone,
+        so this only has to handle there being no lookup at all.
+        """
+        lookup = getattr(services, "cluster_states", None)
+        if lookup is None:
+            return None
+        found = lookup()
+        if inspect.isawaitable(found):
+            found = await found
+        return list(found)
+
     @app.get(f"{PREFIX}/setup/preflight", tags=["admin"], summary="Preflight checks")
     async def setup_preflight(_: AdminDep, services: ServicesDep) -> dict[str, Any]:
         """Everything the wizard checks before a zone is enabled.
@@ -627,6 +642,10 @@ def _register_routes(app: FastAPI) -> None:
             services.spec,
             registry=services.registry,
             snapshot=services.snapshot(),
+            # Resolved here rather than inside preflight: the lookup is
+            # async and every other check is not.
+            clusters=await _cluster_states(services),
+            kube=cast("Kubernetes | None", services.kube),
         )
         return {
             "ok": report.ok,

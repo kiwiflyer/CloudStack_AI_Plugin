@@ -424,9 +424,18 @@ AISVC_ENGINE_URL=https://engine.internal:8443 AISVC_TLS_CERT=client.pem AISVC_TL
 Without `AISVC_ENGINE_URL` it says so and exits rather than guessing.
 
 Admins also get the setup wizard in the UI, which runs the same
-preflight checks — the platform spec, the model registry, and capacity
-for every deployment. A capacity check with nothing observed reports
-`skipped` with a remedy rather than failing.
+preflight checks — the platform spec, the model registry, the CKS
+cluster each zone names, whether the engine can reach the Kubernetes
+API, and capacity for every deployment. A check with nothing observed
+reports `skipped` with a remedy rather than failing.
+
+The cluster checks are worth reading before a first apply. `cks_cluster`
+was previously never verified against CloudStack, so a typo produced GPU
+nodes that deployed, billed and then failed to join a cluster nobody had
+looked for. A cluster CloudStack does not list and a CloudStack it could
+not ask are reported as two different failures with two different
+remedies, because the first means editing `platform.yaml` and the second
+does not.
 
 ---
 

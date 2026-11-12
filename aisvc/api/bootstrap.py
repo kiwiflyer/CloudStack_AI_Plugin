@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from aisvc.api.deps import Services
 from aisvc.db import create_session_factory
 from aisvc.hf import HuggingFaceHub, ModelSourcing
 from aisvc.registry import ModelRegistry, S3ObjectStore
 from aisvc.spec import DEFAULT_LICENSES, load_licenses, load_spec
+
+if TYPE_CHECKING:
+    from aisvc.spec import PlatformSpec
 
 __all__ = ["build_services"]
 
@@ -44,7 +48,50 @@ def build_services() -> Services:  # pragma: no cover - needs real services
         session_factory=create_session_factory(),
         sourcing=sourcing,
         networks_for=_networks_lookup(),
+        cluster_states=_cluster_lookup(spec),
+        kube=_kube_or_none(),
     )
+
+
+def _cluster_lookup(spec: PlatformSpec) -> object | None:  # pragma: no cover - needs CloudStack
+    """Ask CloudStack about each zone's CKS cluster, or nothing.
+
+    Without credentials the preflight cluster checks come back skipped
+    rather than failed: nothing is known to be wrong, and the check
+    itself says what to configure.
+    """
+    endpoint = os.environ.get("CLOUDSTACK_API_URL", "")
+    api_key = os.environ.get("CLOUDSTACK_API_KEY", "")
+    secret_key = os.environ.get("CLOUDSTACK_SECRET_KEY", "")
+    if not (endpoint and api_key and secret_key):
+        return None
+
+    from aisvc.cloudstack import CloudStackClient, Credentials
+    from aisvc.cloudstack.clusters import ClusterState, read_clusters
+
+    credentials = Credentials(endpoint=endpoint, api_key=api_key, secret_key=secret_key)
+    zones = [(zone.name, zone.cks_cluster) for zone in spec.document.zones]
+
+    async def lookup() -> list[ClusterState]:
+        async with CloudStackClient(credentials) as client:
+            return await read_clusters(client, zones)
+
+    return lookup
+
+
+def _kube_or_none() -> object | None:  # pragma: no cover - needs a cluster
+    """The engine's Kubernetes connection, or None if it cannot be built.
+
+    Constructing it loads a kubeconfig, which fails when none is
+    configured. That is a skipped check, not a crashed engine: the
+    other half of the API serves fine without a cluster.
+    """
+    from aisvc.k8s.client import ClusterKubernetes
+
+    try:
+        return ClusterKubernetes(kubeconfig=os.environ.get("KUBECONFIG") or None)
+    except Exception:
+        return None
 
 
 def _networks_lookup() -> object | None:  # pragma: no cover - needs CloudStack

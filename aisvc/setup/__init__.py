@@ -21,10 +21,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from aisvc.k8s import DEFAULT_NAMESPACE
 from aisvc.registry import ModelRegistry
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from aisvc.cloudstack.clusters import ClusterState
     from aisvc.inventory import CapacitySnapshot
+    from aisvc.k8s.client import Kubernetes
     from aisvc.spec import PlatformSpec
 
 __all__ = [
@@ -35,6 +40,8 @@ __all__ = [
     "SelfTestPlan",
     "SelfTestStep",
     "check_capacity",
+    "check_cluster_reachable",
+    "check_clusters",
     "check_registry",
     "check_spec",
     "discover_gpu_classes",
@@ -45,6 +52,10 @@ __all__ = [
 #: The model the self-test deploys: small enough to load quickly, real
 #: enough that serving it proves the path works end to end.
 SELF_TEST_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
+
+#: CloudStack's own word for a healthy Kubernetes cluster. Any other
+#: state is reported verbatim rather than interpreted.
+RUNNING = "Running"
 
 
 class CheckStatus(StrEnum):
@@ -144,6 +155,127 @@ def check_registry(registry: ModelRegistry) -> CheckResult:
         name="model registry",
         status=CheckStatus.PASS,
         detail=f"s3://{registry.bucket} is writable and reads back correctly",
+    )
+
+
+def check_clusters(spec: PlatformSpec, states: Sequence[ClusterState] | None) -> list[CheckResult]:
+    """One check per zone: does CloudStack have the cluster it names?
+
+    `cks_cluster` was never verified against anything. It reaches
+    cloud-init as a label and is otherwise unused, so a typo produced
+    GPU nodes that deployed, billed and then failed to join a cluster
+    nobody had looked for.
+
+    Not having asked is skipped rather than failed, for the same reason
+    capacity is: a zone being set up has not been observed yet.
+    """
+    if states is None:
+        return [
+            CheckResult(
+                name=f"CKS cluster {zone.cks_cluster} in {zone.name}",
+                status=CheckStatus.SKIPPED,
+                detail="CloudStack has not been asked about this cluster yet",
+                remedy=(
+                    "Set CLOUDSTACK_API_URL, CLOUDSTACK_API_KEY and "
+                    "CLOUDSTACK_SECRET_KEY so the engine can call "
+                    "listKubernetesClusters."
+                ),
+            )
+            for zone in spec.document.zones
+        ]
+
+    return [_cluster_check(state) for state in states]
+
+
+def _cluster_check(state: ClusterState) -> CheckResult:
+    """What one zone's cluster looks like, and what to do about it.
+
+    The three outcomes have three different remedies, and the one that
+    matters is the split between "CloudStack lists no such cluster" and
+    "CloudStack could not be asked". Reporting the second as the first
+    sends an operator to edit `platform.yaml` over a network problem.
+    """
+    name = f"CKS cluster {state.cluster} in {state.zone}"
+
+    if state.error:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            detail=f"could not ask CloudStack about {state.cluster}: {state.error}",
+            remedy=(
+                "Check CLOUDSTACK_API_URL and the engine's credentials, and that "
+                "the management server is reachable. This is not a sign the "
+                "cluster is missing."
+            ),
+        )
+
+    if state.state is None:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            detail=f"CloudStack lists no Kubernetes cluster named {state.cluster}",
+            remedy=(
+                f"Check cks_cluster for zone {state.zone} in platform.yaml matches "
+                f"a cluster in CloudStack, or create one with "
+                f"createKubernetesCluster."
+            ),
+        )
+
+    if state.state != RUNNING:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            # CloudStack's own word, not an interpretation of it: this
+            # is what an operator will see in the UI.
+            detail=f"CloudStack reports {state.cluster} as {state.state}",
+            remedy=(
+                f"Bring {state.cluster} to {RUNNING} — startKubernetesCluster, or "
+                f"the CloudStack UI — before deploying models into it."
+            ),
+        )
+
+    return CheckResult(
+        name=name,
+        status=CheckStatus.PASS,
+        detail=f"CloudStack reports {state.cluster} as {RUNNING}",
+    )
+
+
+def check_cluster_reachable(kube: Kubernetes | None, *, namespace: str) -> CheckResult:
+    """Can the engine itself talk to the Kubernetes API server?
+
+    Separate from the check above, and not redundant with it:
+    CloudStack knowing a cluster is Running says nothing about whether
+    the host the engine runs on can reach its API server. A read is
+    used rather than a write so the check changes nothing.
+    """
+    name = "Kubernetes API reachable"
+    if kube is None:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.SKIPPED,
+            detail="no Kubernetes client is configured",
+            remedy="Set KUBECONFIG, or run the engine in-cluster with a service account.",
+        )
+
+    try:
+        kube.list("Deployment", namespace)
+    except Exception as failure:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            detail=f"could not read Deployments in {namespace}: {failure}",
+            remedy=(
+                f"Check KUBECONFIG points at this zone's CKS cluster, that the "
+                f"namespace {namespace} exists, and that the engine's host can "
+                f"reach the API server."
+            ),
+        )
+
+    return CheckResult(
+        name=name,
+        status=CheckStatus.PASS,
+        detail=f"read Deployments in {namespace}",
     )
 
 
@@ -343,8 +475,18 @@ def preflight(
     *,
     registry: ModelRegistry,
     snapshot: CapacitySnapshot | None,
+    clusters: Sequence[ClusterState] | None = None,
+    kube: Kubernetes | None = None,
+    namespace: str = DEFAULT_NAMESPACE,
 ) -> PreflightReport:
-    """Run every check, so one pass surfaces every problem."""
+    """Run every check, so one pass surfaces every problem.
+
+    `clusters` is resolved by the caller because the lookup is async and
+    everything here is not; absent, the cluster checks come back
+    skipped saying what to configure.
+    """
     checks: list[CheckResult] = [check_spec(spec), check_registry(registry)]
+    checks.extend(check_clusters(spec, clusters))
+    checks.append(check_cluster_reachable(kube, namespace=namespace))
     checks.extend(check_capacity(spec, snapshot))
     return PreflightReport(checks=tuple(checks))

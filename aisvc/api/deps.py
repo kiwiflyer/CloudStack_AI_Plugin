@@ -56,6 +56,14 @@ class Services:
     #: it returns a coroutine. None refuses every attachment, which is
     #: what shipped before `build_services` wired it (SPEC.md 8).
     networks_for: object | None = None
+    #: Resolved `ClusterState`s for every zone, for the setup wizard.
+    #: Called as `cluster_states()` and awaited when it returns a
+    #: coroutine. None leaves the cluster checks skipped, which is what
+    #: shipped before anything verified `cks_cluster` (SPEC.md 7).
+    cluster_states: object | None = None
+    #: The engine's own Kubernetes connection, so preflight can prove it
+    #: reaches the API server before an apply deploys billable VMs.
+    kube: object | None = None
 
     def snapshot(self) -> CapacitySnapshot | None:
         return None

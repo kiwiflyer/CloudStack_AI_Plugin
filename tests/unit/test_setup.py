@@ -12,12 +12,16 @@ from typing import Any
 
 import pytest
 
+from aisvc.cloudstack.clusters import ClusterState
 from aisvc.inventory import CapacitySnapshot, ClassCapacity, HostRecord
+from aisvc.k8s.client import FakeKubernetes
 from aisvc.registry import InMemoryObjectStore, ModelRegistry, RegistryError
 from aisvc.setup import (
     CheckStatus,
     PreflightReport,
     check_capacity,
+    check_cluster_reachable,
+    check_clusters,
     check_registry,
     check_spec,
     discover_gpu_classes,
@@ -349,6 +353,121 @@ class TestUnobservedCapacity:
             spec(),
             registry=ModelRegistry(InMemoryObjectStore(), bucket="models"),
             snapshot=None,
+        )
+
+        assert report.ok
+
+
+class TestClusterChecks:
+    """The CKS cluster a zone names, and whether the engine can reach it.
+
+    Nothing checked either before. `cks_cluster` was a label passed to
+    cloud-init and never verified, and the engine's own Kubernetes
+    connection was only exercised once an apply was already underway —
+    by which point GPU node VMs have been deployed and billed.
+    """
+
+    def test_a_running_cluster_passes(self) -> None:
+        results = check_clusters(
+            spec(), [ClusterState("zone-east-1", "aisvc-east-1", state="Running")]
+        )
+
+        assert [r.status for r in results] == [CheckStatus.PASS]
+
+    def test_a_cluster_cloudstack_does_not_list_fails(self) -> None:
+        results = check_clusters(spec(), [ClusterState("zone-east-1", "aisvc-east-1", state=None)])
+
+        assert results[0].status is CheckStatus.FAIL
+        assert "aisvc-east-1" in results[0].detail
+
+    def test_a_missing_cluster_sends_the_operator_to_the_spec(self) -> None:
+        results = check_clusters(spec(), [ClusterState("zone-east-1", "aisvc-east-1", state=None)])
+
+        assert "cks_cluster" in results[0].remedy
+
+    def test_a_lookup_failure_does_not_send_them_to_the_spec(self) -> None:
+        # The distinction the whole lookup exists to preserve: an
+        # unreachable CloudStack is not a typo in platform.yaml, and
+        # saying so would waste an operator's afternoon.
+        results = check_clusters(
+            spec(),
+            [ClusterState("zone-east-1", "aisvc-east-1", error="connection refused")],
+        )
+
+        assert results[0].status is CheckStatus.FAIL
+        assert "connection refused" in results[0].detail
+        assert "cks_cluster" not in results[0].remedy
+
+    def test_a_cluster_that_is_not_running_names_its_state(self) -> None:
+        results = check_clusters(
+            spec(), [ClusterState("zone-east-1", "aisvc-east-1", state="Stopped")]
+        )
+
+        assert results[0].status is CheckStatus.FAIL
+        assert "Stopped" in results[0].detail
+
+    def test_not_having_asked_is_skipped_rather_than_failed(self) -> None:
+        # Same reasoning as capacity: a zone being set up has not been
+        # observed yet, and nothing is known to be wrong.
+        results = check_clusters(spec(), None)
+
+        assert [r.status for r in results] == [CheckStatus.SKIPPED]
+        assert results[0].remedy
+
+    def test_a_reachable_cluster_passes(self) -> None:
+        assert (
+            check_cluster_reachable(FakeKubernetes(), namespace="aisvc-serving").status
+            is CheckStatus.PASS
+        )
+
+    def test_an_unreachable_cluster_fails_with_a_remedy(self) -> None:
+        class Unreachable(FakeKubernetes):
+            def list(self, kind: str, namespace: str) -> list[dict[str, Any]]:
+                raise RuntimeError("connection refused")
+
+        result = check_cluster_reachable(Unreachable(), namespace="aisvc-serving")
+
+        assert result.status is CheckStatus.FAIL
+        assert "connection refused" in result.detail
+        assert "KUBECONFIG" in result.remedy
+
+    def test_no_kubernetes_client_is_skipped(self) -> None:
+        assert check_cluster_reachable(None, namespace="aisvc-serving").status is (
+            CheckStatus.SKIPPED
+        )
+
+    def test_preflight_includes_the_cluster_checks(self) -> None:
+        report = preflight(
+            spec(),
+            registry=ModelRegistry(InMemoryObjectStore(), bucket="models"),
+            snapshot=snapshot(classes={("zone-east-1", "h100-8x"): capacity()}),
+            clusters=[ClusterState("zone-east-1", "aisvc-east-1", state="Running")],
+            kube=FakeKubernetes(),
+        )
+
+        names = [check.name for check in report.checks]
+        assert any("aisvc-east-1" in name for name in names)
+        assert any("reachable" in name for name in names)
+        assert report.ok
+
+    def test_a_stopped_cluster_fails_the_report(self) -> None:
+        report = preflight(
+            spec(),
+            registry=ModelRegistry(InMemoryObjectStore(), bucket="models"),
+            snapshot=snapshot(classes={("zone-east-1", "h100-8x"): capacity()}),
+            clusters=[ClusterState("zone-east-1", "aisvc-east-1", state="Stopped")],
+            kube=FakeKubernetes(),
+        )
+
+        assert not report.ok
+
+    def test_preflight_without_them_still_works(self) -> None:
+        # Every existing caller passes neither, and a zone that has not
+        # been observed must still get a report.
+        report = preflight(
+            spec(),
+            registry=ModelRegistry(InMemoryObjectStore(), bucket="models"),
+            snapshot=snapshot(classes={("zone-east-1", "h100-8x"): capacity()}),
         )
 
         assert report.ok
