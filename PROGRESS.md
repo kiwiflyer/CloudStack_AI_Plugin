@@ -2502,3 +2502,42 @@ A `NetworkPolicy` rendered beside each deployment denying all egress,
 an exception for the `aisvc-mirror` namespace limited to the Hugging
 Face hosts or a proxy, and the acceptance test the spec already names.
 Not large, and not done.
+
+## Research — model artifact storage on CloudStack
+
+Asked whether CloudStack secondary storage could replace the dedicated S3
+endpoint. Written up as [ADR-0005](docs/adr/0005-model-artifact-storage.md),
+status Proposed; no code changed.
+
+**Secondary storage cannot.** It is reached over NFS, mediated by the SSVM,
+and holds CloudStack-tracked resources — templates, ISOs, snapshots, uploaded
+volumes — each with a database row. There is no object API. A node could mount
+the same export and read from it, and that would be unsupported and dependent
+on a layout no contract covers.
+
+**CloudStack object storage can, in a narrower sense than the question
+implies.** It is a different feature, added in 4.19, with four drivers in the
+source tree. `createBucket` returns `accesskey`, `usersecretkey` and `url`, and
+the admin UI reads objects with exactly those — so CloudStack provisions a
+bucket on a backing MinIO or Ceph and issues credentials, and does not proxy
+object data. The design wiki states it plainly: objects are not managed by
+CloudStack.
+
+So it does not remove the S3 dependency. `S3ObjectStore` would not change at
+all. What changes is that three configured values become one API call, which
+is worth having — one fewer credential to distribute, quota and ownership
+visible where an operator already looks — but it is more setup, not less, for
+an operator who already runs S3, and a mandatory GiB quota becomes a new way
+for a long mirror to fail.
+
+### What the research turned up that was not asked about
+
+**Inference pods never read from the registry.** The pod mounts a node-local
+`hostPath` weight cache read-only with `HF_HUB_OFFLINE=1`, and cloud-init
+formats an NVMe for it — and **nothing populates it**. No init container, no
+sidecar, no DaemonSet, nothing in cloud-init. The hop from registry to node
+does not exist.
+
+That hop is where a storage choice actually bites, since it decides whether a
+node pulls over S3, mounts NFS, or is seeded some other way. Choosing the
+backend first would be settling the easier question.

@@ -263,6 +263,14 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
   replicas both provision a pool. MariaDB is supported through the `mariadb` extra
   (PyMySQL, MIT — not the LGPL package called `mariadb`); Postgres stays the default.
 
+- **ADR-0005 — model artifact storage (proposed, not decided):** CloudStack *secondary*
+  storage cannot hold model artifacts — NFS only, SSVM-mediated, no object API, and it
+  holds CloudStack-tracked resources. CloudStack *object* storage (4.19+) is a different
+  feature that can: `createBucket` returns `accesskey`, `usersecretkey` and `url`, so it
+  provisions a bucket on a backing MinIO or Ceph and hands back S3 credentials. It does
+  not remove the S3 dependency, it moves who provisions it; `S3ObjectStore` would not
+  change. Read the ADR before acting on either.
+
 **Guardrail profiles are scoped to the caller**, not to a role: a caller writes at
 their own level and no higher (`aisvc/guardrails/authority.py`), so a tenant tightens
 their own account and cannot reach the platform profile. Deployment scope stays root
@@ -317,6 +325,9 @@ The spec leaves these unresolved. If a task depends on one, ask rather than assu
 - Public Hugging Face Hub vs a private mirror or Enterprise Hub
 - Whether dedicated-tier tenants may choose serving profiles for their own node pools
 - Initial catalog, license allow-list, price tiers and pricing unit
+- Whether the model registry's bucket comes from CloudStack object storage or stays a
+  directly configured S3 endpoint ([ADR-0005](docs/adr/0005-model-artifact-storage.md)),
+  and the quota and ownership questions that go with it
 
 ## Reference
 
