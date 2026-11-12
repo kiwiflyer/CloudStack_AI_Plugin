@@ -274,6 +274,15 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
   because a bucket quota in GiB is a number only an operator can choose. A missing or
   credential-less bucket is an error, never a fallback to the configured endpoint.
 
+- **ADR-0006 — how a GPU node joins the cluster:** **proposed, nothing built.** A node
+  today runs `kubeadm join` from cloud-init with an endpoint, token and CA hash an
+  operator pasted into the environment; the token expires in 24 hours, the failure
+  lands on a node that is already billed, and CKS does not know the node exists.
+  `addNodesToKubernetesCluster` (4.21+, so inside the 4.22 floor) would hand the
+  deployed VM to CloudStack instead. **Do not start building it** until the one
+  experiment in the ADR has run: nothing in CKS's documentation mentions GPUs, and a
+  CKS operation that stops rather than destroys a passthrough node leaks its GPU.
+
 **A private endpoint's network is checked against CloudStack**, not against anything
 the engine keeps: `aisvc/cloudstack/networks.py` resolves the caller's domain path to a
 domain id and lists that account's networks, and `build_services` wires it as
@@ -348,6 +357,10 @@ The spec leaves these unresolved. If a task depends on one, ask rather than assu
 - What quota a registry bucket should carry, who owns it, and what should happen when it
   is deleted out from under a running engine ([ADR-0005](docs/adr/0005-model-artifact-storage.md)).
   Resolving the bucket is built; these three are sidestepped, not answered.
+- Whether GPU nodes join through CKS or keep running `kubeadm join` themselves
+  ([ADR-0006](docs/adr/0006-gpu-node-join.md)), and whether the engine should create
+  the cluster at all. The ADR recommends the first, gated on an experiment nobody has
+  run; the second it deliberately leaves open.
 
 ## Reference
 

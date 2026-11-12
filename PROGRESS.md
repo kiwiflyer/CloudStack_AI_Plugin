@@ -2711,3 +2711,89 @@ from the parameter metadata in `listApis`, so an `entityType` should
 turn the create-endpoint screen's free-text box into a network picker.
 No CloudStack UI has loaded this section, so that remains a reasonable
 expectation rather than a result.
+
+## Milestone 8 — preflight asks about the cluster
+
+`cks_cluster` was never verified against anything. It reached
+cloud-init as a label and was otherwise unused, so a typo was silent:
+GPU nodes deployed, billed, and then failed to join a cluster nobody
+had looked for. The setup wizard — the one place positioned to catch it
+before an apply — checked the spec, the registry and capacity, and
+never asked about the cluster at all.
+
+`aisvc/cloudstack/clusters.py` asks. Two checks per report: each zone's
+cluster exists in CloudStack and is Running, and the engine's own
+Kubernetes connection can read Deployments in its namespace.
+
+They are separate because they fail for different reasons. CloudStack
+knowing a cluster is Running says nothing about whether the host the
+engine runs on can reach its API server, and an operator told only
+"cluster healthy" would have nowhere to go when an apply then failed.
+
+### The split that matters
+
+"CloudStack lists no such cluster" and "CloudStack could not be asked"
+are two failures with two remedies. The first means editing
+`platform.yaml`; the second emphatically does not. Reporting the second
+as the first is the mistake `aisvc/cloudstack/networks.py` was written
+to undo, so a failed lookup is recorded against every zone rather than
+raised — preflight's contract is that every check still runs.
+
+A state that is not Running is passed through verbatim. That word is
+what an operator sees in the CloudStack UI, and translating an
+unfamiliar one would produce a message matching nothing they can look
+up. Not having asked stays skipped rather than failed, as capacity
+already does.
+
+1,789 Python unit tests pass, up from 1,767.
+
+## Research — how a GPU node should join (ADR-0006)
+
+The question was whether CKS can do the job the engine does by hand.
+It can, and the relevant command has been there since 4.21 — inside
+the 4.22 LTS floor ADR-0003 holds the plugin to.
+
+- `addNodesToKubernetesCluster` adds an existing VM as a CKS worker.
+  That replaces the `kubeadm join` in cloud-init and the three
+  hand-pasted `AISVC_CKS_JOIN_*` variables outright.
+- `getKubernetesClusterConfig` returns kubeconfig file data, which
+  removes `KUBECONFIG` as a prerequisite.
+- `removeNodesFromKubernetesCluster` drains, resets and deletes, which
+  is most of what `aisvc drain` does by hand.
+
+### What the research actually settled
+
+**The trade is a secret for a public key.** Today an operator copies a
+kubeadm token that expires in 24 hours. Afterwards they copy the
+management server's SSH public key, which does not expire. Both are
+one-time manual steps; only one silently stops the platform growing a
+day later. `deployVirtualMachine` takes `keypair`, so the provisioner
+can pass it at deploy time.
+
+**The golden image is most of the way there already.**
+`gpu-golden.pkr.hcl` installs containerd, kubelet, kubeadm and
+cloud-init. The gaps are `conntrack` and friends, possibly
+`containerd.io` rather than Ubuntu's `containerd`, and the `cloud`
+user — whose `authorized_keys` the image's cleanup step deliberately
+deletes.
+
+### What it did not settle, and why nothing was built
+
+**Nothing in CKS's documentation mentions GPUs.** Not passthrough, not
+vGPU, not GPU node offerings. `manualupgrade` excludes a node from
+cluster *upgrades*; the guide does not say whether it excludes it from
+*scaling*, and a CKS operation that stops rather than destroys a
+passthrough node leaks its GPU, because `gpu.detach.on.stop` defaults
+to false.
+
+So the ADR recommends adopting it gated on one experiment: add a GPU
+node to a real cluster, scale the cluster, and watch. That experiment
+has not run. `aisvc/provision/` is unchanged.
+
+### What is still not true
+
+No CloudStack has answered `addNodesToKubernetesCluster`,
+`getKubernetesClusterConfig` or `listKubernetesClusters` for this
+project. The new preflight checks are tested against a fake client and
+a `FakeKubernetes`, and the package gaps above were read from a
+document rather than from a failed build.
