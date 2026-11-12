@@ -41,6 +41,7 @@ below.
 | | |
 | --- | --- |
 | GPU modes | `passthrough`, `vgpu`, `mig` |
+| GPU discovery | `listGpuDevices` (4.21+), per device, so vGPU and MIG are countable where host tags are not. `gpu_card` is checked against `listGpuCards` in preflight. **·management not built** — nothing calls `manageGpuDevice`, `unmanageGpuDevice` or `discoverGpuDevices` |
 | Replica cap | One replica per host. Validation refuses `tensor_parallel` above the class's `gpus_per_node`; there is no multi-node tensor parallelism, so a replica is bounded by one node's GPUs |
 | Sizing inputs | Parameter count, layers, KV heads, head dimension, quantization, context length |
 | Memory headroom | 10% reserved above weights and KV cache |

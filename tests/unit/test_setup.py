@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from aisvc.cloudstack.clusters import ClusterState
+from aisvc.cloudstack.gpus import GpuCardCatalogue
 from aisvc.inventory import CapacitySnapshot, ClassCapacity, HostRecord
 from aisvc.k8s.client import FakeKubernetes
 from aisvc.registry import InMemoryObjectStore, ModelRegistry, RegistryError
@@ -22,6 +23,7 @@ from aisvc.setup import (
     check_capacity,
     check_cluster_reachable,
     check_clusters,
+    check_gpu_cards,
     check_registry,
     check_spec,
     discover_gpu_classes,
@@ -542,3 +544,78 @@ class TestAnExternalClusterIsNotCloudStacksBusiness:
         )
 
         assert report.ok
+
+
+def spec_with_card(card: str) -> PlatformSpec:
+    """MINIMAL, with its GPU class narrowed to one card name."""
+    text = MINIMAL.replace("    gpu_mem_gb: 80\n", f"    gpu_mem_gb: 80\n    gpu_card: {card}\n", 1)
+    return load_spec_from_string(text, allowed_licenses=LICENSES)
+
+
+class TestTheGpuCardNameIsReal:
+    """`gpu_card` is matched exactly against CloudStack's own name.
+
+    A typo counts zero GPUs for the class, and the only symptom is a
+    capacity warning about no room to place a node — on hosts full of
+    idle cards. Checking the name against `listGpuCards` turns that
+    into a sentence naming what CloudStack does have.
+    """
+
+    def test_a_known_card_passes(self) -> None:
+        results = check_gpu_cards(
+            spec_with_card("NVIDIA H100 80GB HBM3"),
+            GpuCardCatalogue(known=frozenset({"NVIDIA H100 80GB HBM3"})),
+        )
+
+        assert [r.status for r in results] == [CheckStatus.PASS]
+
+    def test_an_unknown_card_fails(self) -> None:
+        results = check_gpu_cards(
+            spec_with_card("NVIDIA H200"),
+            GpuCardCatalogue(known=frozenset({"NVIDIA H100 80GB HBM3"})),
+        )
+
+        assert results[0].status is CheckStatus.FAIL
+
+    def test_the_failure_says_what_cloudstack_does_have(self) -> None:
+        # Without this an operator is told their name is wrong and
+        # left to guess the right one.
+        results = check_gpu_cards(
+            spec_with_card("NVIDIA H200"),
+            GpuCardCatalogue(known=frozenset({"NVIDIA H100 80GB HBM3"})),
+        )
+
+        assert "NVIDIA H100 80GB HBM3" in results[0].remedy
+
+    def test_it_explains_the_symptom(self) -> None:
+        # The connection between a card name and "no room to place a
+        # node" is not one an operator would make unaided.
+        results = check_gpu_cards(
+            spec_with_card("NVIDIA H200"),
+            GpuCardCatalogue(known=frozenset({"NVIDIA H100 80GB HBM3"})),
+        )
+
+        assert "zero" in results[0].detail.lower()
+
+    def test_a_class_naming_no_card_is_not_checked(self) -> None:
+        # Counting every GPU on a tagged host is the default and is
+        # not a thing that can be wrong.
+        results = check_gpu_cards(spec(), GpuCardCatalogue(known=frozenset()))
+
+        assert results == []
+
+    def test_a_failed_lookup_does_not_condemn_the_name(self) -> None:
+        # The networks lesson again: "CloudStack knows no such card"
+        # and "CloudStack could not be asked" are different problems.
+        results = check_gpu_cards(
+            spec_with_card("NVIDIA H200"),
+            GpuCardCatalogue(error="connection refused"),
+        )
+
+        assert results[0].status is not CheckStatus.FAIL
+        assert "connection refused" in results[0].detail
+
+    def test_not_having_asked_is_skipped(self) -> None:
+        results = check_gpu_cards(spec_with_card("NVIDIA H200"), None)
+
+        assert [r.status for r in results] == [CheckStatus.SKIPPED]

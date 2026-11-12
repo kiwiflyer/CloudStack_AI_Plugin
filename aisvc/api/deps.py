@@ -64,6 +64,9 @@ class Services:
     #: The engine's own Kubernetes connection, so preflight can prove it
     #: reaches the API server before an apply deploys billable VMs.
     kube: object | None = None
+    #: CloudStack's GPU card catalogue, so a `gpu_card` that matches
+    #: nothing is named rather than silently counting zero GPUs.
+    gpu_cards: object | None = None
 
     def snapshot(self) -> CapacitySnapshot | None:
         return None

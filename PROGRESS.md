@@ -2941,3 +2941,46 @@ Nothing deletes a cluster, and what happens to one deleted out from
 under a running engine is unanswered.
 
 1,841 Python unit tests pass, up from 1,806.
+
+## Milestone 8 — the GPU card name is checked
+
+Discovery already went through the right API: `take_snapshot` reads
+`listGpuDevices` (4.21+) and counts per device, which is what makes
+vGPU and MIG countable where host tags cannot be. That was built in
+milestone 2 and needed nothing.
+
+What had no check was the name. A `gpu_class` may narrow its count to
+one `gpu_card`, matched **exactly** against `gpucardname` — deliberate,
+because a host carrying two kinds of GPU has to stay countable, and
+invisible when wrong. A typo counts zero GPUs for the class, and the
+only symptom is a capacity warning about no room to place a node, on
+hosts full of idle cards.
+
+`aisvc/cloudstack/gpus.py` reads `listGpuCards` and preflight compares.
+A mismatch names every card CloudStack does have, because telling an
+operator their name is wrong and leaving them to guess the right one is
+half an answer.
+
+Both `name` and `devicename` count as a match. `listGpuCards` carries
+the two and which one `gpucardname` echoes is not documented, so
+accepting either is right where the cost of being wrong is refusing a
+name that would have worked.
+
+A failed lookup warns rather than failing. "CloudStack knows no such
+card" and "CloudStack could not be asked" are different problems with
+different remedies — the same distinction the cluster checks keep.
+
+1,856 Python unit tests pass, up from 1,841.
+
+### What is still not true
+
+**The management half is not built.** CloudStack 4.22 has fifteen GPU
+commands; the engine calls two of them, both read-only. Nothing calls
+`discoverGpuDevices` to re-scan a host after one is added, and nothing
+calls `manageGpuDevice` or `unmanageGpuDevice` to take a device out of
+allocation. The API reference does not say what managed state means for
+allocation beyond Enabled/Disabled, and the engine already treats
+anything but `Enabled` as unusable capacity — so acting on it would
+need the semantics confirmed against a running CloudStack first.
+
+No CloudStack has answered `listGpuCards` for this.

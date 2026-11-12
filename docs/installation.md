@@ -453,8 +453,16 @@ Without `AISVC_ENGINE_URL` it says so and exits rather than guessing.
 Admins also get the setup wizard in the UI, which runs the same
 preflight checks — the platform spec, the model registry, the CKS
 cluster each zone names, whether the engine can reach the Kubernetes
-API, and capacity for every deployment. A check with nothing observed
+API, every `gpu_card` against CloudStack's own catalogue, and capacity
+for every deployment. A check with nothing observed
 reports `skipped` with a remedy rather than failing.
+
+The GPU card check is worth reading too. A `gpu_class` may narrow its
+count to one card name, matched exactly against `gpucardname` from
+`listGpuDevices` so that a host carrying two kinds of GPU stays
+countable. A name matching nothing counts zero GPUs, and the only
+symptom is a capacity warning about no room to place a node — on hosts
+full of idle cards. The check names what CloudStack does have.
 
 The cluster checks are worth reading before a first apply. `cks_cluster`
 was previously never verified against CloudStack, so a typo produced GPU

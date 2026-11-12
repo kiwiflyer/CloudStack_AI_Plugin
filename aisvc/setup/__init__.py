@@ -28,10 +28,11 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from aisvc.cloudstack.clusters import ClusterState
+    from aisvc.cloudstack.gpus import GpuCardCatalogue
     from aisvc.inventory import CapacitySnapshot
     from aisvc.k8s.client import Kubernetes
     from aisvc.spec import PlatformSpec
-    from aisvc.spec.models import Zone
+    from aisvc.spec.models import GpuClass, Zone
 
 __all__ = [
     "CheckResult",
@@ -43,6 +44,7 @@ __all__ = [
     "check_capacity",
     "check_cluster_reachable",
     "check_clusters",
+    "check_gpu_cards",
     "check_registry",
     "check_spec",
     "discover_gpu_classes",
@@ -259,6 +261,76 @@ def _cluster_check(state: ClusterState) -> CheckResult:
         name=name,
         status=CheckStatus.PASS,
         detail=f"CloudStack reports {state.cluster} as {RUNNING}",
+    )
+
+
+def check_gpu_cards(spec: PlatformSpec, catalogue: GpuCardCatalogue | None) -> list[CheckResult]:
+    """Is each class's `gpu_card` a card CloudStack has heard of?
+
+    `take_snapshot` matches the name exactly against `gpucardname` from
+    `listGpuDevices`, which is what makes a host carrying two kinds of
+    GPU countable. It also makes a typo invisible: the class counts
+    zero GPUs, and the only symptom is a capacity warning about no room
+    to place a node, on hosts full of idle cards.
+
+    A class naming no card is not checked. Counting every GPU on a
+    tagged host is the default and is not a thing that can be wrong.
+    """
+    narrowed = [
+        gpu_class for gpu_class in spec.document.gpu_classes if getattr(gpu_class, "gpu_card", None)
+    ]
+
+    return [_card_check(gpu_class, catalogue) for gpu_class in narrowed]
+
+
+def _card_check(gpu_class: GpuClass, catalogue: GpuCardCatalogue | None) -> CheckResult:
+    card = str(gpu_class.gpu_card)
+    name = f"GPU card {card} for {gpu_class.name}"
+
+    if catalogue is None:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.SKIPPED,
+            detail="CloudStack has not been asked which GPU cards it knows",
+            remedy=(
+                "Set CLOUDSTACK_API_URL, CLOUDSTACK_API_KEY and "
+                "CLOUDSTACK_SECRET_KEY so the engine can call listGpuCards."
+            ),
+        )
+
+    if not catalogue.usable:
+        # Not a failure of the name. Calling it unknown on the strength
+        # of an unreachable API would send an operator to edit a spec
+        # that was right all along.
+        return CheckResult(
+            name=name,
+            status=CheckStatus.WARN,
+            detail=f"could not ask CloudStack which GPU cards it knows: {catalogue.error}",
+            remedy=(
+                "Check CLOUDSTACK_API_URL and the engine's credentials. The card "
+                "name has not been checked either way."
+            ),
+        )
+
+    if catalogue.has(card):
+        return CheckResult(
+            name=name,
+            status=CheckStatus.PASS,
+            detail=f"CloudStack knows {card}",
+        )
+
+    return CheckResult(
+        name=name,
+        status=CheckStatus.FAIL,
+        detail=(
+            f"CloudStack knows no GPU card called {card}, so {gpu_class.name} will "
+            f"count zero GPUs and every deployment into it will report no room"
+        ),
+        remedy=(
+            "Set gpu_card to one of: "
+            + (", ".join(sorted(catalogue.known)) or "nothing — CloudStack lists no GPU cards")
+            + ", or remove it to count every GPU on a tagged host."
+        ),
     )
 
 
@@ -499,6 +571,7 @@ def preflight(
     clusters: Sequence[ClusterState] | None = None,
     kube: Kubernetes | None = None,
     namespace: str = DEFAULT_NAMESPACE,
+    gpu_cards: GpuCardCatalogue | None = None,
 ) -> PreflightReport:
     """Run every check, so one pass surfaces every problem.
 
@@ -509,5 +582,6 @@ def preflight(
     checks: list[CheckResult] = [check_spec(spec), check_registry(registry)]
     checks.extend(check_clusters(spec, clusters))
     checks.append(check_cluster_reachable(kube, namespace=namespace))
+    checks.extend(check_gpu_cards(spec, gpu_cards))
     checks.extend(check_capacity(spec, snapshot))
     return PreflightReport(checks=tuple(checks))

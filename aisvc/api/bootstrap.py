@@ -50,7 +50,28 @@ def build_services() -> Services:  # pragma: no cover - needs real services
         networks_for=_networks_lookup(),
         cluster_states=_cluster_lookup(spec),
         kube=_kube_or_none(),
+        gpu_cards=_gpu_card_lookup(),
     )
+
+
+def _gpu_card_lookup() -> object | None:  # pragma: no cover - needs CloudStack
+    """Ask CloudStack which GPU cards it knows, or nothing."""
+    endpoint = os.environ.get("CLOUDSTACK_API_URL", "")
+    api_key = os.environ.get("CLOUDSTACK_API_KEY", "")
+    secret_key = os.environ.get("CLOUDSTACK_SECRET_KEY", "")
+    if not (endpoint and api_key and secret_key):
+        return None
+
+    from aisvc.cloudstack import CloudStackClient, Credentials
+    from aisvc.cloudstack.gpus import GpuCardCatalogue, read_cards
+
+    credentials = Credentials(endpoint=endpoint, api_key=api_key, secret_key=secret_key)
+
+    async def lookup() -> GpuCardCatalogue:
+        async with CloudStackClient(credentials) as client:
+            return await read_cards(client)
+
+    return lookup
 
 
 def _cluster_lookup(spec: PlatformSpec) -> object | None:  # pragma: no cover - needs CloudStack

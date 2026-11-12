@@ -39,6 +39,7 @@ from aisvc.batch.runner import read_output, store_input
 from aisvc.certificates import CertificateRejected, validate_certificate
 from aisvc.certificates.bootstrap import BootstrapRejected, BootstrapTokens
 from aisvc.cloudstack.clusters import ClusterState
+from aisvc.cloudstack.gpus import GpuCardCatalogue
 from aisvc.db import BudgetRecord, KeyStore, RunLog, UsageStore
 from aisvc.db.tier2 import (
     TERMINAL_BATCH_STATES,
@@ -614,6 +615,20 @@ def _register_routes(app: FastAPI) -> None:
 
     # -- setup ------------------------------------------------------------
 
+    async def _gpu_cards(services: Services) -> GpuCardCatalogue | None:
+        """CloudStack's GPU card catalogue, or nothing.
+
+        `read_cards` already carries a failure rather than raising, so
+        this only handles there being no lookup at all.
+        """
+        lookup = getattr(services, "gpu_cards", None)
+        if lookup is None:
+            return None
+        found = lookup()
+        if inspect.isawaitable(found):
+            found = await found
+        return cast("GpuCardCatalogue", found)
+
     async def _cluster_states(services: Services) -> list[ClusterState] | None:
         """What CloudStack says about each zone's cluster, or nothing.
 
@@ -646,6 +661,7 @@ def _register_routes(app: FastAPI) -> None:
             # async and every other check is not.
             clusters=await _cluster_states(services),
             kube=cast("Kubernetes | None", services.kube),
+            gpu_cards=await _gpu_cards(services),
         )
         return {
             "ok": report.ok,
