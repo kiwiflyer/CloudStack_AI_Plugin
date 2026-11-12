@@ -20,7 +20,7 @@ below.
 | Serving | Kubernetes `Deployment` on CKS, rendered from Jinja ([ADR-0001](adr/0001-serving-layer.md)) |
 | Gateway | LiteLLM Proxy, MIT side only ([ADR-0002](adr/0002-gateway.md)) **·not a pinned dependency yet** |
 | Engine state | Postgres (default) or MariaDB ([ADR-0004](adr/0004-state-store.md)) |
-| Object store | S3, Ceph RGW or MinIO |
+| Object store | S3, Ceph RGW or MinIO. The bucket and its credentials can come from CloudStack's object store instead of configuration ([ADR-0005](adr/0005-model-artifact-storage.md)) |
 | Licence policy | ASF Category A/B/X enforced in CI; GPL, LGPL and AGPL prohibited |
 
 ## Catalog and models

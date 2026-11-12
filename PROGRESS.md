@@ -2541,3 +2541,56 @@ does not exist.
 That hop is where a storage choice actually bites, since it decides whether a
 node pulls over S3, mounts NFS, or is seeded some other way. Choosing the
 backend first would be settling the easier question.
+
+## Milestone 9 — the registry bucket from CloudStack
+
+ADR-0005's second recommendation, built. `AISVC_REGISTRY_FROM_CLOUDSTACK`
+takes the bucket name, endpoint and credentials from CloudStack's object
+store instead of three configured values. Unset, nothing changes.
+
+`S3ObjectStore` is untouched, which is the point: CloudStack provisions
+the bucket on a backing MinIO or Ceph and hands back S3 credentials
+rather than proxying object data, so boto3 still talks S3 to the same
+kind of endpoint.
+
+### It resolves and never creates
+
+That is how the quota question is avoided rather than answered.
+`createBucket` needs a number in GiB, mandatory since 4.21, and nothing
+in the engine can choose it: a model is tens to hundreds of GiB and a
+conservative guess fails a multi-hour mirror near the end, long after
+the decision that caused it. An operator creates the bucket in
+CloudStack, with the pool and its free space in front of them.
+
+### Three refusals rather than three fallbacks
+
+- **A bucket that is not there** is an error naming the bucket and the
+  command to create one. Quietly using the configured endpoint instead
+  would mirror models somewhere nobody is watching.
+- **A bucket listed without a url, access key or secret** is refused,
+  naming which is missing. Blank credentials would surface as an opaque
+  S3 403 hours later, on the first mirror.
+- **A switch set to something that is neither on nor off** is refused
+  rather than read as off, because "off" would silently be a different
+  bucket than the operator believed they had chosen. In `apply` it is
+  checked beside the CloudStack credentials, so a typo fails before a
+  plan is printed and confirmed rather than after.
+
+Name matching is exact: `models` does not resolve to `models-staging`.
+
+### A structural change that came with it
+
+`_registry()` is now called only from a synchronous command body, and
+the result is threaded into `_apply` and `_batch_worker`. Resolving a
+bucket is an async call, and those two run inside an event loop that
+cannot start another.
+
+### What is still not true
+
+- **No CloudStack object store has been queried.** The resolver is
+  tested against a recorded shape, not a server, like everything else
+  in this repository.
+- The quota, ownership and deletion questions in ADR-0005 are
+  sidestepped, not answered. A bucket deleted under a running engine
+  fails the next mirror with a clear error, which is a behaviour rather
+  than a plan.

@@ -55,6 +55,12 @@ from aisvc.reconciler.deployer import ServingDeployer
 from aisvc.reconciler.leader import NotLeader, ZoneLeadership
 from aisvc.reconciler.state import DeploymentHealth
 from aisvc.registry import InMemoryObjectStore, ModelRegistry, S3ObjectStore
+from aisvc.registry.bucket import (
+    BucketCredentials,
+    SourceUnclear,
+    from_cloudstack_requested,
+    resolve_bucket,
+)
 from aisvc.spec import PlatformSpec, SpecError, load_spec
 
 app = typer.Typer(
@@ -142,19 +148,61 @@ def _cluster_join() -> ClusterJoin:
     )
 
 
+def _registry_from_cloudstack() -> bool:
+    """Whether to resolve the bucket through CloudStack, reported cleanly.
+
+    `from_cloudstack_requested` raises on a value that is neither on nor
+    off; a traceback is the wrong way to tell an operator they typed the
+    switch wrong.
+    """
+    try:
+        return from_cloudstack_requested(os.environ)
+    except SourceUnclear as exc:
+        err.print(f"[bold red]Registry source is unclear:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+
 def _registry(*, observe: bool = True) -> ModelRegistry:
-    """The artifact registry, from the environment.
+    """The artifact registry (ADR-0005).
 
     With `--no-observe` nothing should leave the machine, so the plan is
     drawn against an empty registry and every model reads as unmirrored.
+
+    With `AISVC_REGISTRY_FROM_CLOUDSTACK` on, the bucket, endpoint and
+    credentials come from CloudStack's object store instead of from the
+    environment. CloudStack provisions the bucket on a backing MinIO or
+    Ceph and hands back S3 credentials; it does not proxy object data,
+    so the store below is the same `S3ObjectStore` either way.
+
+    **Called only from a synchronous command body**, before the event
+    loop starts: resolving the bucket is itself an async call, and the
+    commands pass the result down rather than building a registry
+    inside a loop.
     """
     if not observe:
         return ModelRegistry(InMemoryObjectStore(), bucket="models")
 
     bucket = os.environ.get("AISVC_REGISTRY_BUCKET", "models")
+
+    if _registry_from_cloudstack():
+        found = asyncio.run(_bucket_from_cloudstack(bucket))
+        store: Any = S3ObjectStore(
+            bucket=found.name,
+            endpoint_url=found.endpoint,
+            aws_access_key_id=found.access_key,
+            aws_secret_access_key=found.secret_key,
+        )
+        return ModelRegistry(store, bucket=found.name)
+
     endpoint = os.environ.get("AISVC_REGISTRY_ENDPOINT") or None
     store = S3ObjectStore(bucket=bucket, endpoint_url=endpoint)
     return ModelRegistry(store, bucket=bucket)
+
+
+async def _bucket_from_cloudstack(bucket: str) -> BucketCredentials:
+    """Read the bucket's endpoint and credentials out of CloudStack."""
+    async with CloudStackClient(_credentials()) as client:
+        return await resolve_bucket(client, bucket)
 
 
 def _cluster() -> ClusterKubernetes:
@@ -343,7 +391,12 @@ async def _observe_health(models: set[str]) -> dict[str, DeploymentHealth]:
 
 
 async def _apply(
-    spec: PlatformSpec, computed: Plan, *, zone: str, dry_run: bool
+    spec: PlatformSpec,
+    computed: Plan,
+    *,
+    zone: str,
+    dry_run: bool,
+    registry: ModelRegistry,
 ) -> tuple[int, str]:
     """Execute a plan, returning the run id and its status."""
     credentials = _credentials()
@@ -368,7 +421,7 @@ async def _apply(
                 deployer = ServingDeployer(
                     _cluster(),
                     spec,
-                    _registry(),
+                    registry,
                     namespace=namespace,
                     adapters_for=_adapters_for(session),
                     exposures_for=_exposures_for(session),
@@ -469,9 +522,16 @@ def apply(
     # asked to confirm changes that could not have been applied anyway.
     _credentials()
     _cluster_join()
+    # A typo in the registry switch should fail here rather than after
+    # the plan has been printed and confirmed.
+    _registry_from_cloudstack()
 
     state = _observe_or_empty(loaded, observe=observe)
-    computed = plan_all(loaded, state, registry=_registry(observe=observe))
+    # Resolved once, here in the synchronous body: with
+    # AISVC_REGISTRY_FROM_CLOUDSTACK on this makes an API call, and the
+    # execution below runs inside an event loop that cannot start another.
+    registry = _registry(observe=observe)
+    computed = plan_all(loaded, state, registry=registry)
     out.print(computed.render())
 
     if not computed.has_changes:
@@ -486,7 +546,9 @@ def apply(
 
     zone = loaded.document.zones[0].name if loaded.document.zones else "unknown"
     try:
-        run_id, status = asyncio.run(_apply(loaded, computed, zone=zone, dry_run=dry_run))
+        run_id, status = asyncio.run(
+            _apply(loaded, computed, zone=zone, dry_run=dry_run, registry=registry)
+        )
     except NotLeader as exc:
         # Not an error in the zone, just someone else's turn. Saying so
         # plainly stops an operator debugging a problem that is not one.
@@ -555,7 +617,7 @@ def batch(
         )
 
     loaded = _load(Path(os.environ.get("AISVC_SPEC", "platform.yaml")), None)
-    asyncio.run(_batch_worker(gateway, loaded, once=once, interval=interval))
+    asyncio.run(_batch_worker(gateway, loaded, once=once, interval=interval, registry=_registry()))
 
 
 def _batch_meter(session: Any, spec: PlatformSpec) -> Any:
@@ -574,7 +636,14 @@ def _batch_meter(session: Any, spec: PlatformSpec) -> Any:
     return UsageMeter(UsageStore(session), tier_for=tier_for, sink=LogSink())
 
 
-async def _batch_worker(gateway: str, spec: PlatformSpec, *, once: bool, interval: int) -> None:
+async def _batch_worker(
+    gateway: str,
+    spec: PlatformSpec,
+    *,
+    once: bool,
+    interval: int,
+    registry: ModelRegistry,
+) -> None:
     """One pass, or a loop of them."""
     upgrade_to_head(database_url())
     factory = create_session_factory()
@@ -584,7 +653,7 @@ async def _batch_worker(gateway: str, spec: PlatformSpec, *, once: bool, interva
         with session_scope(factory) as session:
             runner = BatchRunner(
                 BatchStore(session),
-                _registry(),
+                registry,
                 complete=_gateway_completion(gateway),
                 should_preempt=preemption_signal(health),
                 meter=_batch_meter(session, spec),

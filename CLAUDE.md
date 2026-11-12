@@ -263,13 +263,16 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
   replicas both provision a pool. MariaDB is supported through the `mariadb` extra
   (PyMySQL, MIT — not the LGPL package called `mariadb`); Postgres stays the default.
 
-- **ADR-0005 — model artifact storage (proposed, not decided):** CloudStack *secondary*
-  storage cannot hold model artifacts — NFS only, SSVM-mediated, no object API, and it
-  holds CloudStack-tracked resources. CloudStack *object* storage (4.19+) is a different
+- **ADR-0005 — model artifact storage:** CloudStack *secondary* storage cannot hold
+  model artifacts — NFS only, SSVM-mediated, no object API, and it holds
+  CloudStack-tracked resources. CloudStack *object* storage (4.19+) is a different
   feature that can: `createBucket` returns `accesskey`, `usersecretkey` and `url`, so it
   provisions a bucket on a backing MinIO or Ceph and hands back S3 credentials. It does
-  not remove the S3 dependency, it moves who provisions it; `S3ObjectStore` would not
-  change. Read the ADR before acting on either.
+  not remove the S3 dependency, it moves who provisions it, and `S3ObjectStore` does not
+  change. **Resolution is implemented** — `aisvc/registry/bucket.py`, behind
+  `AISVC_REGISTRY_FROM_CLOUDSTACK` — and deliberately resolves without ever creating,
+  because a bucket quota in GiB is a number only an operator can choose. A missing or
+  credential-less bucket is an error, never a fallback to the configured endpoint.
 
 **Guardrail profiles are scoped to the caller**, not to a role: a caller writes at
 their own level and no higher (`aisvc/guardrails/authority.py`), so a tenant tightens
@@ -325,9 +328,9 @@ The spec leaves these unresolved. If a task depends on one, ask rather than assu
 - Public Hugging Face Hub vs a private mirror or Enterprise Hub
 - Whether dedicated-tier tenants may choose serving profiles for their own node pools
 - Initial catalog, license allow-list, price tiers and pricing unit
-- Whether the model registry's bucket comes from CloudStack object storage or stays a
-  directly configured S3 endpoint ([ADR-0005](docs/adr/0005-model-artifact-storage.md)),
-  and the quota and ownership questions that go with it
+- What quota a registry bucket should carry, who owns it, and what should happen when it
+  is deleted out from under a running engine ([ADR-0005](docs/adr/0005-model-artifact-storage.md)).
+  Resolving the bucket is built; these three are sidestepped, not answered.
 
 ## Reference
 

@@ -1,6 +1,8 @@
 # ADR-0005: Model artifact storage
 
-**Status:** Proposed — research only, no code changed
+**Status:** Accepted for recommendation 2, which is implemented. Recommendations 1 and 3
+stand as written: secondary storage is not used, and the quota and ownership questions are
+sidestepped rather than answered — see below.
 **Date:** 2026-11-11
 **Deciders:** Simon Weller
 **Question asked:** can CloudStack secondary storage replace the dedicated S3
@@ -124,6 +126,26 @@ store pool is configured.
 3. **Decide the quota and ownership questions before writing code**, because both
    are operational rather than technical: what quota a registry bucket gets, who
    owns it, and what happens when it is deleted out from under the engine.
+
+## What was built, and what it avoids deciding
+
+`aisvc/registry/bucket.py` resolves a bucket through `listBuckets` and reads
+`url`, `accesskey` and `usersecretkey` off it. `AISVC_REGISTRY_FROM_CLOUDSTACK`
+turns it on; unset, nothing changes. `S3ObjectStore` is untouched.
+
+**It resolves and never creates**, which is how the quota question is avoided
+rather than answered. `createBucket` needs a number in GiB that nothing in the
+engine is equipped to choose, and a conservative guess fails a multi-hour mirror
+near the end. An operator creates the bucket in CloudStack, where the pool and
+its free space are in front of them; the engine finds it.
+
+**A bucket that is absent, or listed without credentials, is an error naming the
+bucket and the fix.** Never a quiet fallback to the configured endpoint: mirroring
+models into a bucket nobody is watching is worse than refusing to start.
+
+Ownership still follows the engine's own CloudStack credentials, and what happens
+when that bucket is deleted out from under a running engine is still unanswered —
+the next mirror fails with a clear error, which is a behaviour rather than a plan.
 
 ## The thing this research found that nobody asked about
 

@@ -200,6 +200,7 @@ Secrets come from the environment, never from `platform.yaml`.
 | `AISVC_HF_TOKEN`, `AISVC_HF_ENDPOINT` | Mirroring | A gated-model token, and a private Hub if you use one. |
 | `AISVC_PROMETHEUS_URL` | Autoscaling | **Autoscaling is opt-in on this.** Without it the engine holds at the replica floor. |
 | `AISVC_NAMESPACE` | `apply` | Kubernetes namespace for the deployments. |
+| `AISVC_REGISTRY_FROM_CLOUDSTACK` | Mirroring and serving | Set it on to take the bucket, endpoint and credentials from CloudStack's object store instead of the three variables above ([ADR-0005](adr/0005-model-artifact-storage.md)). The bucket must already exist; the engine resolves it and never creates one. |
 | `AISVC_GATEWAY_URL`, `AISVC_GATEWAY_SERVICE` | `apply`, `batch` | The gateway's base URL, and its in-cluster service name. The service defaults to `aisvc-gateway.aisvc-serving.svc.cluster.local`. |
 
 Two more are read by `aisvc serve` when the API loads the spec, and by
