@@ -283,6 +283,15 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
   experiment in the ADR has run: nothing in CKS's documentation mentions GPUs, and a
   CKS operation that stops rather than destroys a passthrough node leaks its GPU.
 
+- **ADR-0007 — where the cluster comes from:** **proposed, nothing built.** Amends
+  0006: a zone declares its cluster's `source` (`cks` or `external`) and whether the
+  engine may `create` one, so CKS is the paved road rather than the only road and
+  `kubeadm join` stays for clusters CloudStack does not manage. Installing and
+  enabling CKS is the CloudStack administrator's one-time job and **out of scope** —
+  this project requires only that a Kubernetes service is available. Note the defect
+  it names: `check_clusters` fails a zone CloudStack has never heard of, which is
+  right only while every cluster is assumed to be a CKS one.
+
 **A private endpoint's network is checked against CloudStack**, not against anything
 the engine keeps: `aisvc/cloudstack/networks.py` resolves the caller's domain path to a
 domain id and lists that account's networks, and `build_services` wires it as
@@ -358,9 +367,10 @@ The spec leaves these unresolved. If a task depends on one, ask rather than assu
   is deleted out from under a running engine ([ADR-0005](docs/adr/0005-model-artifact-storage.md)).
   Resolving the bucket is built; these three are sidestepped, not answered.
 - Whether GPU nodes join through CKS or keep running `kubeadm join` themselves
-  ([ADR-0006](docs/adr/0006-gpu-node-join.md)), and whether the engine should create
-  the cluster at all. The ADR recommends the first, gated on an experiment nobody has
-  run; the second it deliberately leaves open.
+  ([ADR-0006](docs/adr/0006-gpu-node-join.md)), gated on an experiment nobody has run.
+  [ADR-0007](docs/adr/0007-kubernetes-cluster-source.md) answers the cluster-source
+  half — three sources, CKS as the default — and leaves open who should own a cluster
+  the engine creates and what happens if it is deleted from under a running engine.
 
 ## Reference
 

@@ -2797,3 +2797,54 @@ No CloudStack has answered `addNodesToKubernetesCluster`,
 project. The new preflight checks are tested against a fake client and
 a `FakeKubernetes`, and the package gaps above were read from a
 document rather than from a failed build.
+
+## Research — where the Kubernetes cluster comes from (ADR-0007)
+
+ADR-0006 recommended handing GPU node VMs to
+`addNodesToKubernetesCluster` and dropping `kubeadm join` entirely.
+That second half does not survive scrutiny: `addNodesToKubernetesCluster`
+works only on a cluster CloudStack manages, so removing the kubeadm
+path would quietly make CKS mandatory — a product decision disguised
+as an implementation one.
+
+ADR-0007 splits the two questions apart. A zone declares where its
+cluster comes from, and the source decides which join mechanisms are
+available; the join choice never constrains the source. Three sources:
+an existing CKS cluster, a CKS cluster the engine creates, and an
+external cluster CloudStack knows nothing about.
+
+### The scope boundary
+
+Installing and enabling CKS — the global setting, the management
+server restart, `endpoint.url`, the network offering, and registering
+a Kubernetes binaries ISO — is the CloudStack administrator's one-time
+job and **out of scope**. This project requires only that a Kubernetes
+service is available. The wizard detects and reports that; it never
+performs it, and it must never restart a management server it does not
+own.
+
+An earlier draft of this research treated the prerequisite chain as
+something the wizard would have to carry, which overstated what cluster
+creation would cost.
+
+### A defect it found in `bdc4f32`
+
+`check_clusters` fails a zone when CloudStack lists no cluster by that
+name, with a remedy pointing at `cks_cluster` in `platform.yaml`. For
+an operator who brought their own EKS or kubeadm cluster that is a hard
+preflight failure for a cluster CloudStack was never meant to know
+about.
+
+The check is correct **only because `cks_cluster` is mandatory today
+and every cluster is assumed to be a CKS one.** It becomes a bug the
+moment ADR-0007 is implemented, and the fix belongs in that change. The
+Kubernetes reachability half needs no change — it already asks the only
+question that matters for an external cluster.
+
+### What is still not true
+
+Nothing is built. `platform.yaml`'s schema is unchanged, both ADRs are
+Proposed, and no CloudStack has created a cluster, accepted a GPU node
+into one, or been asked whether CKS is available. ADR-0006's GPU
+lifecycle experiment is still unrun, and ADR-0007 deliberately leaves
+open who owns a cluster the engine creates.

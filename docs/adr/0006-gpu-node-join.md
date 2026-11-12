@@ -1,6 +1,8 @@
 # ADR-0006: How a GPU node joins the cluster
 
-**Status:** Proposed. Nothing is built; `aisvc/provision/` is unchanged.
+**Status:** Proposed, and **amended by [ADR-0007](0007-kubernetes-cluster-source.md)**:
+the kubeadm path stays as the join mechanism for clusters CloudStack does not manage.
+Nothing is built; `aisvc/provision/` is unchanged.
 **Date:** 2026-11-12
 **Deciders:** Simon Weller
 **Resolves, partly:** SPEC.md section 14's "Target CloudStack release, and how much
@@ -61,7 +63,15 @@ has picked a `clustertype`.
 ## Decision
 
 **Proposed: deploy the VM as now, then hand it to CKS with
-`addNodesToKubernetesCluster`, and drop the kubeadm token path entirely.**
+`addNodesToKubernetesCluster`.**
+
+> **Amended by [ADR-0007](0007-kubernetes-cluster-source.md).** This originally read
+> "and drop the kubeadm token path entirely". It does not survive: a zone may point
+> at a cluster CloudStack does not manage, and `addNodesToKubernetesCluster` works
+> only on one it does. CKS becomes the paved road, not the only road, and the
+> expiring-token footgun below is confined to the path an operator opts into rather
+> than removed. Read the rest of this ADR as the case for the CKS path, not as a case
+> for making it mandatory.
 
 The engine keeps doing what it is good at — choosing a template, an offering, an
 affinity group and an ordinal-stable name — and stops doing the one thing CloudStack
@@ -149,7 +159,10 @@ an inference from a flag's existence, not a documented guarantee.
 2. **Do `getKubernetesClusterConfig` first regardless.** It is independent of the join
    question, removes a prerequisite from `docs/installation.md`, and cannot leak a GPU
    if it is wrong.
-3. **Do not touch `provision.scale_cluster`.** It is dead code pointing at the wrong
+3. **Keep `kubeadm join` working** for zones whose cluster CloudStack does not
+   manage, per [ADR-0007](0007-kubernetes-cluster-source.md). That is the one part of
+   this ADR that changed after it was written.
+4. **Do not touch `provision.scale_cluster`.** It is dead code pointing at the wrong
    abstraction — CKS scaling its own nodes, when the nodes this platform cares about
    are ones CKS did not create. Delete it rather than wire it up.
 
