@@ -2984,3 +2984,56 @@ anything but `Enabled` as unusable capacity — so acting on it would
 need the semantics confirmed against a running CloudStack first.
 
 No CloudStack has answered `listGpuCards` for this.
+
+## Milestone 8 — the kubeconfig comes from CloudStack
+
+ADR-0006's second recommendation, the one it said to do regardless.
+
+`KUBECONFIG` was a prerequisite an operator satisfied by hand, which
+left cluster creation only half automated: the engine could build a CKS
+cluster and then could not talk to it until somebody fetched a file and
+put it somewhere. `plan` and `apply` now call
+`getKubernetesClusterConfig` for any `cks` zone.
+
+### What it refuses to decide
+
+An explicit `KUBECONFIG` always wins. An operator who set it meant it,
+and overriding them with something fetched from CloudStack would be the
+engine choosing which cluster they serve.
+
+Two zones naming two different CKS clusters is refused rather than
+resolved. The engine holds one Kubernetes connection, and picking
+either silently would deploy every model into whichever sorted first.
+Two zones naming the *same* cluster is fine.
+
+### Secrets
+
+The contents are cluster-admin credentials. No part of them appears in
+an error, nothing logs the return value, and the file is written `0600`
+inside a `0700` directory — the engine may run on a host with other
+accounts on it. An empty `configdata` is refused rather than written,
+because an empty file turns a clear failure here into an opaque
+Kubernetes client error much later.
+
+### Fetched twice, deliberately
+
+Once during observe and again on the apply path. A cluster this run is
+about to create has no kubeconfig at observe time, and the apply path
+is where it first does.
+
+A failure is never fatal: the engine carries on with whatever
+`KUBECONFIG` says, including nothing, because the Kubernetes client's
+own error is clearer than a second one wrapped around it.
+
+1,870 Python unit tests pass, up from 1,856.
+
+### What is still not true
+
+`aisvc serve` does not fetch. `build_services` is synchronous and the
+fetch is not, and forcing an event loop there would break whichever of
+the two callers runs inside one. Running the API outside the cluster
+still needs `KUBECONFIG`; in-cluster it uses the pod's service account
+as before.
+
+No CloudStack has answered `getKubernetesClusterConfig` for this. The
+response field is `configdata`, read from the 4.22 API reference.

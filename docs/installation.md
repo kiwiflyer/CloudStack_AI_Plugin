@@ -61,6 +61,11 @@ engine. **The engine is never exposed to tenant networks.**
   network offering, and a registered Kubernetes version ISO. The engine
   never does any of that, and says so by name when something is missing.
 
+  Either way you do not need a kubeconfig for a `cks` cluster: the
+  engine fetches it from CloudStack. That is what makes `create: true`
+  end to end — otherwise you would have to fetch one by hand in between
+  the engine building a cluster and the engine using it.
+
   Nodes still join with `kubeadm join` whichever source you choose.
   [ADR-0006](adr/0006-gpu-node-join.md) proposes moving that onto CKS;
   none of it is built.
@@ -221,7 +226,8 @@ Secrets come from the environment, never from `platform.yaml`.
 | `CLOUDSTACK_API_URL`, `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY` | Anything that observes or writes | The CloudStack API. |
 | `AISVC_DATABASE_URL` | `apply`, `serve`, `batch` | Postgres, as a SQLAlchemy URL. |
 | `AISVC_CKS_JOIN_ENDPOINT`, `AISVC_CKS_JOIN_TOKEN`, `AISVC_CKS_CA_CERT_HASH` | `apply` | How a new GPU node joins the cluster. |
-| `KUBECONFIG` | `apply`, `serve` | Omit it in-cluster and the engine uses the pod's service account. |
+| `KUBECONFIG` | `apply`, `serve` | **Usually unnecessary now.** `plan` and `apply` fetch the kubeconfig from CloudStack with `getKubernetesClusterConfig` when a zone names a `cks` cluster. Set it to override that, for an `external` cluster, or for `serve` outside the cluster; omit it in-cluster and the engine uses the pod's service account. |
+| `AISVC_KUBECONFIG_DIR` | `plan`, `apply` | Where a fetched kubeconfig is written, `0600` in a `0700` directory. Defaults to a per-user directory under the system temp dir. |
 | `AISVC_REGISTRY_BUCKET`, `AISVC_REGISTRY_ENDPOINT` | Mirroring and serving | The object store. The bucket defaults to `models`; leave the endpoint unset for AWS S3. Credentials come from boto3's usual chain. |
 | `AISVC_TLS_CERT`, `AISVC_TLS_KEY`, `AISVC_TLS_CLIENT_CA` | `serve` | The engine's mTLS material. See below. |
 | `AISVC_HF_TOKEN`, `AISVC_HF_ENDPOINT` | Mirroring | A gated-model token, and a private Hub if you use one. |

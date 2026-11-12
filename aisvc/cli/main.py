@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
@@ -33,7 +34,11 @@ from aisvc.cloudstack.clusters import (
     ClusterPlanned,
     ClusterState,
     ClusterUnbuildable,
+    KubeconfigUnavailable,
+    cluster_for_kubeconfig,
+    fetch_kubeconfig,
     read_clusters,
+    write_kubeconfig,
 )
 from aisvc.db import RunLog, UsageStore, create_session_factory, session_scope
 from aisvc.db.migrate import upgrade_to_head
@@ -212,8 +217,50 @@ async def _bucket_from_cloudstack(bucket: str) -> BucketCredentials:
         return await resolve_bucket(client, bucket)
 
 
-def _cluster() -> ClusterKubernetes:
-    return ClusterKubernetes(kubeconfig=os.environ.get("KUBECONFIG") or None)
+def _cluster(kubeconfig: str = "") -> ClusterKubernetes:
+    """The engine's Kubernetes connection.
+
+    An explicit `KUBECONFIG` always wins: an operator who set it meant
+    it, and overriding them with something fetched from CloudStack
+    would be the engine deciding which cluster they serve.
+    """
+    return ClusterKubernetes(kubeconfig=os.environ.get("KUBECONFIG") or kubeconfig or None)
+
+
+def _kubeconfig_dir() -> str:
+    """Where a fetched kubeconfig is kept, private to this user."""
+    return os.environ.get("AISVC_KUBECONFIG_DIR") or os.path.join(
+        tempfile.gettempdir(), f"aisvc-{os.getuid()}"
+    )
+
+
+async def _kubeconfig_from_cloudstack(client: Any, spec: PlatformSpec) -> str:
+    """Fetch the cluster's kubeconfig, or return "" to fall back.
+
+    This is what makes `create: true` end to end. Without it an
+    operator had to fetch a kubeconfig by hand in between the engine
+    building a cluster and the engine using it, which left cluster
+    creation only half automated.
+
+    Nothing here is fatal. A failure means the engine carries on with
+    whatever `KUBECONFIG` says, including nothing — the Kubernetes
+    client's own error is clearer than a second one wrapped around it.
+    """
+    if os.environ.get("KUBECONFIG"):
+        return ""
+
+    try:
+        cluster = cluster_for_kubeconfig(_cks_zones(spec))
+        if cluster is None:
+            return ""
+        data = await fetch_kubeconfig(client, cluster)
+    except KubeconfigUnavailable as unavailable:
+        err.print(f"[yellow]Could not fetch a kubeconfig:[/yellow] {unavailable}")
+        return ""
+
+    # The contents are never printed, here or anywhere: they are
+    # cluster-admin credentials.
+    return write_kubeconfig(data, directory=_kubeconfig_dir())
 
 
 def _certificate_serials() -> dict[str, int]:
@@ -260,8 +307,9 @@ async def _observe(spec: PlatformSpec) -> ActualState:
         capacity = await take_snapshot(client, spec)
         clusters = await read_clusters(client, _cks_zones(spec))
         plans, problems = await _cluster_plans(client, spec, clusters)
+        kubeconfig = await _kubeconfig_from_cloudstack(client, spec)
 
-    cluster = _cluster()
+    cluster = _cluster(kubeconfig)
     deployments = observe_deployments(cluster, namespace=namespace)
     return ActualState(
         capacity=capacity,
@@ -471,13 +519,17 @@ async def _apply(
     with ZoneLeadership(engine, zone=zone, required=not dry_run):
         async with CloudStackClient(credentials) as client:
             provisioner = NodeProvisioner(client, spec, join=join)
+            # Fetched again here rather than carried from observe: a
+            # cluster this run is about to create has no kubeconfig at
+            # observe time, and this is where it first does.
+            kubeconfig = await _kubeconfig_from_cloudstack(client, spec)
             with session_scope(factory) as session:
                 # Adapters come from the database, so the deployer is
                 # built inside the session: without this the LoRA args
                 # are never rendered and an uploaded adapter would be
                 # routed to a process that never loaded it.
                 deployer = ServingDeployer(
-                    _cluster(),
+                    _cluster(kubeconfig),
                     spec,
                     registry,
                     namespace=namespace,

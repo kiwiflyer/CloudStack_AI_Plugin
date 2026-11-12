@@ -29,8 +29,12 @@ __all__ = [
     "ClusterPlanned",
     "ClusterState",
     "ClusterUnbuildable",
+    "KubeconfigUnavailable",
     "KubernetesClusters",
+    "cluster_for_kubeconfig",
+    "fetch_kubeconfig",
     "read_clusters",
+    "write_kubeconfig",
 ]
 
 #: CloudStack's list item key for a Kubernetes cluster.
@@ -310,3 +314,105 @@ class ClusterBuilder:
             key=lambda o: (int(o.get("cpunumber") or 0), int(o.get("memory") or 0)),
         )
         return dict(smallest)
+
+
+class KubeconfigUnavailable(Exception):
+    """The cluster's kubeconfig could not be had, with the reason.
+
+    Distinct from `ClusterUnbuildable`: that is a cluster that cannot
+    be created, this is one that exists but cannot be talked to. They
+    happen at different times and have different fixes.
+    """
+
+
+#: Where a fetched kubeconfig is kept. One file, replaced each run.
+KUBECONFIG_NAME = "kubeconfig"
+
+
+def cluster_for_kubeconfig(zones: Sequence[tuple[str, str]]) -> str | None:
+    """Which cluster's kubeconfig to fetch, given the CKS zones.
+
+    The engine holds one Kubernetes connection, so one cluster has to
+    be chosen. Two different ones is ambiguous, and picking either
+    silently would deploy every model into whichever sorted first —
+    so it asks for `KUBECONFIG` instead of guessing.
+    """
+    named = {cluster for _, cluster in zones if cluster}
+    if not named:
+        return None
+    if len(named) > 1:
+        raise KubeconfigUnavailable(
+            f"zones name {len(named)} different CKS clusters "
+            f"({', '.join(sorted(named))}) and the engine holds one Kubernetes "
+            f"connection, so it cannot choose. Set KUBECONFIG to the cluster "
+            f"this engine serves."
+        )
+    return named.pop()
+
+
+async def fetch_kubeconfig(client: Any, cluster: str) -> str:
+    """The kubeconfig CloudStack holds for `cluster`.
+
+    **The contents are cluster-admin credentials.** No part of them
+    appears in an error here, and nothing logs the return value.
+    """
+    listed = await KubernetesClusters(client).listed()
+    cluster_id = ""
+    for found in listed:
+        if str(found.get("name", "")) == cluster:
+            cluster_id = str(found.get("id", ""))
+            break
+
+    if not cluster_id:
+        raise KubeconfigUnavailable(
+            f"CloudStack lists no Kubernetes cluster named {cluster!r}, so there "
+            f"is no kubeconfig to fetch. Check the zone's cluster name, or set "
+            f"KUBECONFIG."
+        )
+
+    try:
+        response = await client.call("getKubernetesClusterConfig", id=cluster_id)
+    except Exception as failure:
+        raise KubeconfigUnavailable(
+            f"could not read the kubeconfig for {cluster!r}: {failure}"
+        ) from failure
+
+    data = str(response.get("configdata", "") or "")
+    if not data:
+        # An empty file would turn this clear failure into an opaque
+        # Kubernetes client error much later.
+        raise KubeconfigUnavailable(
+            f"CloudStack returned no kubeconfig for {cluster!r}. Check the "
+            f"cluster is Running, or set KUBECONFIG."
+        )
+    return data
+
+
+def write_kubeconfig(data: str, *, directory: str) -> str:
+    """Write `data` where the Kubernetes client can load it.
+
+    Created private to this user and replaced rather than appended:
+    the file holds cluster-admin credentials, and the engine may run on
+    a host with other accounts on it.
+    """
+    import os
+
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    # An existing directory keeps its old mode, so it is narrowed too:
+    # the file inside holds cluster-admin credentials.
+    os.chmod(directory, 0o700)
+    path = os.path.join(directory, KUBECONFIG_NAME)
+    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        out = os.fdopen(handle, "w")
+    except BaseException:
+        # fdopen did not take ownership of the descriptor, so it is
+        # still ours to close. Once it has, the `with` below owns it
+        # and closing here too would close an unrelated descriptor.
+        os.close(handle)
+        raise
+    with out:
+        out.write(data)
+    # An existing file keeps its old mode, so it is set either way.
+    os.chmod(path, 0o600)
+    return path

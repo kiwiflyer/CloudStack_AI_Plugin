@@ -158,7 +158,8 @@ an inference from a flag's existence, not a documented guarantee.
    it, the GPU leaks and this ADR needs rethinking before it needs implementing.
 2. **Do `getKubernetesClusterConfig` first regardless.** It is independent of the join
    question, removes a prerequisite from `docs/installation.md`, and cannot leak a GPU
-   if it is wrong.
+   if it is wrong. **Done.** `plan` and `apply` fetch it for any `cks` zone;
+   `KUBECONFIG` still overrides, and `serve` outside the cluster still needs one.
 3. **Keep `kubeadm join` working** for zones whose cluster CloudStack does not
    manage, per [ADR-0007](0007-kubernetes-cluster-source.md). That is the one part of
    this ADR that changed after it was written.
