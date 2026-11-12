@@ -403,7 +403,15 @@ class Param:
     type: str          # STRING | INTEGER | LONG | BOOLEAN | UUID
     doc: str
     required: bool = False
+    #: Fully-qualified response class for `entityType`. Giving one makes
+    #: CloudStack check the caller may see the entity before the command
+    #: runs, and hand back its **internal numeric id** rather than the
+    #: UUID that was sent.
     entity: str | None = None
+    #: Fully-qualified entity interface to translate that id back
+    #: through, for a body the engine can match against CloudStack's own
+    #: UUIDs. Without it an `entity` param would send a bare number.
+    resolve: str | None = None
     wire: str | None = None  # body field; None means it is a path/query param
 
 
@@ -427,8 +435,9 @@ class Command:
     release: str = "v1"
 
 
-def p(name, java, type_, doc, required=False, entity=None, wire=None) -> Param:
-    return Param(name, java, type_, doc, required, entity, wire)
+def p(name, java, type_, doc, required=False, entity=None, wire=None,
+      resolve=None) -> Param:
+    return Param(name, java, type_, doc, required, entity, resolve, wire)
 
 
 COMMANDS: tuple[Command, ...] = (
@@ -872,8 +881,9 @@ COMMANDS: tuple[Command, ...] = (
         params=(
             p("deployment", "deployment", "STRING", "the deployment to front",
               required=True),
-            p("networkid", "networkId", "STRING", "the VPC tier to attach to",
-              wire="network_id"),
+            p("networkid", "networkId", "UUID", "the VPC tier to attach to",
+              entity="org.apache.cloudstack.api.response.NetworkResponse",
+              resolve="com.cloud.network.Network", wire="network_id"),
             p("publicenabled", "publicEnabled", "BOOLEAN",
               "whether the public endpoint stays on", wire="public_enabled"),
             p("customdomain", "customDomain", "STRING", "a custom domain",
@@ -899,11 +909,16 @@ def class_name(command: str) -> str:
     return command[0].upper() + command[1:] + "Cmd"
 
 
+def _simple(fqcn: str) -> str:
+    """The class name a Java source file refers to, given an import."""
+    return fqcn.rsplit(".", 1)[-1]
+
+
 def render_params(params: tuple[Param, ...]) -> str:
     out = []
     for param in params:
         entity = (
-            f"\n            entityType = {param.entity}.class,"
+            f",\n            entityType = {_simple(param.entity)}.class"
             if param.entity else ""
         )
         required = ", required = true" if param.required else ""
@@ -942,18 +957,43 @@ def _wire_for(command: Command, java: str) -> str:
     return java
 
 
+def _body_lines(param: Param) -> str:
+    """One parameter's contribution to the request body.
+
+    A `resolve` parameter arrives as the internal id CloudStack
+    translated the UUID into, and the engine stores what it is sent and
+    compares it against the UUIDs CloudStack returns from its own list
+    calls. Sending the number would record an id matching nothing, so
+    it is translated back here.
+    """
+    if not param.resolve:
+        return (
+            f"        if ({param.java} != null) {{\n"
+            f'            body.addProperty("{param.wire}", {param.java});\n'
+            f"        }}"
+        )
+
+    cls = _simple(param.resolve)
+    local = "resolved" + cls
+    return (
+        f"        if ({param.java} != null) {{\n"
+        f"            {cls} {local} = _entityMgr.findById({cls}.class, {param.java});\n"
+        f"            if ({local} == null) {{\n"
+        f"                throw new InvalidParameterValueException(\n"
+        f'                        "Unable to find a {cls.lower()} with the given id");\n'
+        f"            }}\n"
+        f'            body.addProperty("{param.wire}", {local}.getUuid());\n'
+        f"        }}"
+    )
+
+
 def render_body(command: Command) -> str:
     body_params = [param for param in command.params if param.wire and
                    "{" + param.java + "}" not in command.path and
                    param.java not in command.query]
     if not body_params:
         return ""
-    lines = "\n".join(
-        f"        if ({param.java} != null) {{\n"
-        f'            body.addProperty("{param.wire}", {param.java});\n'
-        f"        }}"
-        for param in body_params
-    )
+    lines = "\n".join(_body_lines(param) for param in body_params)
     return f"""
     @Override
     protected String engineBody() {{
@@ -981,6 +1021,16 @@ def render_command(command: Command) -> str:
     has_body = bool(render_body(command))
     if has_body:
         imports.append("com.google.gson.JsonObject")
+
+    # An entityType or a resolution names a class the file must import.
+    # Emitting the reference without the import is how setting `entity`
+    # used to produce Java that did not compile.
+    for param in command.params:
+        if param.entity:
+            imports.append(param.entity)
+        if param.resolve:
+            imports.append(param.resolve)
+            imports.append("com.cloud.exception.InvalidParameterValueException")
     if command.event:
         imports.append("org.apache.cloudstack.ai.AiServicesEvents")
     if command.is_async:

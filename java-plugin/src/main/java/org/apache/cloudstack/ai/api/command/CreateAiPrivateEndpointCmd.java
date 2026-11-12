@@ -17,11 +17,14 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.command;
 
+import com.cloud.exception.InvalidParameterValueException;
+import com.cloud.network.Network;
 import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiPrivateEndpointResponse;
 import org.apache.cloudstack.ai.engine.EngineJob;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
+import org.apache.cloudstack.api.response.NetworkResponse;
 
 import com.google.gson.JsonObject;
 
@@ -39,9 +42,10 @@ public class CreateAiPrivateEndpointCmd extends AiServicesAsyncCmd {
             description = "the deployment to front")
     private String deployment;
 
-    @Parameter(name = "networkid", type = CommandType.STRING,
+    @Parameter(name = "networkid", type = CommandType.UUID,
+            entityType = NetworkResponse.class,
             description = "the VPC tier to attach to")
-    private String networkId;
+    private Long networkId;
 
     @Parameter(name = "publicenabled", type = CommandType.BOOLEAN,
             description = "whether the public endpoint stays on")
@@ -65,7 +69,12 @@ public class CreateAiPrivateEndpointCmd extends AiServicesAsyncCmd {
     protected String engineBody() {
         JsonObject body = new JsonObject();
         if (networkId != null) {
-            body.addProperty("network_id", networkId);
+            Network resolvedNetwork = _entityMgr.findById(Network.class, networkId);
+            if (resolvedNetwork == null) {
+                throw new InvalidParameterValueException(
+                        "Unable to find a network with the given id");
+            }
+            body.addProperty("network_id", resolvedNetwork.getUuid());
         }
         if (publicEnabled != null) {
             body.addProperty("public_enabled", publicEnabled);

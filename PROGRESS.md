@@ -2639,20 +2639,6 @@ ownership and send an operator to look at permissions.
 
 ### Not changed, and worth knowing
 
-- **`networkid` is an untyped `STRING` in the generated Java command**,
-  so CloudStack's ACL never checks that the caller can see the network
-  and the UUID is not resolved. Typing it (`CommandType.UUID`,
-  `entityType = NetworkResponse.class`) would add that check — and
-  CloudStack hands a UUID parameter back as the **internal `Long` id**,
-  so the command would have to resolve it to a UUID before sending it
-  on. A separable change with a translation in it.
-- **The generator emits `entityType = X.class` and never the import**,
-  so setting `entity=` on any parameter today produces Java that does
-  not compile. No command uses it, which is why nothing caught it.
-- **The UI's network field is a free-text box.** CloudStack builds form
-  controls from API parameter metadata, so typing the parameter above
-  should give the create-endpoint screen a network picker; worth
-  confirming rather than assuming.
 - Attachment is allowed to any network the account owns, VPC tier or
   plain isolated network. Nothing in the design requires a VPC, and
   refusing a non-VPC network would reject a legitimate attachment.
@@ -2662,3 +2648,66 @@ ownership and send an operator to look at permissions.
 No CloudStack has answered `listNetworks` for this. The lookup is
 tested against a recorded shape, and no proxy VM has ever booted on a
 tenant tier.
+
+## Milestone 9 — `networkid` is a typed entity parameter
+
+The engine asks CloudStack who owns a network, but the plugin was not
+asking CloudStack anything about the one it was handed. `networkid` was
+a plain `STRING`, which means no `entityType`, which means
+`ParamProcessWorker` has nothing to resolve and `ApiDispatcher` has no
+entity to hand the ACL. A caller could name any network and the only
+thing standing between them and someone else's tier was the engine's
+own list — a second check doing the work the first one was supposed to.
+
+It is now `CommandType.UUID` with `entityType = NetworkResponse.class`.
+
+### The translation that comes with it
+
+A typed UUID parameter does not arrive as the UUID that was sent.
+CloudStack resolves it and hands the command the **internal numeric
+id**, and the engine stores the network id it is given and compares it
+against the UUIDs `listNetworks` returns. Sent as-is, every private
+endpoint would be recorded against a number matching nothing, and the
+failure would surface as "not available to this account" — the same
+message the previous defect produced, from the opposite cause.
+
+So the generator gained `resolve=`: a fully-qualified entity interface
+to translate the id back through `_entityMgr.findById` before the body
+is built. An id that resolves to nothing is an
+`InvalidParameterValueException`, not a silently absent field.
+
+### A latent bug the change had to clear first
+
+`Param.entity` had existed since the generator was written and nothing
+used it. It rendered `entityType = X.class` with **no import**, and
+with neither a leading comma nor a trailing one in the right place, so
+the first parameter to set it produced Java that did not compile twice
+over. Both are fixed, and `_simple()` now derives the referenced name
+from the import rather than taking it on trust.
+
+### Six tests, two of which pass unchanged
+
+`PrivateEndpointNetworkTest` pins the declaration (`UUID`,
+`NetworkResponse`), the translation (a mocked `EntityManager` returning
+a `Network` whose UUID reaches the body) and the refusal. The two that
+were green before the change are the ones that matter most: an unset
+network is still **omitted** rather than resolved — a public-only
+endpoint names none, and resolving `null` would refuse a legitimate
+request — and the parameter is still called `networkid`, because
+CloudMonkey, Terraform and the UI all name it.
+
+444 Java tests pass, up from 438. The Python suite is untouched at
+1,767: the engine's contract did not change, because the whole point of
+the translation is that the engine still receives a UUID string.
+
+### What is still not true
+
+Terraform drops empty parameters before signing, so a public-only
+endpoint never sends `networkid=`, which a UUID parameter would now
+reject. That was read from `client.go`, not observed.
+
+**The UI claim is still unconfirmed.** CloudStack builds form controls
+from the parameter metadata in `listApis`, so an `entityType` should
+turn the create-endpoint screen's free-text box into a network picker.
+No CloudStack UI has loaded this section, so that remains a reasonable
+expectation rather than a result.

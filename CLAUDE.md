@@ -282,6 +282,15 @@ VPC attachment was refused as "not available to this account" while every test p
 **Never let that lookup return `[]` on an error** — it reads as "owns nothing" and
 refuses the attachment with a message about permissions.
 
+**`networkid` is a typed entity parameter**, so CloudStack checks the caller may
+see the network before the command runs. A `CommandType.UUID` parameter is handed
+back as the **internal numeric id**, and the engine matches what it is sent against
+the UUIDs CloudStack returns from its own list calls — so the generator's `resolve=`
+translates it back through `_entityMgr` before the body is built. Sending the raw
+`Long` would record an id matching nothing. Setting `entity=` without `resolve=` is
+that bug; the generator emits the imports for both, which it previously did not,
+so `entity=` alone used to produce Java that did not compile.
+
 **Guardrail profiles are scoped to the caller**, not to a role: a caller writes at
 their own level and no higher (`aisvc/guardrails/authority.py`), so a tenant tightens
 their own account and cannot reach the platform profile. Deployment scope stays root
