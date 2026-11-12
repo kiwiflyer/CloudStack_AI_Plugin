@@ -38,7 +38,10 @@ public final class MutualTls {
      *         unauthenticated caller's asserted identity.
      */
     public static SSLContext contextFor(
-            String keyStorePath, String keyStorePassword, String trustStorePath) {
+            String keyStorePath,
+            String keyStorePassword,
+            String trustStorePath,
+            String trustStorePassword) {
         requireConfigured(keyStorePath, "ai.services.engine.tls.client.cert");
         requireConfigured(trustStorePath, "ai.services.engine.tls.truststore");
 
@@ -48,7 +51,23 @@ public final class MutualTls {
                     KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
             keyManagers.init(keyStore, charsOf(keyStorePassword));
 
-            KeyStore trustStore = load(trustStorePath, null);
+            // The truststore needs its own password. It was read with
+            // an empty one, which no operator could produce: keytool
+            // refuses a password under six characters, and a PKCS12
+            // store openssl writes with an empty password loads as
+            // *zero entries* rather than failing.
+            KeyStore trustStore = load(trustStorePath, trustStorePassword);
+            if (trustStore.size() == 0) {
+                // TrustManagerFactory would accept this and build a
+                // trust manager that trusts nothing, so every call
+                // would fail at the handshake with an error naming
+                // neither the truststore nor the CA.
+                throw new EngineException(
+                        "the trust store at " + trustStorePath + " holds no certificates, "
+                                + "so the plugin would trust no engine. Import the engine's "
+                                + "CA into it: keytool -importcert -alias aisvc-ca -file "
+                                + "ca.pem -keystore " + trustStorePath + " -storetype PKCS12");
+            }
             TrustManagerFactory trustManagers =
                     TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
             trustManagers.init(trustStore);
@@ -62,9 +81,22 @@ public final class MutualTls {
         } catch (EngineException passthrough) {
             throw passthrough;
         } catch (Exception failure) {
+            String hint = "";
+            String message = failure.getMessage() == null ? "" : failure.getMessage();
+            // JDK 17 reports a wrong store password two different ways
+            // depending on where it notices — "keystore password was
+            // incorrect" and "Integrity check failed" — and neither
+            // says which of the two stores it was reading.
+            if (message.contains("password was incorrect")
+                    || message.contains("Integrity check failed")) {
+                // The likeliest cause by a distance, and the raw
+                // message does not say which of the two stores it was.
+                hint = " — check ai.services.engine.tls.client.key and "
+                        + "ai.services.engine.tls.truststore.password";
+            }
             throw new EngineException(
                     "could not build the mTLS context for the AI Services engine: "
-                            + failure.getMessage(),
+                            + failure.getMessage() + hint,
                     failure);
         }
     }

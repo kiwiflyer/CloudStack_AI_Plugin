@@ -265,7 +265,8 @@ public class AiServicesManagerImpl extends ManagerBase
                 AiServicesConfig.EngineTimeout.value(),
                 AiServicesConfig.EngineClientCert.value(),
                 AiServicesConfig.EngineClientKey.value(),
-                AiServicesConfig.EngineTrustStore.value());
+                AiServicesConfig.EngineTrustStore.value(),
+                AiServicesConfig.EngineTrustStorePassword.value());
     }
 
     /** Injection point for tests; production uses the mTLS transport. */

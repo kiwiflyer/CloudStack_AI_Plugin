@@ -37,7 +37,7 @@ class MutualTlsTest {
     @Test
     void refusesWhenNoClientCertificateIsConfigured() {
         EngineException failure = assertThrows(
-                EngineException.class, () -> MutualTls.contextFor(null, "pw", "/tmp/ca"));
+                EngineException.class, () -> MutualTls.contextFor(null, "pw", "/tmp/ca", "changeit"));
 
         assertTrue(failure.getMessage().contains("ai.services.engine.tls.client.cert"));
     }
@@ -45,7 +45,7 @@ class MutualTlsTest {
     @Test
     void refusesWhenTheClientCertificateIsBlank() {
         assertThrows(
-                EngineException.class, () -> MutualTls.contextFor("   ", "pw", "/tmp/ca"));
+                EngineException.class, () -> MutualTls.contextFor("   ", "pw", "/tmp/ca", "changeit"));
     }
 
     @Test
@@ -54,7 +54,7 @@ class MutualTlsTest {
 
         EngineException failure = assertThrows(
                 EngineException.class,
-                () -> MutualTls.contextFor(keystore.toString(), "pw", ""));
+                () -> MutualTls.contextFor(keystore.toString(), "pw", "", "changeit"));
 
         assertTrue(failure.getMessage().contains("ai.services.engine.tls.truststore"));
     }
@@ -65,7 +65,7 @@ class MutualTlsTest {
                 EngineException.class,
                 () -> MutualTls.contextFor(
                         dir.resolve("absent.p12").toString(), "pw",
-                        dir.resolve("ca.p12").toString()));
+                        dir.resolve("ca.p12").toString(), "changeit"));
 
         assertTrue(failure.getMessage().contains("unreadable"));
     }
@@ -78,7 +78,8 @@ class MutualTlsTest {
 
         EngineException failure = assertThrows(
                 EngineException.class,
-                () -> MutualTls.contextFor(keystore.toString(), "pw", truststore.toString()));
+                () -> MutualTls.contextFor(
+                        keystore.toString(), "pw", truststore.toString(), "changeit"));
 
         assertTrue(failure.getMessage().contains("mTLS context"));
     }

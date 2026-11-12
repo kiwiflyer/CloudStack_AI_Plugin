@@ -308,14 +308,38 @@ All nine, with their defaults:
 | `ai.services.enabled` | `false` | Zone | Turns the section on for a zone. |
 | `ai.services.engine.urls` | — | Global | Engine replicas, comma-separated. The client fails over across them. |
 | `ai.services.engine.timeout` | `30` | Global | Seconds. |
-| `ai.services.engine.tls.client.cert` | — | Global | The plugin's client certificate. |
-| `ai.services.engine.tls.client.key` | — | Global | Its key. |
-| `ai.services.engine.tls.truststore` | — | Global | What it trusts the engine against. |
+| `ai.services.engine.tls.client.cert` | — | Global | Path to the **PKCS12 key store** holding the plugin's client certificate and key. |
+| `ai.services.engine.tls.client.key` | — | Global | **That key store's password, not a path.** The description said "path" for a while; the code has always read it as a password. |
+| `ai.services.engine.tls.truststore` | — | Global | Path to the PKCS12 trust store holding the engine's CA. |
+| `ai.services.engine.tls.truststore.password` | `changeit` | Global | The trust store's password. It needs one — see below. |
 | `ai.services.hf.require.approval` | `true` | Domain | Whether a domain admin may mirror directly or only request it. |
 | `ai.services.maintenance.drain.timeout` | `900` | Global | Seconds to wait draining GPU nodes before host maintenance. |
 | `ai.services.v2.enabled` | `false` | Global | Registers the Tier 2 commands. See [Turning on v2](#turning-on-v2). |
 
-The three TLS keys are not optional. **Never weaken the mTLS
+**Generate all of it with `install.py`:**
+
+```bash
+python3 install.py --make-certs engine.internal
+```
+
+That writes a CA, the engine's certificate with `engine.internal` as a
+subjectAltName, the plugin's client certificate, and the two PKCS12
+stores into `./tls`. It fills in the three `AISVC_TLS_*` settings in
+`.env` and prints the four CloudStack keys. Pass an IP instead of a
+name and it becomes an IP SAN. It refuses to replace an existing CA
+without `--force`, because replacing one invalidates every client
+certificate already issued from it.
+
+**The trust store has to be built by `keytool`, not `openssl`.** A
+PKCS12 trust store openssl writes loads in Java as **zero
+certificates** rather than failing, and the plugin would then trust
+nothing and fail every call at the handshake. `install.py` uses keytool
+where it finds a working one and prints the single command to run on
+the management server where it does not. The plugin now refuses an
+empty trust store by name rather than building a context that trusts
+nothing.
+
+The TLS keys are not optional. **Never weaken the mTLS
 requirement to a fallback** — the engine filters every response by what
 the plugin asserts about the caller, and a caller who could influence
 that could read another tenant's data.

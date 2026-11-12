@@ -120,7 +120,7 @@ below.
 | --- | --- |
 | API commands | 58 — 38 v1, 20 v2 |
 | Roles | Admin, DomainAdmin, User |
-| CloudStack config keys | 9 — one zone-scoped, one domain-scoped, seven global |
+| CloudStack config keys | 10 — one zone-scoped, one domain-scoped, eight global |
 | UI screens | 19, inside one `aiservices` section |
 | Terraform | 12 entries — 5 resources and 1 data source per release |
 | Usage types | 5 — input tokens, output tokens, GPU-hours, adapter premium, batch tokens |
@@ -133,7 +133,7 @@ below.
 
 | | |
 | --- | --- |
-| Engine ↔ plugin | mTLS, required; the engine binds loopback only without it |
+| Engine ↔ plugin | mTLS, required; the engine binds loopback only without it. `install.py --make-certs` generates the CA, both certificates and the PKCS12 stores |
 | Caller identity | Asserted by the plugin in `X-Aisvc-*` headers, filtered on every response |
 | Uncontexted endpoints | Exactly one — `POST /v1/certificates/bootstrap`, where a proxy has no identity yet |
 | Secrets | From the environment or a secrets manager, never `platform.yaml` |

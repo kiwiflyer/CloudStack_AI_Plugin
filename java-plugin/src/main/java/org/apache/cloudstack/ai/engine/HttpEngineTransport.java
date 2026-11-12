@@ -37,11 +37,16 @@ public class HttpEngineTransport implements EngineTransport {
     private final Duration timeout;
 
     public HttpEngineTransport(
-            Integer timeoutSeconds, String clientCert, String clientKey, String trustStore) {
+            Integer timeoutSeconds,
+            String clientCert,
+            String clientKey,
+            String trustStore,
+            String trustStorePassword) {
         this.timeout = Duration.ofSeconds(timeoutSeconds == null ? 30 : timeoutSeconds);
         this.client = HttpClient.newBuilder()
                 .connectTimeout(this.timeout)
-                .sslContext(MutualTls.contextFor(clientCert, clientKey, trustStore))
+                .sslContext(MutualTls.contextFor(
+                        clientCert, clientKey, trustStore, trustStorePassword))
                 .build();
     }
 

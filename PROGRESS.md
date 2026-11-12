@@ -3037,3 +3037,70 @@ as before.
 
 No CloudStack has answered `getKubernetesClusterConfig` for this. The
 response field is `configdata`, read from the 4.22 API reference.
+
+## Milestone 8 — the installer generates the mTLS material
+
+mTLS is the one thing nothing works past: the engine refuses to bind a
+non-loopback address without it and the plugin refuses to call the
+engine without it. It was also the step with no help at all —
+`install.py` asked for three paths and never produced the files, and
+the guide gave no commands.
+
+`install.py --make-certs <hostname>` now writes a CA, the engine's
+certificate with a SAN, the plugin's client certificate and the PKCS12
+stores, fills in the three `AISVC_TLS_*` settings and prints the
+CloudStack keys. An IP becomes an IP SAN. An existing CA is never
+replaced without `--force`: replacing one invalidates every client
+certificate issued from it, and the symptom is a handshake failure on
+a plugin nobody touched.
+
+Standard library only still holds. `openssl` does the work through
+`subprocess`, which is why `cryptography` is not needed.
+
+### What this found, which nobody asked about
+
+**The plugin could not have loaded a trust store.** Three things,
+each verified against a real JDK 17 rather than reasoned about:
+
+- A PKCS12 trust store `openssl` writes loads in Java as **zero
+  entries** — no error. `TrustManagerFactory` accepts that and builds
+  a manager that trusts nothing, so every call fails at the handshake
+  with an error naming neither the trust store nor the CA.
+- `keytool` refuses a password under six characters, so it cannot
+  write the empty-password store `MutualTls` was asking for.
+- A keytool store with a password, read with `new char[0]`, throws
+  "keystore password was incorrect"; read with `null`, it silently
+  loads **zero entries**.
+
+So there was no file an operator could produce that worked. mTLS to
+the engine has never been exercised, which is consistent with nothing
+here having run against a management server.
+
+### The fix
+
+`ai.services.engine.tls.truststore.password`, defaulting to Java's own
+`changeit`, and `MutualTls` refuses a trust store holding no
+certificates — naming the file and giving the keytool command — rather
+than building a context that trusts nothing. A wrong store password is
+reported with a hint naming both settings, because JDK 17 says
+"Integrity check failed" or "keystore password was incorrect"
+depending on where it notices and neither says which store it was
+reading.
+
+`ai.services.engine.tls.client.key` was documented as a path to a key
+file and has always been read as a key store password. The description
+now says so.
+
+The installer builds the trust store with keytool where it finds a
+working one, and prints the one command otherwise. A `keytool` on PATH
+with no runtime behind it — which macOS ships — counts as not having
+one: the rest of the material is still worth having.
+
+1,884 Python unit tests pass, up from 1,870. 446 Java tests pass, up
+from 444.
+
+### What is still not true
+
+No handshake has happened. The stores were loaded by a JDK and the
+certificates verified by openssl, but no plugin has talked to an
+engine, so the chain is proven in parts rather than end to end.

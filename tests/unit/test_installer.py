@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import socket
 import stat
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -24,7 +25,6 @@ import install
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
 
 @pytest.fixture
@@ -479,3 +479,129 @@ class TestInstallingTheRightDriver:
         )
 
         assert run.install_target() == ".[dev,mariadb]"
+
+
+class TestMakingTlsMaterial:
+    """mTLS is mandatory for any non-loopback engine, and nothing helped.
+
+    `install.py` asked for paths to `AISVC_TLS_CERT`, `AISVC_TLS_KEY`
+    and `AISVC_TLS_CLIENT_CA` and never produced them, and the guide
+    gave no commands. So the one step the engine refuses to start
+    without was the one an operator got least help with.
+
+    Two shapes are needed, because the two sides disagree. The engine
+    is Python and uvicorn wants PEM. The plugin is Java and
+    `MutualTls` calls `KeyStore.getInstance(KeyStore.getDefaultType())`,
+    which is PKCS12 on JDK 17.
+    """
+
+    def test_it_writes_what_the_engine_needs(self, tmp_path: Path) -> None:
+        material = install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        for path in (material.server_cert, material.server_key, material.ca_cert):
+            assert Path(path).exists()
+
+    def test_it_writes_what_the_plugin_needs(self, tmp_path: Path) -> None:
+        material = install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        assert Path(material.client_keystore).exists()
+        assert material.keystore_password
+
+    def test_the_truststore_is_built_by_keytool_not_openssl(self, tmp_path: Path) -> None:
+        # A PKCS12 trust store openssl writes loads in Java as **zero
+        # entries** rather than failing, and TrustManagerFactory then
+        # trusts nothing. Only keytool writes the attribute Java wants.
+        if not install.keytool_path():
+            pytest.skip("keytool is not on this host")
+        material = install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        assert Path(material.truststore).exists()
+
+    def test_without_keytool_it_says_so_rather_than_writing_a_dud(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        # Not having a JDK on the engine host is ordinary: the plugin
+        # runs on the management server, which is where the trust store
+        # has to end up anyway.
+        monkeypatch.setattr(install, "keytool_path", lambda: "")
+        material = install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        assert material.truststore == ""
+        assert "keytool -importcert" in install.truststore_command(material.ca_cert, "t.p12")
+
+    def test_the_keystores_are_pkcs12(self, tmp_path: Path) -> None:
+        # JDK 17's default KeyStore type. A PEM here fails at load with
+        # an error about a corrupted keystore, which says nothing
+        # about the actual mistake.
+        material = install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        assert Path(material.client_keystore).read_bytes()[:1] == b"\x30"
+
+    def test_private_material_is_not_world_readable(self, tmp_path: Path) -> None:
+        material = install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        for path in (material.server_key, material.client_keystore):
+            mode = stat.S_IMODE(Path(path).stat().st_mode)
+            assert mode == 0o600, path
+
+    def test_the_server_certificate_carries_the_hostname(self, tmp_path: Path) -> None:
+        # The plugin verifies it. Without a SAN the handshake fails
+        # with a hostname mismatch no matter how right everything else
+        # is.
+        material = install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        text = install.certificate_text(material.server_cert)
+        assert "engine.internal" in text
+
+    def test_an_ip_address_is_carried_as_an_ip_san(self, tmp_path: Path) -> None:
+        material = install.make_tls_material(str(tmp_path), hostname="10.0.0.5")
+
+        assert "IP Address:10.0.0.5" in install.certificate_text(material.server_cert)
+
+    def test_the_client_certificate_is_signed_by_the_same_ca(self, tmp_path: Path) -> None:
+        # The engine verifies clients against AISVC_TLS_CLIENT_CA. A
+        # client signed by anything else is refused at the handshake.
+        material = install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        assert install.verifies_against(material.client_cert, material.ca_cert)
+
+    def test_the_server_certificate_is_too(self, tmp_path: Path) -> None:
+        material = install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        assert install.verifies_against(material.server_cert, material.ca_cert)
+
+    def test_it_refuses_to_overwrite_an_existing_ca(self, tmp_path: Path) -> None:
+        # Regenerating a CA silently would invalidate every client
+        # certificate already issued from it, and the symptom is a
+        # handshake failure on a plugin nobody touched.
+        install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        with pytest.raises(install.InstallError) as raised:
+            install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        assert "--force" in str(raised.value)
+
+    def test_force_replaces_it(self, tmp_path: Path) -> None:
+        first = install.make_tls_material(str(tmp_path), hostname="engine.internal")
+        before = Path(first.ca_cert).read_bytes()
+
+        second = install.make_tls_material(str(tmp_path), hostname="engine.internal", force=True)
+
+        assert Path(second.ca_cert).read_bytes() != before
+
+    def test_the_password_is_not_predictable(self, tmp_path: Path, tmp_path_factory: Any) -> None:
+        other = tmp_path_factory.mktemp("other")
+        one = install.make_tls_material(str(tmp_path), hostname="engine.internal")
+        two = install.make_tls_material(str(other), hostname="engine.internal")
+
+        assert one.keystore_password != two.keystore_password
+
+    def test_a_missing_openssl_says_so(self, tmp_path: Path, monkeypatch: Any) -> None:
+        # The one dependency this has, and it is not importable — so
+        # its absence has to be a sentence, not a traceback.
+        monkeypatch.setattr(install, "openssl_path", lambda: "")
+
+        with pytest.raises(install.InstallError) as raised:
+            install.make_tls_material(str(tmp_path), hostname="engine.internal")
+
+        assert "openssl" in str(raised.value).lower()

@@ -52,17 +52,26 @@ public final class AiServicesConfig {
 
     public static final ConfigKey<String> EngineClientCert = new ConfigKey<>(
             CATEGORY, String.class, "ai.services.engine.tls.client.cert", "",
-            "Path to the client certificate the plugin presents to the engine (mTLS).",
+            "Path to the PKCS12 key store holding the client certificate and key "
+                    + "the plugin presents to the engine (mTLS).",
             true, ConfigKey.Scope.Global);
 
     public static final ConfigKey<String> EngineClientKey = new ConfigKey<>(
             CATEGORY, String.class, "ai.services.engine.tls.client.key", "",
-            "Path to the private key for the client certificate (mTLS).",
+            "Password for that key store. Not a path — the description said one "
+                    + "for a while, and the code has always read it as a password.",
             true, ConfigKey.Scope.Global);
 
     public static final ConfigKey<String> EngineTrustStore = new ConfigKey<>(
             CATEGORY, String.class, "ai.services.engine.tls.truststore", "",
-            "Path to the trust store holding the engine's CA certificate.",
+            "Path to the PKCS12 trust store holding the engine's CA certificate.",
+            true, ConfigKey.Scope.Global);
+
+    public static final ConfigKey<String> EngineTrustStorePassword = new ConfigKey<>(
+            CATEGORY, String.class, "ai.services.engine.tls.truststore.password", "changeit",
+            "Password for the trust store. It needs one: keytool refuses a password "
+                    + "under six characters, and a store openssl writes with an empty "
+                    + "password loads as zero certificates rather than failing.",
             true, ConfigKey.Scope.Global);
 
     /**
@@ -104,6 +113,7 @@ public final class AiServicesConfig {
                 EngineClientCert,
                 EngineClientKey,
                 EngineTrustStore,
+                EngineTrustStorePassword,
                 HfRequireApproval,
                 MaintenanceDrainTimeout,
                 V2Enabled,

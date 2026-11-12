@@ -35,7 +35,7 @@ class AiServicesConfigTest {
 
     @Test
     void everyKeyIsExported() {
-        assertEquals(9, AiServicesConfig.all().length);
+        assertEquals(10, AiServicesConfig.all().length);
     }
 
     @Test

@@ -813,6 +813,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--skip-migration", action="store_true", help="do not run the database migration"
     )
+    parser.add_argument(
+        "--make-certs",
+        metavar="HOSTNAME",
+        help=(
+            "generate the mTLS material for HOSTNAME — the name or address the "
+            "plugin will reach the engine on — and fill in the three AISVC_TLS_* "
+            "settings"
+        ),
+    )
+    parser.add_argument(
+        "--certs-dir",
+        type=Path,
+        default=REPO_ROOT / "tls",
+        help="where --make-certs writes (default: ./tls)",
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="let --make-certs replace an existing CA"
+    )
     args = parser.parse_args(argv)
 
     print("CloudStack AI Services — installing the parts outside CloudStack\n")
@@ -850,6 +868,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 1
             args.database = chosen
         config = ask_for_settings(config)
+
+    if args.make_certs:
+        try:
+            material = make_tls_material(
+                str(args.certs_dir), hostname=args.make_certs, force=args.force
+            )
+        except InstallError as exc:
+            print(f"\n{exc}")
+            return 1
+        config = replace_settings(
+            config,
+            tls_cert=material.server_cert,
+            tls_key=material.server_key,
+            tls_client_ca=material.ca_cert,
+        )
+        print_plugin_tls(material)
 
     # An explicit --database with no URL yet gets a template to edit.
     chosen_engine = args.database or engine_of(config.database_url) or DEFAULT_ENGINE
@@ -896,3 +930,395 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
+
+
+# --------------------------------------------------------------------------
+# mTLS material
+#
+# The engine refuses to bind a non-loopback address without it, and the
+# plugin refuses to call the engine without it, so this is the one step
+# nothing works past. It was also the step with no help at all: the
+# installer asked for three paths and never produced the files.
+#
+# Two shapes are needed, because the two sides disagree. The engine is
+# Python and uvicorn wants PEM. The plugin is Java, and `MutualTls`
+# calls `KeyStore.getInstance(KeyStore.getDefaultType())` — PKCS12 on
+# JDK 17 — so it wants a keystore, a password and a truststore.
+#
+# `openssl` does the work. This file may import nothing but the standard
+# library, which rules out `cryptography`; `subprocess` is standard and
+# openssl is on every host that can run a management server.
+# --------------------------------------------------------------------------
+
+#: How long generated certificates last. Long enough not to be a
+#: surprise during an evaluation, short enough to be a real expiry.
+TLS_DAYS = 825
+
+#: Key size. RSA rather than EC for the widest compatibility with the
+#: Java side, where the keystore is read by whatever JDK is installed.
+TLS_KEY_BITS = 2048
+
+
+class InstallError(Exception):
+    """Something the operator has to fix before the install can go on."""
+
+
+@dataclass(frozen=True, slots=True)
+class TlsMaterial:
+    """Everything both sides need, and where it was written.
+
+    The password is held so it can be printed once, as the value for
+    `ai.services.engine.tls.client.key`. It is never written to `.env`:
+    that file is the engine's, and the engine does not read a keystore.
+    """
+
+    ca_cert: str
+    server_cert: str
+    server_key: str
+    client_cert: str
+    client_keystore: str
+    truststore: str
+    keystore_password: str = field(repr=False, default="")
+    #: Why the trust store could not be built here, or "".
+    truststore_problem: str = ""
+
+
+def openssl_path() -> str:
+    """Where openssl is, or "" — separated out so a test can remove it."""
+    from shutil import which
+
+    return which("openssl") or ""
+
+
+def _openssl(*args: str) -> str:
+    """Run openssl, raising with its own message on failure."""
+    binary = openssl_path()
+    if not binary:
+        raise InstallError(
+            "openssl is not on PATH, and it is what generates the mTLS material. "
+            "Install it, or generate the certificates yourself and pass their "
+            "paths instead."
+        )
+    done = subprocess.run(
+        [binary, *args], capture_output=True, text=True, check=False
+    )
+    if done.returncode != 0:
+        raise InstallError(
+            f"openssl {args[0]} failed: {done.stderr.strip() or done.stdout.strip()}"
+        )
+    return done.stdout
+
+
+def _is_ip(hostname: str) -> bool:
+    from ipaddress import ip_address
+
+    try:
+        ip_address(hostname)
+    except ValueError:
+        return False
+    return True
+
+
+def _san(hostname: str) -> str:
+    """The subjectAltName for the engine's own certificate.
+
+    Without one the plugin's handshake fails on a hostname mismatch
+    however right everything else is, and modern clients ignore the
+    common name entirely.
+    """
+    kind = "IP" if _is_ip(hostname) else "DNS"
+    return f"subjectAltName={kind}:{hostname}"
+
+
+def _private(path: Path) -> None:
+    """Narrow a file holding key material."""
+    os.chmod(path, 0o600)
+
+
+def make_tls_material(directory: str, *, hostname: str, force: bool = False) -> TlsMaterial:
+    """Generate a CA, an engine certificate and a plugin client certificate.
+
+    One CA signs both sides: the engine verifies clients against it and
+    the plugin trusts the engine through it, so a single file is what
+    both ends check against.
+
+    **An existing CA is never replaced without `--force`.** Regenerating
+    it silently would invalidate every client certificate already issued
+    from it, and the symptom is a handshake failure on a plugin nobody
+    touched.
+    """
+    out = Path(directory)
+    out.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(out, 0o700)
+
+    ca_cert = out / "ca.pem"
+    if ca_cert.exists() and not force:
+        raise InstallError(
+            f"{ca_cert} already exists. Replacing a CA invalidates every client "
+            f"certificate issued from it, so pass --force if that is what you want."
+        )
+
+    ca_key = out / "ca.key"
+    server_key = out / "engine.key"
+    server_cert = out / "engine.pem"
+    client_key = out / "plugin.key"
+    client_cert = out / "plugin.pem"
+    keystore = out / "plugin.p12"
+    truststore = out / "truststore.p12"
+
+    # The CA.
+    _openssl("genrsa", "-out", str(ca_key), str(TLS_KEY_BITS))
+    _private(ca_key)
+    _openssl(
+        "req",
+        "-x509",
+        "-new",
+        "-key",
+        str(ca_key),
+        "-sha256",
+        "-days",
+        str(TLS_DAYS),
+        "-out",
+        str(ca_cert),
+        "-subj",
+        "/CN=CloudStack AI Services CA",
+    )
+
+    # The engine's own certificate, with the SAN the plugin verifies.
+    _issue(
+        ca_cert=ca_cert,
+        ca_key=ca_key,
+        key=server_key,
+        cert=server_cert,
+        subject=f"/CN={hostname}",
+        extensions=[_san(hostname), "extendedKeyUsage=serverAuth"],
+        serial="01",
+    )
+
+    # The plugin's client certificate. No SAN: nothing verifies a
+    # hostname on it, only that this CA signed it.
+    _issue(
+        ca_cert=ca_cert,
+        ca_key=ca_key,
+        key=client_key,
+        cert=client_cert,
+        subject="/CN=cloudstack-ai-services-plugin",
+        extensions=["extendedKeyUsage=clientAuth"],
+        serial="02",
+    )
+
+    password = _keystore_password()
+    _openssl(
+        "pkcs12",
+        "-export",
+        "-out",
+        str(keystore),
+        "-inkey",
+        str(client_key),
+        "-in",
+        str(client_cert),
+        "-name",
+        "aisvc-plugin",
+        "-passout",
+        f"pass:{password}",
+    )
+    _private(keystore)
+
+    # The truststore has to be built with keytool, not openssl.
+    #
+    # A PKCS12 store openssl writes loads in Java as **zero entries**
+    # rather than failing, because Java only treats a certificate bag
+    # as trusted when it carries an attribute openssl does not write.
+    # TrustManagerFactory accepts that happily and builds a manager
+    # that trusts nothing, so every call fails at the handshake with
+    # an error naming neither the truststore nor the CA.
+    truststore_problem = _make_truststore(ca_cert, truststore)
+
+    return TlsMaterial(
+        ca_cert=str(ca_cert),
+        server_cert=str(server_cert),
+        server_key=str(server_key),
+        client_cert=str(client_cert),
+        client_keystore=str(keystore),
+        truststore="" if truststore_problem else str(truststore),
+        truststore_problem=truststore_problem,
+        keystore_password=password,
+    )
+
+
+def _issue(
+    *,
+    ca_cert: Path,
+    ca_key: Path,
+    key: Path,
+    cert: Path,
+    subject: str,
+    extensions: list[str],
+    serial: str,
+) -> None:
+    """Issue one certificate from the CA."""
+    csr = cert.with_suffix(".csr")
+    _openssl("genrsa", "-out", str(key), str(TLS_KEY_BITS))
+    _private(key)
+    _openssl("req", "-new", "-key", str(key), "-out", str(csr), "-subj", subject)
+
+    args = [
+        "x509",
+        "-req",
+        "-in",
+        str(csr),
+        "-CA",
+        str(ca_cert),
+        "-CAkey",
+        str(ca_key),
+        "-set_serial",
+        serial,
+        "-days",
+        str(TLS_DAYS),
+        "-sha256",
+        "-out",
+        str(cert),
+    ]
+    # `-addext` on `x509 -req` needs openssl 3, so the extensions go
+    # through a file instead — which openssl 1.1.1 also understands.
+    extfile = cert.with_suffix(".ext")
+    extfile.write_text("\n".join(extensions) + "\n")
+    args += ["-extfile", str(extfile)]
+    _openssl(*args)
+    csr.unlink(missing_ok=True)
+    extfile.unlink(missing_ok=True)
+
+
+#: The truststore's password. Fixed rather than generated: it protects
+#: nothing secret — a truststore holds public certificates — and it has
+#: to match `ai.services.engine.tls.truststore.password`, whose default
+#: is Java's own convention. keytool will not accept fewer than six
+#: characters, which is why it cannot simply be empty.
+TRUSTSTORE_PASSWORD = "changeit"
+
+
+def keytool_path() -> str:
+    """Where keytool is, or "" — separated out so a test can remove it."""
+    from shutil import which
+
+    return which("keytool") or ""
+
+
+def truststore_command(ca_cert: str, truststore: str) -> str:
+    """The one command to run where keytool is not on this host."""
+    return (
+        f"keytool -importcert -noprompt -alias aisvc-ca -file {ca_cert} "
+        f"-keystore {truststore} -storetype PKCS12 "
+        f"-storepass {TRUSTSTORE_PASSWORD}"
+    )
+
+
+def _make_truststore(ca_cert: Path, truststore: Path) -> str:
+    """Import the CA with keytool. Returns why it could not, or "".
+
+    Never fatal. Not having a working JDK on the engine host is
+    ordinary — the plugin runs on the management server, which is
+    where the trust store has to end up anyway — and macOS ships a
+    `keytool` stub that is on PATH with no runtime behind it. Either
+    way the rest of the material is still worth having, and the one
+    command to finish the job is printed.
+    """
+    binary = keytool_path()
+    if not binary:
+        return "keytool is not on this host"
+
+    truststore.unlink(missing_ok=True)
+    done = subprocess.run(
+        [
+            binary,
+            "-importcert",
+            "-noprompt",
+            "-alias",
+            "aisvc-ca",
+            "-file",
+            str(ca_cert),
+            "-keystore",
+            str(truststore),
+            "-storetype",
+            "PKCS12",
+            "-storepass",
+            TRUSTSTORE_PASSWORD,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        return f"keytool failed: {(done.stderr or done.stdout).strip()}"
+    return ""
+
+
+def _keystore_password() -> str:
+    """A password for the plugin's keystore.
+
+    Generated rather than fixed: it ends up in a CloudStack global
+    setting, and a known default there would be a password in the
+    source of every install.
+    """
+    from secrets import token_urlsafe
+
+    return token_urlsafe(24)
+
+
+def certificate_text(path: str) -> str:
+    """A certificate in openssl's own words, for checking a SAN."""
+    return _openssl("x509", "-in", path, "-noout", "-text")
+
+
+def verifies_against(cert: str, ca_cert: str) -> bool:
+    """Whether `ca_cert` signed `cert`."""
+    try:
+        _openssl("verify", "-CAfile", ca_cert, cert)
+    except InstallError:
+        return False
+    return True
+
+
+def replace_settings(config: Settings, **changes: str) -> Settings:
+    """A copy of `config` with `changes` applied."""
+    return Settings(
+        **{
+            **{f.name: getattr(config, f.name) for f in fields(config)},
+            **changes,
+        }
+    )
+
+
+def print_plugin_tls(material: TlsMaterial) -> None:
+    """Say what to set in CloudStack, once.
+
+    The keystore password is printed here and nowhere else: it is not
+    the engine's, so it does not belong in `.env`, and it ends up in a
+    CloudStack global setting an operator types in by hand.
+    """
+    print("\nmTLS material written. The engine side is in .env.")
+    print("\nSet these in CloudStack (Settings, or the API):")
+    print(f"  ai.services.engine.tls.client.cert       {material.client_keystore}")
+    print(f"  ai.services.engine.tls.client.key        {material.keystore_password}")
+    print("  ai.services.engine.tls.truststore        <path on the management server>")
+    print(f"  ai.services.engine.tls.truststore.password {TRUSTSTORE_PASSWORD}")
+    print(
+        "\n  The second is the key store's password, not a path. Both stores are "
+        "PKCS12, which is what JDK 17's KeyStore.getDefaultType() returns."
+    )
+    if not material.truststore:
+        print(
+            f"\n  {material.truststore_problem}, so the trust store was not built. "
+            "Run this on the management server, where the JDK is:\n\n    "
+            + truststore_command(
+                material.ca_cert, "/etc/cloudstack/management/aisvc-truststore.p12"
+            )
+            + "\n\n  openssl cannot make this file: Java reads a trust store it "
+            "writes as zero certificates and then trusts nothing."
+        )
+    else:
+        print(f"\n  The trust store is at {material.truststore}.")
+    print(
+        "\n  Copy the key store and the trust store to the management server, "
+        "readable only by the account CloudStack runs as."
+    )
