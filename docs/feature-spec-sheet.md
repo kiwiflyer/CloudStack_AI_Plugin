@@ -20,7 +20,7 @@ below.
 | Serving | Kubernetes `Deployment` on CKS, rendered from Jinja ([ADR-0001](adr/0001-serving-layer.md)) |
 | Gateway | LiteLLM Proxy, MIT side only ([ADR-0002](adr/0002-gateway.md)) **·not a pinned dependency yet** |
 | Engine state | Postgres (default) or MariaDB ([ADR-0004](adr/0004-state-store.md)) |
-| Cluster source | Per zone: a CKS cluster CloudStack manages, or an external one it does not ([ADR-0007](adr/0007-kubernetes-cluster-source.md)). **·creation not built** — the engine never makes a cluster, and both sources join with `kubeadm join` |
+| Cluster source | Per zone: a CKS cluster CloudStack manages, or an external one it does not ([ADR-0007](adr/0007-kubernetes-cluster-source.md)). With `create: true` the engine builds it — newest enabled Kubernetes version, smallest offering clearing its minimums, both named in the plan. Both sources join nodes with `kubeadm join` |
 | Object store | S3, Ceph RGW or MinIO. The bucket and its credentials can come from CloudStack's object store instead of configuration ([ADR-0005](adr/0005-model-artifact-storage.md)) |
 | Licence policy | ASF Category A/B/X enforced in CI; GPL, LGPL and AGPL prohibited |
 

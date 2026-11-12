@@ -50,6 +50,18 @@ class KubernetesSource(Base):
     #: A separate permission from naming one, because it is a separate
     #: thing to grant.
     create: bool = False
+    #: How to build it. Every one of these is optional, and leaving
+    #: them unset is the intended way: the engine takes the newest
+    #: enabled Kubernetes version and the smallest service offering
+    #: that clears its minimums, and names both in the plan before
+    #: anything is created.
+    version: str = ""
+    offering: str = ""
+    #: Worker nodes for the cluster's own workload — the gateway and
+    #: the system pods. GPU nodes are not these; they are provisioned
+    #: separately and join afterwards.
+    size: int = Field(default=1, gt=0)
+    network: str = ""
 
     @model_validator(mode="after")
     def _creatable(self) -> KubernetesSource:
@@ -66,6 +78,25 @@ class KubernetesSource(Base):
                 f"create a {self.source} cluster, because CloudStack does not "
                 f"manage one"
             )
+
+        if not self.create:
+            # Settings that only apply while building would otherwise
+            # read as though they described, or would be applied to,
+            # the cluster that already exists.
+            building = [
+                name
+                for name, value in (
+                    ("version", self.version),
+                    ("offering", self.offering),
+                    ("network", self.network),
+                )
+                if value
+            ]
+            if building:
+                raise ValueError(
+                    f"{', '.join(building)} only applies while creating a cluster; "
+                    f"set create: true, or remove it"
+                )
         return self
 
 

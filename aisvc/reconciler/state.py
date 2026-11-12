@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from aisvc.autoscale import Metrics
+from aisvc.cloudstack.clusters import ClusterPlanned, ClusterState
 from aisvc.inventory import CapacitySnapshot
 
 if TYPE_CHECKING:
@@ -55,6 +56,15 @@ class ActualState:
     #: Each certificate's current serial, so a proxy built from an
     #: older one can be spotted (SPEC.md section 8).
     certificate_serials: dict[str, int] = field(default_factory=dict)
+    #: What CloudStack says about each zone's cluster (ADR-0007).
+    clusters: tuple[ClusterState, ...] = ()
+    #: For a zone asking for a cluster that is not there: what would be
+    #: built, resolved read-only at observe time so the plan line can
+    #: name the Kubernetes version and the offering it chose.
+    cluster_plans: dict[str, ClusterPlanned] = field(default_factory=dict)
+    #: For a zone asking for one that cannot be built: why not. A
+    #: warning rather than an action, because nothing can be planned.
+    cluster_problems: dict[str, str] = field(default_factory=dict)
     observed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def deployment(self, model: str, colour: str) -> DeployedModel | None:

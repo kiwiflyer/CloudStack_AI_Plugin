@@ -269,3 +269,93 @@ class TestActionKey:
         a = Action(ActionKind.CREATE, "gpu-node", "p")
         b = Action(ActionKind.DELETE, "gpu-node", "p")
         assert a.key != b.key
+
+
+class TestCreatingAKubernetesCluster:
+    """ADR-0007: a zone that asks for a cluster gets one, once.
+
+    The handler is given what the planner resolved, so execution does
+    not re-choose a version or an offering between plan and apply —
+    an operator confirmed a specific line, and getting something else
+    would make the plan a suggestion rather than a contract.
+    """
+
+    async def test_it_creates_what_the_plan_said(self, log: RunLog) -> None:
+        builder = FakeClusterBuilder()
+        record = await Executor(None, log, clusters=builder).execute(
+            _cluster_plan(), zone="zone-east-1"
+        )
+
+        assert builder.created == [("aisvc-east-1", "1.30.1", "Small Instance")]
+        assert record.status is RunStatus.SUCCEEDED
+
+    async def test_a_dry_run_creates_nothing(self, log: RunLog) -> None:
+        builder = FakeClusterBuilder()
+        await Executor(None, log, clusters=builder).execute(
+            _cluster_plan(), zone="zone-east-1", dry_run=True
+        )
+
+        assert builder.created == []
+
+    async def test_without_a_builder_the_action_fails_rather_than_passing(
+        self, log: RunLog
+    ) -> None:
+        # A plan that prints a cluster and quietly does nothing is
+        # worse than one that stops: every GPU node after it depends
+        # on the cluster, and the operator would believe it was built.
+        record = await Executor(None, log).execute(_cluster_plan(), zone="zone-east-1")
+
+        assert record.status is not RunStatus.SUCCEEDED
+
+
+def _cluster_plan() -> Plan:
+    from aisvc.cloudstack.clusters import ClusterPlanned
+
+    planned = ClusterPlanned(
+        zone="East-1",
+        zone_id="z-east",
+        cluster="aisvc-east-1",
+        version="1.30.1",
+        version_id="v-130",
+        offering="Small Instance",
+        offering_id="o-small",
+    )
+    return Plan(
+        actions=[
+            Action(
+                kind=ActionKind.CREATE,
+                resource_type="kubernetes-cluster",
+                name="aisvc-east-1",
+                detail=planned.detail,
+            )
+        ],
+        notes=[],
+    )
+
+
+class FakeClusterBuilder:
+    """Stands in for ClusterBuilder, recording what it was asked to build."""
+
+    def __init__(self) -> None:
+        self.created: list[tuple[str, str, str]] = []
+
+    async def resolve(self, **kwargs: object):  # type: ignore[no-untyped-def]
+        from aisvc.cloudstack.clusters import ClusterPlanned
+
+        return ClusterPlanned(
+            zone="East-1",
+            zone_id="z-east",
+            cluster=str(kwargs["cluster"]),
+            version="1.30.1",
+            version_id="v-130",
+            offering="Small Instance",
+            offering_id="o-small",
+        )
+
+    async def create(self, planned: object, *, dry_run: bool) -> str:
+        if dry_run:
+            return ""
+        self.created.append(
+            (planned.cluster, planned.version, planned.offering)  # type: ignore[attr-defined]
+        )
+        return str(planned.cluster)  # type: ignore[attr-defined]

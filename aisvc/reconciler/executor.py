@@ -89,6 +89,7 @@ class Executor:
         *,
         deployer: ServingDeployer | None = None,
         proxies: Any = None,
+        clusters: Any = None,
         action_timeout: float = DEFAULT_ACTION_TIMEOUT,
     ) -> None:
         self.provisioner = provisioner
@@ -100,6 +101,12 @@ class Executor:
         # prints a proxy and quietly does nothing is worse than one
         # that stops — the operator would believe it was built.
         self.proxies = proxies
+        # CKS cluster creation (ADR-0007). Absent for the same reason
+        # as proxies: an action that prints and silently does nothing
+        # is worse than one that stops, and here every GPU node in the
+        # plan depends on the cluster it would not have built.
+        self.clusters = clusters
+        self.cluster_plans: dict[str, Any] = {}
         self.action_timeout = action_timeout
 
     async def execute(self, plan: Plan, *, zone: str, dry_run: bool = False) -> RunRecord:
@@ -171,7 +178,35 @@ class Executor:
             return self._serving_handler(action)
         if action.resource_type == "endpoint-proxy":
             return self._proxy_handler(action)
+        if action.resource_type == "kubernetes-cluster":
+            return self._cluster_handler(action)
         return None
+
+    def _cluster_handler(self, action: Action) -> Callable[[bool], Awaitable[list[str]]] | None:
+        """Build the cluster the planner resolved.
+
+        What was resolved at observe time is what gets built: the
+        operator confirmed a plan line naming a Kubernetes version and
+        a billable offering, and re-choosing here could quietly give
+        them something else.
+        """
+        builder = self.clusters
+        if builder is None or action.kind is not ActionKind.CREATE:
+            return None
+
+        planned = self.cluster_plans.get(action.name)
+
+        async def create(dry_run: bool) -> list[str]:
+            resolved = planned
+            if resolved is None:
+                # Executing a plan this process did not make. Resolving
+                # again is the only option, and the detail is printed
+                # so a difference is at least visible.
+                resolved = await builder.resolve(zone="", cluster=action.name)
+            built = await builder.create(resolved, dry_run=dry_run)
+            return [built] if built else []
+
+        return create
 
     def _proxy_handler(self, action: Action) -> Callable[[bool], Awaitable[list[str]]] | None:
         proxies = self.proxies

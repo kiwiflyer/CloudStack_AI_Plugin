@@ -28,6 +28,13 @@ from aisvc.certificates.bootstrap import BootstrapTokens
 from aisvc.certificates.probe import sweep_endpoint_certificates
 from aisvc.certificates.renewal import sweep_renewals
 from aisvc.cloudstack import CloudStackClient, CloudStackError, Credentials
+from aisvc.cloudstack.clusters import (
+    ClusterBuilder,
+    ClusterPlanned,
+    ClusterState,
+    ClusterUnbuildable,
+    read_clusters,
+)
 from aisvc.db import RunLog, UsageStore, create_session_factory, session_scope
 from aisvc.db.migrate import upgrade_to_head
 from aisvc.db.session import database_url
@@ -251,6 +258,8 @@ async def _observe(spec: PlatformSpec) -> ActualState:
 
     async with CloudStackClient(credentials) as client:
         capacity = await take_snapshot(client, spec)
+        clusters = await read_clusters(client, _cks_zones(spec))
+        plans, problems = await _cluster_plans(client, spec, clusters)
 
     cluster = _cluster()
     deployments = observe_deployments(cluster, namespace=namespace)
@@ -263,7 +272,55 @@ async def _observe(spec: PlatformSpec) -> ActualState:
         exposures=tuple(_stored_exposures()),
         proxies=await observe_proxies(client),
         certificate_serials=_certificate_serials(),
+        clusters=tuple(clusters),
+        cluster_plans=plans,
+        cluster_problems=problems,
     )
+
+
+def _cks_zones(spec: PlatformSpec) -> list[tuple[str, str]]:
+    """Zones whose cluster CloudStack is meant to know about (ADR-0007)."""
+    return [
+        (zone.name, zone.cks_cluster)
+        for zone in spec.document.zones
+        if zone.kubernetes.source == "cks"
+    ]
+
+
+async def _cluster_plans(
+    client: Any, spec: PlatformSpec, clusters: list[ClusterState]
+) -> tuple[dict[str, ClusterPlanned], dict[str, str]]:
+    """What would be built for each zone asking for a cluster it lacks.
+
+    Resolution is read-only and happens here, at observe time, so the
+    plan line can name the Kubernetes version and the service offering
+    before an operator confirms. Where the operator pinned neither, the
+    engine chose them, and one of them is billable.
+
+    A zone that cannot be built becomes a warning rather than an error:
+    every other zone in the spec can still be planned.
+    """
+    have = {found.zone for found in clusters if found.state is not None}
+    builder = ClusterBuilder(client)
+    plans: dict[str, ClusterPlanned] = {}
+    problems: dict[str, str] = {}
+
+    for zone in spec.document.zones:
+        if not zone.kubernetes.create or zone.name in have:
+            continue
+        try:
+            plans[zone.name] = await builder.resolve(
+                zone=zone.cloudstack_zone,
+                cluster=zone.cks_cluster,
+                version=zone.kubernetes.version,
+                offering=zone.kubernetes.offering,
+                size=zone.kubernetes.size,
+                network_id=zone.kubernetes.network,
+            )
+        except ClusterUnbuildable as refused:
+            problems[zone.name] = str(refused)
+
+    return plans, problems
 
 
 async def _proxy_provisioner(client: Any, spec: PlatformSpec, session: Any) -> Any:
@@ -397,6 +454,7 @@ async def _apply(
     zone: str,
     dry_run: bool,
     registry: ModelRegistry,
+    cluster_plans: dict[str, ClusterPlanned] | None = None,
 ) -> tuple[int, str]:
     """Execute a plan, returning the run id and its status."""
     credentials = _credentials()
@@ -431,7 +489,13 @@ async def _apply(
                     RunLog(session),
                     deployer=deployer,
                     proxies=await _proxy_provisioner(client, spec, session),
+                    clusters=ClusterBuilder(client),
                 )
+                # What observe resolved, so execution builds exactly
+                # the line the operator confirmed.
+                executor.cluster_plans = {
+                    planned.cluster: planned for planned in (cluster_plans or {}).values()
+                }
                 run = await executor.execute(computed, zone=zone, dry_run=dry_run)
                 if not dry_run:
                     # Spent and expired tokens are useless but still
@@ -547,7 +611,14 @@ def apply(
     zone = loaded.document.zones[0].name if loaded.document.zones else "unknown"
     try:
         run_id, status = asyncio.run(
-            _apply(loaded, computed, zone=zone, dry_run=dry_run, registry=registry)
+            _apply(
+                loaded,
+                computed,
+                zone=zone,
+                dry_run=dry_run,
+                registry=registry,
+                cluster_plans=state.cluster_plans,
+            )
         )
     except NotLeader as exc:
         # Not an error in the zone, just someone else's turn. Saying so

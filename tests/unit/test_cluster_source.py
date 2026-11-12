@@ -158,3 +158,81 @@ class TestWhatIsRefused:
                     "      cluster: our-own-cluster",
                 )
             )
+
+
+class TestWhatCreationNeeds:
+    """A zone that asks for a cluster may also say how to build it.
+
+    Everything here is optional. Leaving it all unset is the point —
+    the engine resolves the newest enabled Kubernetes version and the
+    smallest offering that clears its minimums, and names both in the
+    plan before anything is created.
+    """
+
+    def test_everything_defaults(self) -> None:
+        kubernetes = zone_of(
+            with_zone(
+                *EAST,
+                "    kubernetes:",
+                "      source: cks",
+                "      cluster: aisvc-east-1",
+                "      create: true",
+            )
+        ).kubernetes
+
+        assert kubernetes.version == ""
+        assert kubernetes.offering == ""
+        assert kubernetes.size == 1
+        assert kubernetes.network == ""
+
+    def test_a_version_and_offering_can_be_pinned(self) -> None:
+        kubernetes = zone_of(
+            with_zone(
+                *EAST,
+                "    kubernetes:",
+                "      source: cks",
+                "      cluster: aisvc-east-1",
+                "      create: true",
+                "      version: 1.29.4",
+                "      offering: Medium Instance",
+                "      size: 3",
+                "      network: tier-a",
+            )
+        ).kubernetes
+
+        assert kubernetes.version == "1.29.4"
+        assert kubernetes.offering == "Medium Instance"
+        assert kubernetes.size == 3
+        assert kubernetes.network == "tier-a"
+
+    def test_a_cluster_needs_at_least_one_worker(self) -> None:
+        # The gateway and the system pods run on these. A cluster with
+        # none would come up with nowhere to put them.
+        with pytest.raises(SpecError):
+            load(
+                with_zone(
+                    *EAST,
+                    "    kubernetes:",
+                    "      source: cks",
+                    "      cluster: aisvc-east-1",
+                    "      create: true",
+                    "      size: 0",
+                )
+            )
+
+    def test_build_settings_without_create_are_refused(self) -> None:
+        # Pinning a version on a cluster the engine will never build
+        # describes nothing, and reads as though it would be applied
+        # to the existing one.
+        with pytest.raises(SpecError) as raised:
+            load(
+                with_zone(
+                    *EAST,
+                    "    kubernetes:",
+                    "      source: cks",
+                    "      cluster: aisvc-east-1",
+                    "      version: 1.29.4",
+                )
+            )
+
+        assert "create" in str(raised.value)

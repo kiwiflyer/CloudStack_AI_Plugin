@@ -24,6 +24,19 @@ zones:
     #     source: external      # cks | external
     #     cluster: our-own-cluster
     #     create: false         # cks only
+    #
+    # Or have the engine build the cluster. Everything but `create` is
+    # optional: unset, it takes the newest enabled Kubernetes version
+    # and the smallest offering that clears its minimums, and names
+    # both in the plan before anything is created.
+    #
+    #   kubernetes:
+    #     source: cks
+    #     cluster: aisvc-east-1
+    #     create: true
+    #     version: "1.30.1"       # optional, else newest enabled
+    #     offering: Small Instance # optional, else smallest that fits
+    #     size: 1                  # workers for the gateway and system pods
     # Per-tenant gateway proxies for private endpoints
     # (SPEC.md section 8). Only needed where tenants attach an
     # endpoint to their own VPC tier; without both, the planner

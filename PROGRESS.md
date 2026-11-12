@@ -2892,3 +2892,52 @@ and `create: true` is accepted by the schema but acted on by nothing.
 Both sources still join with `kubeadm join`, so ADR-0006 remains
 entirely unimplemented and its GPU lifecycle experiment unrun. No
 CloudStack has answered `listKubernetesClusters` for any of this.
+
+## Milestone 8 — the engine builds the cluster
+
+ADR-0007's third recommendation. A zone with `create: true` whose
+cluster CloudStack does not have gets one, before any GPU node for that
+zone: a node that boots with nowhere to join is a billed VM doing
+nothing, and nothing later in the plan repairs it.
+
+### What it resolves, and what it refuses to guess
+
+`createKubernetesCluster` needs more than a name and a zone, and all of
+it can be read from CloudStack. The newest **enabled** version wins —
+compared numerically, because "1.9.0" sorts above "1.10.0" as text and
+picking 1.9 would quietly build on an older Kubernetes than the
+operator had. A disabled version is skipped even when it is newest,
+since CloudStack would refuse it at create time with a message about
+something the engine chose.
+
+The service offering is the one thing that costs money. The engine
+takes the smallest that clears the version's own `mincpunumber` and
+`minmemory`, and **the plan line names it** — the existing confirmation
+step is what makes that choice visible rather than a surprise. A pinned
+offering below the minimums is refused at plan time rather than
+producing a cluster that will not come up.
+
+Where nothing is registered, the error names `addKubernetesSupportedVersion`
+and what it needs. "Not found" would leave an operator with nowhere to go.
+
+### Resolved once, at observe time
+
+Resolution is read-only, so it happens during observe and the result
+travels in `ActualState`. Execution builds what the plan said rather
+than re-choosing between confirmation and apply — an operator approved
+a specific version and a specific offering, and getting something else
+would make the plan a suggestion.
+
+`create` also re-checks existence immediately before writing: a plan is
+made before it is executed, and a cluster that appeared in between must
+not become a second one.
+
+### What is still not true
+
+No CloudStack has created a cluster for this. `size` is the cluster's
+own workers for the gateway and system pods — GPU nodes are still
+separate VMs that `kubeadm join`, so ADR-0006 remains unimplemented.
+Nothing deletes a cluster, and what happens to one deleted out from
+under a running engine is unanswered.
+
+1,841 Python unit tests pass, up from 1,806.

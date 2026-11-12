@@ -49,8 +49,21 @@ engine. **The engine is never exposed to tenant networks.**
     cluster: our-own-cluster
   ```
 
-  Both join with `kubeadm join` today. [ADR-0007](adr/0007-kubernetes-cluster-source.md)
-  proposes what changes for CKS clusters; none of it is built.
+  Or let the engine build one. With `create: true` on a `cks` zone,
+  `aisvc apply` creates the cluster before any GPU node that needs it —
+  taking the newest enabled Kubernetes version and the smallest service
+  offering that clears its minimums, and naming both in the plan before
+  you confirm. Pin either with `version:` and `offering:` if you would
+  rather choose.
+
+  That needs CKS itself to be set up by a CloudStack administrator
+  first: `cloud.kubernetes.service.enabled`, `endpoint.url`, a default
+  network offering, and a registered Kubernetes version ISO. The engine
+  never does any of that, and says so by name when something is missing.
+
+  Nodes still join with `kubeadm join` whichever source you choose.
+  [ADR-0006](adr/0006-gpu-node-join.md) proposes moving that onto CKS;
+  none of it is built.
 - **NVIDIA GPU hosts** with host tags, and matching service offerings.
   A replica is capped at one host; there is no multi-node tensor
   parallelism.

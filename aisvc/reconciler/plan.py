@@ -37,6 +37,7 @@ __all__ = [
     "Plan",
     "plan_all",
     "plan_capacity",
+    "plan_clusters",
     "route_config_hash",
 ]
 
@@ -124,7 +125,68 @@ class Plan:
         return "\n".join(lines)
 
 
-def plan_capacity(spec: PlatformSpec, snapshot: CapacitySnapshot) -> Plan:
+def plan_clusters(spec: PlatformSpec, state: ActualState) -> tuple[list[Action], list[str]]:
+    """One action per zone that asked for a cluster and has none.
+
+    Resolution happened at observe time, which is why the line can name
+    the Kubernetes version and the service offering: where the operator
+    pinned neither, the engine chose them, and one of them is billable.
+    An operator should read that in the plan rather than on an invoice.
+
+    A zone that cannot be built warns instead. There is no action to
+    take, and failing the whole plan would stop every other zone.
+    """
+    actions: list[Action] = []
+    warnings: list[str] = []
+    existing = {found.zone for found in state.clusters if found.state is not None}
+
+    for zone in spec.document.zones:
+        if not zone.kubernetes.create or zone.name in existing:
+            continue
+
+        problem = state.cluster_problems.get(zone.name)
+        if problem:
+            warnings.append(f"zones.{zone.name}: cannot create {zone.cks_cluster}: {problem}")
+            continue
+
+        planned = state.cluster_plans.get(zone.name)
+        if planned is None:
+            continue
+
+        actions.append(
+            Action(
+                kind=ActionKind.CREATE,
+                resource_type="kubernetes-cluster",
+                name=planned.cluster,
+                detail=planned.detail,
+                reason=f"zone {zone.name} asks for a cluster and CloudStack has none",
+            )
+        )
+
+    return actions, warnings
+
+
+def _cluster_action_for(spec: PlatformSpec, cluster_actions: list[Action]) -> dict[str, str]:
+    """Pool name to the key of the cluster action it must wait for.
+
+    A GPU node that boots with nowhere to join is a billed VM doing
+    nothing, and nothing later in the plan can repair it.
+    """
+    by_cluster = {action.name: action.key for action in cluster_actions}
+    zones = {zone.name: zone.cks_cluster for zone in spec.document.zones}
+    return {
+        pool.name: by_cluster[zones[pool.zone]]
+        for pool in spec.document.node_pools
+        if pool.zone in zones and zones[pool.zone] in by_cluster
+    }
+
+
+def plan_capacity(
+    spec: PlatformSpec,
+    snapshot: CapacitySnapshot,
+    *,
+    waits_for: dict[str, str] | None = None,
+) -> Plan:
     """Diff declared node pools against the GPU nodes that exist.
 
     A pool is sized in node VMs: below `min_nodes` plans creation, above
@@ -138,6 +200,7 @@ def plan_capacity(spec: PlatformSpec, snapshot: CapacitySnapshot) -> Plan:
     notes: list[str] = list(spec.notes)
 
     classes = {c.name: c for c in spec.document.gpu_classes}
+    waits = waits_for or {}
 
     for pool in spec.document.node_pools:
         observed = snapshot.for_pool(pool.name)
@@ -160,6 +223,7 @@ def plan_capacity(spec: PlatformSpec, snapshot: CapacitySnapshot) -> Plan:
                     count=wanted,
                     detail=f"service offering {offering}, template {pool.template}",
                     reason=(f"{count} node(s) in the pool, min_nodes is {pool.min_nodes}"),
+                    depends_on=(waits[pool.name],) if pool.name in waits else (),
                 )
             )
         elif count > pool.max_nodes:
@@ -576,7 +640,8 @@ def plan_all(
     rendered into the deployments and the gateway config rather than
     being a stage of their own, so there is nothing separate to plan.
     """
-    capacity = plan_capacity(spec, state.capacity)
+    clusters, cluster_warnings = plan_clusters(spec, state)
+    capacity = plan_capacity(spec, state.capacity, waits_for=_cluster_action_for(spec, clusters))
     models, model_warnings = plan_models(
         spec,
         state,
@@ -590,8 +655,9 @@ def plan_all(
     )
 
     return Plan(
-        actions=[*capacity.actions, *models, *proxies, *routes],
+        actions=[*clusters, *capacity.actions, *models, *proxies, *routes],
         warnings=[
+            *cluster_warnings,
             *capacity.warnings,
             *model_warnings,
             *proxy_warnings(spec, state),
