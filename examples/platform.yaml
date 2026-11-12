@@ -15,6 +15,15 @@ zones:
   - name: zone-east-1
     cloudstack_zone: "East-1"
     cks_cluster: aisvc-east-1
+    # The short spelling above is a CKS cluster the engine may not
+    # create. Say it the long way to point at a cluster CloudStack does
+    # not manage, which joins nodes with kubeadm and is never asked
+    # about through listKubernetesClusters (ADR-0007):
+    #
+    #   kubernetes:
+    #     source: external      # cks | external
+    #     cluster: our-own-cluster
+    #     create: false         # cks only
     # Per-tenant gateway proxies for private endpoints
     # (SPEC.md section 8). Only needed where tenants attach an
     # endpoint to their own VPC tier; without both, the planner

@@ -2848,3 +2848,47 @@ Proposed, and no CloudStack has created a cluster, accepted a GPU node
 into one, or been asked whether CKS is available. ADR-0006's GPU
 lifecycle experiment is still unrun, and ADR-0007 deliberately leaves
 open who owns a cluster the engine creates.
+
+## Milestone 8 — a zone declares where its cluster comes from
+
+ADR-0007's first two recommendations, built. The schema and the
+preflight branch, not creation: they are independent of ADR-0006's
+unrun GPU experiment, and neither can leak a GPU if it is wrong.
+
+A zone carries a `kubernetes` block — `source` (`cks` or `external`),
+`cluster`, and `create` — and `cks_cluster: X` expands to
+`source: cks, cluster: X, create: false`. Every spec written so far
+keeps meaning exactly what it meant, and `zone.cks_cluster` still
+reports the name for the four call sites that read it.
+
+### Refused at load rather than ignored
+
+`create: true` on an external cluster describes nothing the engine
+could do, so it fails validation. Dropping it quietly would leave an
+operator waiting for a cluster that was never going to appear.
+
+Giving both spellings with different names fails too, naming both. One
+of them would otherwise stay in the file as a lie an operator keeps
+reading.
+
+### The defect ADR-0007 named, closed
+
+`check_clusters` used to fail any zone CloudStack had never heard of.
+It now branches on the source: an external cluster passes with a detail
+saying CloudStack was not asked and that reachability is what speaks
+for it. A CKS zone with no state is skipped rather than failed — the
+lookup did not run, so nothing is known to be wrong — and `_cluster_lookup`
+no longer asks CloudStack about external zones at all.
+
+The reachability check needed no change. It already asked the only
+question that matters for a cluster CloudStack does not manage.
+
+1,806 Python unit tests pass, up from 1,789.
+
+### What is still not true
+
+Creation is not built; the engine never calls `createKubernetesCluster`
+and `create: true` is accepted by the schema but acted on by nothing.
+Both sources still join with `kubeadm join`, so ADR-0006 remains
+entirely unimplemented and its GPU lifecycle experiment unrun. No
+CloudStack has answered `listKubernetesClusters` for any of this.

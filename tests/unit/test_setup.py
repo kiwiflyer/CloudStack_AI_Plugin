@@ -471,3 +471,74 @@ class TestClusterChecks:
         )
 
         assert report.ok
+
+
+def spec_external() -> PlatformSpec:
+    """MINIMAL, but pointing at a cluster CloudStack does not manage."""
+    text = MINIMAL.replace(
+        "    cks_cluster: aisvc-east-1\n",
+        "    kubernetes:\n      source: external\n      cluster: our-own-cluster\n",
+    )
+    return load_spec_from_string(text, allowed_licenses=LICENSES)
+
+
+class TestAnExternalClusterIsNotCloudStacksBusiness:
+    """ADR-0007: the source decides what CloudStack can be asked.
+
+    Before this, `check_clusters` failed any zone CloudStack had never
+    heard of and told the operator to fix `cks_cluster`. For someone
+    pointing at their own EKS or kubeadm cluster that is a hard
+    preflight failure over a cluster CloudStack was never meant to
+    know about.
+    """
+
+    def test_an_external_cluster_is_not_failed_for_being_unknown(self) -> None:
+        results = check_clusters(
+            spec_external(),
+            [ClusterState("zone-east-1", "our-own-cluster", state=None)],
+        )
+
+        assert results[0].status is not CheckStatus.FAIL
+
+    def test_it_says_why_cloudstack_was_not_asked(self) -> None:
+        # Silence would read as the check not having run.
+        results = check_clusters(spec_external(), None)
+
+        assert "external" in results[0].detail.lower()
+
+    def test_a_cks_cluster_is_still_failed_for_being_unknown(self) -> None:
+        results = check_clusters(spec(), [ClusterState("zone-east-1", "aisvc-east-1", state=None)])
+
+        assert results[0].status is CheckStatus.FAIL
+
+    def test_a_lookup_failure_against_an_external_zone_is_ignored(self) -> None:
+        # Nothing was asked on this zone's behalf, so a CloudStack
+        # failure says nothing about it.
+        results = check_clusters(
+            spec_external(),
+            [ClusterState("zone-east-1", "our-own-cluster", error="boom")],
+        )
+
+        assert results[0].status is not CheckStatus.FAIL
+
+    def test_a_cks_zone_with_no_state_is_skipped_not_failed(self) -> None:
+        # The lookup did not run for it; nothing is known to be wrong.
+        results = check_clusters(spec(), [])
+
+        assert results[0].status is CheckStatus.SKIPPED
+
+    def test_the_report_still_names_the_cluster(self) -> None:
+        results = check_clusters(spec_external(), None)
+
+        assert "our-own-cluster" in results[0].name
+
+    def test_an_external_zone_does_not_fail_the_report(self) -> None:
+        report = preflight(
+            spec_external(),
+            registry=ModelRegistry(InMemoryObjectStore(), bucket="models"),
+            snapshot=snapshot(classes={("zone-east-1", "h100-8x"): capacity()}),
+            clusters=[ClusterState("zone-east-1", "our-own-cluster", state=None)],
+            kube=FakeKubernetes(),
+        )
+
+        assert report.ok

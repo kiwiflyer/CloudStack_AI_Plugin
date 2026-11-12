@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from aisvc.inventory import CapacitySnapshot
     from aisvc.k8s.client import Kubernetes
     from aisvc.spec import PlatformSpec
+    from aisvc.spec.models import Zone
 
 __all__ = [
     "CheckResult",
@@ -161,30 +162,50 @@ def check_registry(registry: ModelRegistry) -> CheckResult:
 def check_clusters(spec: PlatformSpec, states: Sequence[ClusterState] | None) -> list[CheckResult]:
     """One check per zone: does CloudStack have the cluster it names?
 
-    `cks_cluster` was never verified against anything. It reaches
-    cloud-init as a label and is otherwise unused, so a typo produced
+    `cks_cluster` was never verified against anything. It reached
+    cloud-init as a label and was otherwise unused, so a typo produced
     GPU nodes that deployed, billed and then failed to join a cluster
     nobody had looked for.
+
+    **What is asked depends on the zone's source** (ADR-0007). A zone
+    pointing at a cluster CloudStack does not manage is not failed for
+    CloudStack not knowing it: that is the arrangement, not a fault,
+    and the reachability check below is what actually speaks for it.
 
     Not having asked is skipped rather than failed, for the same reason
     capacity is: a zone being set up has not been observed yet.
     """
-    if states is None:
-        return [
-            CheckResult(
-                name=f"CKS cluster {zone.cks_cluster} in {zone.name}",
-                status=CheckStatus.SKIPPED,
-                detail="CloudStack has not been asked about this cluster yet",
-                remedy=(
-                    "Set CLOUDSTACK_API_URL, CLOUDSTACK_API_KEY and "
-                    "CLOUDSTACK_SECRET_KEY so the engine can call "
-                    "listKubernetesClusters."
-                ),
-            )
-            for zone in spec.document.zones
-        ]
+    by_zone = {state.zone: state for state in states or ()}
+    return [_zone_check(zone, by_zone.get(zone.name)) for zone in spec.document.zones]
 
-    return [_cluster_check(state) for state in states]
+
+def _zone_check(zone: Zone, state: ClusterState | None) -> CheckResult:
+    """What one zone's cluster looks like, given who is meant to own it."""
+    name = f"CKS cluster {zone.cks_cluster} in {zone.name}"
+
+    if zone.kubernetes.source != "cks":
+        return CheckResult(
+            name=name,
+            status=CheckStatus.PASS,
+            detail=(
+                f"{zone.cks_cluster} is declared external, so CloudStack is not "
+                f"asked about it; reachability is what speaks for it"
+            ),
+        )
+
+    if state is None:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.SKIPPED,
+            detail="CloudStack has not been asked about this cluster yet",
+            remedy=(
+                "Set CLOUDSTACK_API_URL, CLOUDSTACK_API_KEY and "
+                "CLOUDSTACK_SECRET_KEY so the engine can call "
+                "listKubernetesClusters."
+            ),
+        )
+
+    return _cluster_check(state)
 
 
 def _cluster_check(state: ClusterState) -> CheckResult:

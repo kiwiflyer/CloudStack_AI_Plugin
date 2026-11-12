@@ -70,7 +70,15 @@ def _cluster_lookup(spec: PlatformSpec) -> object | None:  # pragma: no cover - 
     from aisvc.cloudstack.clusters import ClusterState, read_clusters
 
     credentials = Credentials(endpoint=endpoint, api_key=api_key, secret_key=secret_key)
-    zones = [(zone.name, zone.cks_cluster) for zone in spec.document.zones]
+    # Only CKS zones: asking CloudStack about a cluster it does not
+    # manage would always come back missing (ADR-0007).
+    zones = [
+        (zone.name, zone.cks_cluster)
+        for zone in spec.document.zones
+        if zone.kubernetes.source == "cks"
+    ]
+    if not zones:
+        return None
 
     async def lookup() -> list[ClusterState]:
         async with CloudStackClient(credentials) as client:

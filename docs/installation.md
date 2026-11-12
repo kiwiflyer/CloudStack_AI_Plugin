@@ -35,8 +35,22 @@ engine. **The engine is never exposed to tenant networks.**
   [ADR-0003](adr/0003-cloudstack-release.md) for why, and
   [`java-plugin/README.md`](../java-plugin/README.md) for the 4.22 LTS
   floor the plugin is held to.
-- **A CKS (Kubernetes) cluster** in the target zone, and its join
-  details — endpoint, token, CA cert hash.
+- **A Kubernetes cluster** in the target zone, and its join details —
+  endpoint, token, CA cert hash.
+
+  A zone names its cluster with `cks_cluster`, which means a CKS
+  cluster CloudStack manages. To point at a cluster it does not — your
+  own kubeadm, EKS or anything else — use the long spelling instead,
+  and preflight stops asking CloudStack about it:
+
+  ```yaml
+  kubernetes:
+    source: external
+    cluster: our-own-cluster
+  ```
+
+  Both join with `kubeadm join` today. [ADR-0007](adr/0007-kubernetes-cluster-source.md)
+  proposes what changes for CKS clusters; none of it is built.
 - **NVIDIA GPU hosts** with host tags, and matching service offerings.
   A replica is capped at one host; there is no multi-node tensor
   parallelism.

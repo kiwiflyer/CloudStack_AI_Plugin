@@ -6,9 +6,9 @@ Every model forbids unknown keys: "unknown keys are errors".
 from __future__ import annotations
 
 import re
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 API_VERSION = "aisvc/v1"
 
@@ -17,6 +17,10 @@ Task = Literal["chat", "embedding", "rerank", "vision-chat"]
 Engine = Literal["vllm", "sglang", "trtllm"]
 RolloutStrategy = Literal["bluegreen", "canary", "recreate"]
 Tier = Literal["shared", "dedicated"]
+#: Who owns a zone's Kubernetes cluster (ADR-0007). "cks" means
+#: CloudStack manages it, so it can be asked about and nodes can be
+#: handed to it; "external" means CloudStack knows nothing about it.
+ClusterSource = Literal["cks", "external"]
 Policy = Literal["default", "clamp", "locked"]
 AssignmentScope = Literal["domain", "account", "deployment", "key"]
 OnExceed = Literal["alert", "block"]
@@ -32,16 +36,93 @@ class Base(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class KubernetesSource(Base):
+    """Where a zone's Kubernetes cluster comes from (ADR-0007).
+
+    The source decides what may be asked of CloudStack about this
+    cluster, and therefore which join mechanisms are available to its
+    GPU nodes. It is never decided the other way round.
+    """
+
+    source: ClusterSource = "cks"
+    cluster: str = Field(min_length=1)
+    #: Whether the engine may build the cluster if CloudStack has none.
+    #: A separate permission from naming one, because it is a separate
+    #: thing to grant.
+    create: bool = False
+
+    @model_validator(mode="after")
+    def _creatable(self) -> KubernetesSource:
+        """Only CKS clusters can be created, because only they can be.
+
+        Refused at load rather than ignored: `create: true` on an
+        external cluster describes nothing the engine could do, and
+        silently dropping it would leave an operator believing a
+        cluster would appear.
+        """
+        if self.create and self.source != "cks":
+            raise ValueError(
+                f"create is only possible when source is cks; the engine cannot "
+                f"create a {self.source} cluster, because CloudStack does not "
+                f"manage one"
+            )
+        return self
+
+
 class Zone(Base):
     name: Name
     cloudstack_zone: str
-    cks_cluster: str
+    #: The cluster's name, kept as a field because four call sites read
+    #: it and its meaning has not changed. `kubernetes` carries what is
+    #: new; the two are normalised to agree.
+    cks_cluster: str = ""
+    kubernetes: KubernetesSource
     #: Template and offering for per-tenant gateway proxies (SPEC.md
     #: section 8). Optional: a platform with no private endpoints needs
     #: neither, and planning one without them warns rather than failing
     #: at execute time with a CloudStack error nobody can act on.
     proxy_template: str = ""
     proxy_offering: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _one_cluster_two_spellings(cls, data: Any) -> Any:
+        """Reconcile `cks_cluster` with the `kubernetes` block.
+
+        Every spec written before ADR-0007 says only `cks_cluster`, and
+        has to keep meaning exactly what it meant: a CKS cluster the
+        engine may not create. So the short spelling is expanded rather
+        than deprecated.
+
+        Where both are given they must agree. Preferring one silently
+        would leave the other in the file as a lie an operator keeps
+        reading.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        named = str(data.get("cks_cluster") or "")
+        block = data.get("kubernetes")
+
+        if block is None:
+            if not named:
+                raise ValueError(
+                    "a zone must name its Kubernetes cluster: set cks_cluster, or "
+                    "a kubernetes block with a cluster and a source"
+                )
+            return {**data, "kubernetes": {"source": "cks", "cluster": named}}
+
+        if not isinstance(block, dict):
+            return data
+
+        in_block = str(block.get("cluster") or "")
+        if named and in_block and named != in_block:
+            raise ValueError(
+                f"cks_cluster is {named!r} but kubernetes.cluster is {in_block!r}; "
+                f"they name one cluster and must agree"
+            )
+        cluster = in_block or named
+        return {**data, "kubernetes": {**block, "cluster": cluster}, "cks_cluster": cluster}
 
 
 class GpuClass(Base):
