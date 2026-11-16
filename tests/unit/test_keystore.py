@@ -261,17 +261,17 @@ class TestUsagePersistence:
 
 class TestBudgets:
     def test_a_budget_under_its_limit_does_not_block(self, usage: UsageStore) -> None:
-        usage.set_budget("acme", Budget(monthly=100, currency="USD", on_exceed="block"))
+        usage.set_budget("acme", "/d", Budget(monthly=100, currency="USD", on_exceed="block"))
 
-        state = usage.budget_state("acme")
+        state = usage.budget_state("acme", "/d")
         assert state is not None
         assert not state.should_block
 
     def test_an_account_with_no_budget_is_unlimited(self, usage: UsageStore) -> None:
-        assert usage.budget_state("acme") is None
+        assert usage.budget_state("acme", "/d") is None
 
     def test_spending_past_a_blocking_budget_blocks(self, usage: UsageStore) -> None:
-        usage.set_budget("acme", Budget(monthly=1, currency="USD", on_exceed="block"))
+        usage.set_budget("acme", "/d", Budget(monthly=1, currency="USD", on_exceed="block"))
         usage.record(
             UsageRecord(
                 account="acme",
@@ -283,12 +283,12 @@ class TestBudgets:
             tier=STANDARD,
         )
 
-        state = usage.budget_state("acme")
+        state = usage.budget_state("acme", "/d")
         assert state is not None
         assert state.should_block
 
     def test_an_alerting_budget_never_blocks(self, usage: UsageStore) -> None:
-        usage.set_budget("acme", Budget(monthly=1, currency="USD", on_exceed="alert"))
+        usage.set_budget("acme", "/d", Budget(monthly=1, currency="USD", on_exceed="alert"))
         usage.record(
             UsageRecord(
                 account="acme",
@@ -300,14 +300,14 @@ class TestBudgets:
             tier=STANDARD,
         )
 
-        state = usage.budget_state("acme")
+        state = usage.budget_state("acme", "/d")
         assert state is not None
         assert not state.should_block
         assert state.exceeded
 
     def test_a_threshold_is_notified_once(self, usage: UsageStore) -> None:
         """An alert per request at 80% would be unusable."""
-        usage.set_budget("acme", Budget(monthly=1, currency="USD", on_exceed="alert"))
+        usage.set_budget("acme", "/d", Budget(monthly=1, currency="USD", on_exceed="alert"))
         usage.record(
             UsageRecord(
                 account="acme",
@@ -319,17 +319,17 @@ class TestBudgets:
             tier=STANDARD,
         )
 
-        first = usage.take_notifications("acme")
-        second = usage.take_notifications("acme")
+        first = usage.take_notifications("acme", "/d")
+        second = usage.take_notifications("acme", "/d")
 
         assert first == [50]
         assert second == []
 
     def test_updating_a_budget_replaces_it(self, usage: UsageStore) -> None:
-        usage.set_budget("acme", Budget(monthly=100, currency="USD", on_exceed="alert"))
-        usage.set_budget("acme", Budget(monthly=200, currency="EUR", on_exceed="block"))
+        usage.set_budget("acme", "/d", Budget(monthly=100, currency="USD", on_exceed="alert"))
+        usage.set_budget("acme", "/d", Budget(monthly=200, currency="EUR", on_exceed="block"))
 
-        state = usage.budget_state("acme")
+        state = usage.budget_state("acme", "/d")
         assert state is not None
         assert state.currency == "EUR"
 
@@ -368,7 +368,9 @@ class TestMeteringRaisesBudgetAlerts:
         assert sink.alerts == []
 
     async def test_crossing_a_threshold_alerts(self, usage: UsageStore) -> None:
-        usage.set_budget("acme", Budget(monthly=1, currency="USD", on_exceed="alert"))
+        usage.set_budget(
+            "acme", "/Customers/Acme", Budget(monthly=1, currency="USD", on_exceed="alert")
+        )
         meter, sink = self.meter(usage)
 
         await meter(self.spend())
@@ -376,7 +378,9 @@ class TestMeteringRaisesBudgetAlerts:
         assert [a.detail["threshold"] for a in sink.alerts] == [50]
 
     async def test_a_threshold_alerts_only_once(self, usage: UsageStore) -> None:
-        usage.set_budget("acme", Budget(monthly=10, currency="USD", on_exceed="alert"))
+        usage.set_budget(
+            "acme", "/Customers/Acme", Budget(monthly=10, currency="USD", on_exceed="alert")
+        )
         meter, sink = self.meter(usage)
 
         await meter(self.spend(mtok=9))
@@ -386,7 +390,9 @@ class TestMeteringRaisesBudgetAlerts:
         assert thresholds == sorted(set(thresholds))
 
     async def test_staying_under_alerts_nothing(self, usage: UsageStore) -> None:
-        usage.set_budget("acme", Budget(monthly=1000, currency="USD", on_exceed="alert"))
+        usage.set_budget(
+            "acme", "/Customers/Acme", Budget(monthly=1000, currency="USD", on_exceed="alert")
+        )
         meter, sink = self.meter(usage)
 
         await meter(self.spend())
@@ -400,7 +406,9 @@ class TestMeteringRaisesBudgetAlerts:
             async def send(self, alert: Alert) -> None:
                 raise RuntimeError("the webhook exploded")
 
-        usage.set_budget("acme", Budget(monthly=1, currency="USD", on_exceed="alert"))
+        usage.set_budget(
+            "acme", "/Customers/Acme", Budget(monthly=1, currency="USD", on_exceed="alert")
+        )
         meter = UsageMeter(usage, tier_for=lambda _m: STANDARD, sink=Broken())
 
         await meter(self.spend())
@@ -573,3 +581,74 @@ class TestQueriesAreScopedToADomain:
         issue(keys, account="dev", domain="/Customers/AcmeA", name="mine")
 
         assert keys.list_for(account="dev", domain="/Customers/AcmeA/")
+
+
+class TestABudgetBelongsToAnAccountInADomain:
+    """Budgets were keyed on the account name alone.
+
+    CloudStack account names are unique only within a domain, so `dev`
+    in one domain and `dev` in another shared one limit: setting one
+    overwrote the other, and the gateway then blocked or failed to
+    block the wrong tenant. The siblings — adapters, certificates —
+    already carry a surrogate id with (account, domain) beside it.
+    """
+
+    def budget(self, monthly: float = 100.0) -> Budget:
+        return Budget(monthly=monthly, currency="USD", on_exceed="alert")
+
+    def test_two_domains_keep_separate_budgets(self, usage: UsageStore) -> None:
+        usage.set_budget("dev", "/Customers/AcmeA", self.budget(100.0))
+        usage.set_budget("dev", "/Customers/AcmeB", self.budget(5.0))
+
+        state = usage.budget_state("dev", "/Customers/AcmeA")
+
+        assert state is not None
+        assert state.limit == 100.0
+
+    def test_setting_one_does_not_overwrite_the_other(self, usage: UsageStore) -> None:
+        usage.set_budget("dev", "/Customers/AcmeA", self.budget(100.0))
+        usage.set_budget("dev", "/Customers/AcmeB", self.budget(5.0))
+
+        other = usage.budget_state("dev", "/Customers/AcmeB")
+
+        assert other is not None
+        assert other.limit == 5.0
+
+    def test_setting_it_twice_replaces_rather_than_duplicates(self, usage: UsageStore) -> None:
+        first = usage.set_budget("dev", "/Customers/AcmeA", self.budget(100.0))
+        second = usage.set_budget("dev", "/Customers/AcmeA", self.budget(50.0))
+
+        assert first.id == second.id
+        assert second.monthly == 50.0
+
+    def test_a_budget_carries_an_id_of_its_own(self, usage: UsageStore) -> None:
+        # The account name cannot identify it, so the route needs
+        # something that can.
+        record = usage.set_budget("dev", "/Customers/AcmeA", self.budget())
+
+        assert record.id
+        assert record.domain == "/Customers/AcmeA"
+
+    def test_an_unknown_pair_has_no_budget(self, usage: UsageStore) -> None:
+        usage.set_budget("dev", "/Customers/AcmeA", self.budget())
+
+        assert usage.budget_state("dev", "/Customers/AcmeB") is None
+
+    def test_spend_is_counted_within_the_domain(self, usage: UsageStore) -> None:
+        usage.set_budget("dev", "/Customers/AcmeA", self.budget())
+        for domain in ("/Customers/AcmeA", "/Customers/AcmeB"):
+            usage.record(
+                UsageRecord(
+                    account="dev",
+                    domain=domain,
+                    model="m",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+                tier=STANDARD,
+            )
+
+        state = usage.budget_state("dev", "/Customers/AcmeA")
+
+        assert state is not None
+        assert state.spent == pytest.approx(0.60)

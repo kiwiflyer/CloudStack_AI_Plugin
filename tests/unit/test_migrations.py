@@ -354,7 +354,7 @@ class TestTheMigrationsRunForMariaDb:
         # Alembic writes "-- Running upgrade <from> -> <to>" per step.
         applied = re.findall(r"^-- Running upgrade \S* -> (\d+)", emitted, re.MULTILINE)
 
-        assert applied == ["0001", "0002", "0003", "0004", "0005", "0006", "0007"]
+        assert applied == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"]
 
     def test_it_creates_the_tables(self) -> None:
         emitted = self.sql()

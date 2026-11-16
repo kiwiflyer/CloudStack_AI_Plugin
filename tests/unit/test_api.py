@@ -757,7 +757,13 @@ class TestBudgetWriting:
     def test_a_budget_can_be_set(self, client: TestClient) -> None:
         response = client.post(
             "/v1/budgets",
-            json={"account": "acme", "monthly": 100, "currency": "USD", "on_exceed": "block"},
+            json={
+                "account": "acme",
+                "domain": "/Customers/Acme",
+                "monthly": 100,
+                "currency": "USD",
+                "on_exceed": "block",
+            },
             headers=ADMIN,
         )
 
@@ -768,31 +774,74 @@ class TestBudgetWriting:
         """Otherwise a tenant could lift the limit it is blocked by."""
         response = client.post(
             "/v1/budgets",
-            json={"account": "acme", "monthly": 10_000, "currency": "USD", "on_exceed": "alert"},
+            json={
+                "account": "acme",
+                "domain": "/Customers/Acme",
+                "monthly": 10_000,
+                "currency": "USD",
+                "on_exceed": "alert",
+            },
             headers=TENANT,
         )
 
         assert response.status_code == 403
 
     def test_a_budget_can_be_updated(self, client: TestClient) -> None:
-        client.post(
+        # Addressed by the budget's own id. An account name cannot
+        # identify one: names are unique only within a domain.
+        created = client.post(
             "/v1/budgets",
-            json={"account": "acme", "monthly": 100, "currency": "USD", "on_exceed": "alert"},
+            json={
+                "account": "acme",
+                "domain": "/Customers/Acme",
+                "monthly": 100,
+                "currency": "USD",
+                "on_exceed": "alert",
+            },
             headers=ADMIN,
-        )
+        ).json()
 
-        response = client.patch("/v1/budgets/acme", json={"monthly": 250}, headers=ADMIN)
+        response = client.patch(
+            f"/v1/budgets/{created['id']}", json={"monthly": 250}, headers=ADMIN
+        )
 
         assert response.json()["monthly"] == 250
 
     def test_a_budget_can_be_deleted(self, client: TestClient) -> None:
-        client.post(
+        created = client.post(
             "/v1/budgets",
-            json={"account": "acme", "monthly": 100, "currency": "USD", "on_exceed": "alert"},
+            json={
+                "account": "acme",
+                "domain": "/Customers/Acme",
+                "monthly": 100,
+                "currency": "USD",
+                "on_exceed": "alert",
+            },
             headers=ADMIN,
-        )
+        ).json()
 
-        assert client.delete("/v1/budgets/acme", headers=ADMIN).status_code == 200
+        deleted = client.delete(f"/v1/budgets/{created['id']}", headers=ADMIN)
+
+        assert deleted.status_code == 200
+
+    def test_two_domains_can_each_have_a_budget_for_one_name(self, client: TestClient) -> None:
+        # The point of the change: `dev` in two domains is two budgets.
+        ids = set()
+        for domain in ("/Customers/AcmeA", "/Customers/AcmeB"):
+            created = client.post(
+                "/v1/budgets",
+                json={
+                    "account": "dev",
+                    "domain": domain,
+                    "monthly": 100,
+                    "currency": "USD",
+                    "on_exceed": "alert",
+                },
+                headers=ADMIN,
+            ).json()
+            ids.add(created["id"])
+
+        assert len(ids) == 2
 
     def test_deleting_an_unknown_budget_is_a_404(self, client: TestClient) -> None:
         assert client.delete("/v1/budgets/ghost", headers=ADMIN).status_code == 404
@@ -800,7 +849,13 @@ class TestBudgetWriting:
     def test_an_invalid_on_exceed_is_refused(self, client: TestClient) -> None:
         response = client.post(
             "/v1/budgets",
-            json={"account": "acme", "monthly": 100, "currency": "USD", "on_exceed": "explode"},
+            json={
+                "account": "acme",
+                "domain": "/Customers/Acme",
+                "monthly": 100,
+                "currency": "USD",
+                "on_exceed": "explode",
+            },
             headers=ADMIN,
         )
 
@@ -819,7 +874,13 @@ class TestBudgetsHaveOneSourceOfTruth:
     def set_budget(self, client: TestClient, monthly: float) -> None:
         client.post(
             "/v1/budgets",
-            json={"account": "acme", "monthly": monthly, "currency": "USD", "on_exceed": "alert"},
+            json={
+                "account": "acme",
+                "domain": "/Customers/Acme",
+                "monthly": monthly,
+                "currency": "USD",
+                "on_exceed": "alert",
+            },
             headers=ADMIN,
         )
 

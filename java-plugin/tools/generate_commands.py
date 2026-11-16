@@ -255,7 +255,8 @@ RESPONSES: tuple[Response, ...] = (
         "A monthly budget and where it stands (SPEC.md section 7).",
         (
             f("id", "id", "String", "the budget's identifier"),
-            f("account", "account", "String", "the account or domain it applies to"),
+            f("account", "account", "String", "the account it applies to"),
+            f("domain", "domain", "String", "the domain that account is in"),
             f("monthly", "monthly", "Double", "the monthly limit"),
             f("currency", "currency", "String", "the currency of the limit"),
             f("spent", "spent", "Double", "spend so far this month"),
@@ -653,6 +654,13 @@ COMMANDS: tuple[Command, ...] = (
         "createAiBudget", "Creates a monthly budget.",
         "/v1/budgets", method="POST", response="AiBudgetResponse",
         params=(
+            p("account", "account", "STRING",
+              "the account the budget applies to", required=True, wire="account"),
+            # Required with the account: a CloudStack account name is
+            # unique only within its domain, so the two together are
+            # what names a budget.
+            p("domain", "domainPath", "STRING",
+              "the domain path that account is in", required=True, wire="domain"),
             p("monthly", "monthly", "STRING",
               "the monthly limit", required=True, wire="monthly"),
             p("currency", "currency", "STRING", "the currency", wire="currency"),

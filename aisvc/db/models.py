@@ -39,6 +39,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -199,15 +200,28 @@ class UsageRow(Base):
 
 
 class BudgetRecord(Base):
-    """A monthly budget for one account (SPEC.md section 7).
+    """A monthly budget for one account in one domain (SPEC.md section 7).
+
+    Owned by an (account, domain) pair, not an account name: CloudStack
+    account names are unique only within a domain, so keying on the
+    name alone made `dev` in one domain share a limit with `dev` in
+    another — one overwrote the other, and the gateway then blocked or
+    failed to block the wrong tenant.
+
+    The surrogate id is what the API identifies a budget by, since the
+    account name cannot. Adapters and certificates are shaped the same
+    way.
 
     `notified` holds the thresholds already announced, so an alert fires
     once rather than on every request past 80%.
     """
 
     __tablename__ = "aisvc_budget"
+    __table_args__ = (UniqueConstraint("account", "domain", name="uq_aisvc_budget_owner"),)
 
-    account: Mapped[str] = mapped_column(String(255), primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    account: Mapped[str] = mapped_column(String(255), index=True)
+    domain: Mapped[str] = mapped_column(String(255), index=True)
     monthly: Mapped[float] = mapped_column(Float)
     currency: Mapped[str] = mapped_column(String(8), default="USD")
     on_exceed: Mapped[str] = mapped_column(String(16), default="alert")

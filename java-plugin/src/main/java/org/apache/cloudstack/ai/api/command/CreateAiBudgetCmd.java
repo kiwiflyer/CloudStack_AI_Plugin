@@ -33,6 +33,14 @@ public class CreateAiBudgetCmd extends AiServicesSyncCmd {
 
     public static final String APINAME = "createAiBudget";
 
+    @Parameter(name = "account", type = CommandType.STRING, required = true,
+            description = "the account the budget applies to")
+    private String account;
+
+    @Parameter(name = "domain", type = CommandType.STRING, required = true,
+            description = "the domain path that account is in")
+    private String domainPath;
+
     @Parameter(name = "monthly", type = CommandType.STRING, required = true,
             description = "the monthly limit")
     private String monthly;
@@ -59,6 +67,12 @@ public class CreateAiBudgetCmd extends AiServicesSyncCmd {
 @Override
     protected String engineBody() {
         JsonObject body = new JsonObject();
+        if (account != null) {
+            body.addProperty("account", account);
+        }
+        if (domainPath != null) {
+            body.addProperty("domain", domainPath);
+        }
         if (monthly != null) {
             body.addProperty("monthly", monthly);
         }

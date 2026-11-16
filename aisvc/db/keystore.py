@@ -25,6 +25,7 @@ indexed primary-key lookup and one HMAC.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -234,16 +235,6 @@ class UsageStore:
             query = query.where(UsageRow.recorded_at >= since)
         return list(self.session.scalars(query.order_by(UsageRow.recorded_at)))
 
-    def spent_anywhere(self, *, account: str, since: datetime | None = None) -> float:
-        """What an account has spent across every domain of that name.
-
-        Named rather than reached by omitting a domain, because
-        account-wide is only right where the thing being measured is
-        itself account-wide — today that is the budget record, whose
-        key is the account alone. Tenant-facing reads use `spent`.
-        """
-        return self._spent(self._rows_anywhere(account), since=since)
-
     def spent(self, *, account: str, domain: str, since: datetime | None = None) -> float:
         """What an account has spent in the current billing period.
 
@@ -251,9 +242,6 @@ class UsageStore:
         block a tenant permanently after one expensive month.
         """
         return self._spent(self.list_for(account=account, domain=domain), since=since)
-
-    def _rows_anywhere(self, account: str) -> list[UsageRow]:
-        return list(self.session.scalars(select(UsageRow).where(UsageRow.account == account)))
 
     @staticmethod
     def _spent(rows: list[UsageRow], *, since: datetime | None) -> float:
@@ -268,11 +256,24 @@ class UsageStore:
                 total += row.cost
         return total
 
-    def set_budget(self, account: str, budget: Budget) -> BudgetRecord:
-        """Set or replace an account's budget, resetting its alerts."""
-        record = self.session.get(BudgetRecord, account)
+    def budget_for(self, account: str, domain: str) -> BudgetRecord | None:
+        """The budget for one account in one domain, or None."""
+        return self.session.scalars(
+            select(BudgetRecord)
+            .where(BudgetRecord.account == account)
+            .where(BudgetRecord.domain.in_(_domain_variants(domain)))
+        ).first()
+
+    def set_budget(self, account: str, domain: str, budget: Budget) -> BudgetRecord:
+        """Set or replace a budget, resetting its alerts.
+
+        Keyed on the (account, domain) pair, not the account name:
+        names are unique only within a domain, and keying on the name
+        alone made two tenants share one limit.
+        """
+        record = self.budget_for(account, domain)
         if record is None:
-            record = BudgetRecord(account=account)
+            record = BudgetRecord(id=str(uuid.uuid4()), account=account, domain=domain.rstrip("/"))
             self.session.add(record)
         record.monthly = budget.monthly
         record.currency = budget.currency
@@ -282,7 +283,7 @@ class UsageStore:
         self.session.flush()
         return record
 
-    def budget_state(self, account: str, domain: str | None = None) -> BudgetState | None:
+    def budget_state(self, account: str, domain: str) -> BudgetState | None:
         """How this account stands against its budget, or None if unlimited.
 
         Spend is counted within `domain`. The budget record itself is
@@ -291,7 +292,7 @@ class UsageStore:
         that needs a schema migration and a change to the published
         budget identifier to close.
         """
-        record = self.session.get(BudgetRecord, account)
+        record = self.budget_for(account, domain)
         if record is None:
             return None
 
@@ -303,30 +304,24 @@ class UsageStore:
                 currency=record.currency,
                 on_exceed=record.on_exceed,
             ),
-            spent=self._spent_for(account, domain),
+            spent=self.spent(account=account, domain=domain),
             already_notified=list(record.notified or ()),
         )
 
-    def _spent_for(self, account: str, domain: str | None) -> float:
-        """Spend against a budget: scoped where a domain is named."""
-        if domain is None:
-            return self.spent_anywhere(account=account)
-        return self.spent(account=account, domain=domain)
-
-    def take_notifications(self, account: str, domain: str | None = None) -> list[int]:
+    def take_notifications(self, account: str, domain: str) -> list[int]:
         """Thresholds crossed since the last call, and never repeated.
 
         Taking rather than reading is deliberate: the caller sends the
         alerts, and a crash between reading and sending should lose an
         alert rather than send it on every request thereafter.
         """
-        record = self.session.get(BudgetRecord, account)
+        record = self.budget_for(account, domain)
         if record is None:
             return []
 
         already = list(record.notified or ())
         newly = crossed_thresholds(
-            spent=self._spent_for(account, domain),
+            spent=self.spent(account=account, domain=domain),
             limit=record.monthly,
             already_notified=already,
             thresholds=DEFAULT_THRESHOLDS,

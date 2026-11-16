@@ -125,7 +125,7 @@ below.
 | Terraform | 12 entries — 5 resources and 1 data source per release |
 | Usage types | 5 — input tokens, output tokens, GPU-hours, adapter premium, batch tokens |
 | CLI commands | `validate`, `plan`, `apply`, `status`, `serve`, `batch` |
-| Database migrations | 7 revisions |
+| Database migrations | 8 revisions |
 | Async convention | `202` plus a job id mirroring CloudStack async job states |
 | Errors | RFC 9457 problem JSON |
 

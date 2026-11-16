@@ -312,11 +312,10 @@ so `entity=` alone used to produce Java that did not compile.
 **The domain is part of a tenant's identity.** A CloudStack account name is unique
 only within its domain, so `CallerContext.may_see` compares the `(account, domain)`
 pair and `KeyStore.list_for` / `UsageStore.list_for` **require** a domain — an
-optional one defaulting to "any" is the defect, not a convenience. Account-wide
-spend is reached by the named `spent_anywhere`, used only where the thing measured
-is itself account-wide. **`BudgetRecord` is still keyed on the account alone**, so
-two accounts sharing a name across domains share a limit; closing that needs a
-migration and a change to the published budget identifier, so it is unresolved.
+optional one defaulting to "any" is the defect, not a convenience. **`BudgetRecord` carries a
+surrogate id with `(account, domain)` beside it**, unique together, the same shape
+as adapters and certificates — and the API identifies a budget by that id, because
+an account name cannot. `createAiBudget` therefore requires a domain.
 
 **A batch serves exactly one model.** `parse_requests` requires the declared model
 and refuses any line naming another, filling in a line that names none. The runner

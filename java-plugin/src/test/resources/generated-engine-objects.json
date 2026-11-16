@@ -29,6 +29,7 @@
   "AiBudgetResponse": {
     "account": "sample",
     "currency": "sample",
+    "domain": "sample",
     "id": "sample",
     "monthly": 1.5,
     "on_exceed": "sample",

@@ -133,6 +133,9 @@ class PlaygroundRequest(BaseModel):
 
 class BudgetRequest(BaseModel):
     account: str = Field(min_length=1)
+    #: Required: a CloudStack account name is unique only within its
+    #: domain, so an account alone does not say whose budget this is.
+    domain: str = Field(min_length=1)
     monthly: float = Field(ge=0)
     currency: str = "USD"
     on_exceed: Literal["alert", "block"] = "alert"
@@ -157,9 +160,11 @@ class BudgetPatch(BaseModel):
 
 
 def _budget_row(record: BudgetRecord, store: UsageStore) -> dict[str, Any]:
-    state = store.budget_state(record.account)
+    state = store.budget_state(record.account, record.domain)
     return {
+        "id": record.id,
         "account": record.account,
+        "domain": record.domain,
         "monthly": record.monthly,
         "currency": record.currency,
         "on_exceed": record.on_exceed,
@@ -904,7 +909,7 @@ def _register_routes(app: FastAPI) -> None:
         # and the database as what is in force. The stored one wins,
         # otherwise raising a limit through the API would appear to do
         # nothing while the spec's old number kept being shown.
-        rows: dict[str, dict[str, Any]] = {}
+        rows: dict[tuple[str, str], dict[str, Any]] = {}
         for tenant in services.spec.document.tenants:
             if tenant.budget is None:
                 continue
@@ -914,7 +919,7 @@ def _register_routes(app: FastAPI) -> None:
                     account=tenant.cloudstack_account, domain=tenant.cloudstack_domain
                 ),
             )
-            rows[tenant.cloudstack_account] = {
+            rows[(tenant.cloudstack_account, tenant.cloudstack_domain.rstrip("/"))] = {
                 "id": tenant.name,
                 "account": tenant.cloudstack_account,
                 "domain": tenant.cloudstack_domain,
@@ -928,12 +933,11 @@ def _register_routes(app: FastAPI) -> None:
             }
 
         for record in session.scalars(select(BudgetRecord)):
-            stored = store.budget_state(record.account)
-            existing = rows.get(record.account, {})
-            rows[record.account] = {
-                "id": existing.get("id", record.account),
+            stored = store.budget_state(record.account, record.domain)
+            rows[(record.account, record.domain.rstrip("/"))] = {
+                "id": record.id,
                 "account": record.account,
-                "domain": existing.get("domain", "/"),
+                "domain": record.domain,
                 "monthly": record.monthly,
                 "currency": record.currency,
                 "spent": stored.spent if stored else 0.0,
@@ -1091,40 +1095,44 @@ def _register_routes(app: FastAPI) -> None:
         Admin only: a tenant able to set its own budget could lift the
         limit that is blocking it.
         """
-        record = UsageStore(session).set_budget(body.account, body.as_budget())
+        record = UsageStore(session).set_budget(body.account, body.domain, body.as_budget())
         return _budget_row(record, UsageStore(session))
 
     @app.patch(f"{PREFIX}/budgets/{{budget_id}}", tags=["billing"], summary="Update a budget")
     async def update_budget(
         budget_id: str, _: AdminDep, session: SessionDep, body: BudgetPatch
     ) -> dict[str, Any]:
-        """A budget is identified by the account it belongs to."""
-        account = budget_id
+        """A budget is identified by its own id.
+
+        Not by the account: names are unique only within a domain, so
+        an account alone names two budgets in a platform with two
+        tenants called `dev`.
+        """
         store = UsageStore(session)
-        existing = session.get(BudgetRecord, account)
+        existing = session.get(BudgetRecord, budget_id)
         if existing is None:
             raise ApiError(
                 status.HTTP_404_NOT_FOUND,
-                f"no budget for account {account}",
+                f"no budget with id {budget_id}",
                 code="budget_not_found",
             )
-        record = store.set_budget(account, body.applied_to(existing))
+        record = store.set_budget(existing.account, existing.domain, body.applied_to(existing))
         return _budget_row(record, store)
 
     @app.delete(f"{PREFIX}/budgets/{{budget_id}}", tags=["billing"], summary="Delete a budget")
     async def delete_budget(budget_id: str, _: AdminDep, session: SessionDep) -> dict[str, Any]:
-        """Remove a budget, leaving the account unlimited."""
-        account = budget_id
-        record = session.get(BudgetRecord, account)
+        """Remove a budget, leaving that account unlimited in its domain."""
+        record = session.get(BudgetRecord, budget_id)
         if record is None:
             raise ApiError(
                 status.HTTP_404_NOT_FOUND,
-                f"no budget for account {account}",
+                f"no budget with id {budget_id}",
                 code="budget_not_found",
             )
+        account, domain = record.account, record.domain
         session.delete(record)
         session.flush()
-        return {"account": account, "deleted": True}
+        return {"id": budget_id, "account": account, "domain": domain, "deleted": True}
 
     # -- tier 2: adapters -------------------------------------------------
 

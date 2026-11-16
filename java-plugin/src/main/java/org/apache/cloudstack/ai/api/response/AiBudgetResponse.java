@@ -31,8 +31,12 @@ public class AiBudgetResponse extends BaseResponse {
     private String id;
 
     @SerializedName("account")
-    @Param(description = "the account or domain it applies to")
+    @Param(description = "the account it applies to")
     private String account;
+
+    @SerializedName("domain")
+    @Param(description = "the domain that account is in")
+    private String domain;
 
     @SerializedName("monthly")
     @Param(description = "the monthly limit")
@@ -59,6 +63,7 @@ public class AiBudgetResponse extends BaseResponse {
         }
         mapped.id = readString(body, "id");
         mapped.account = readString(body, "account");
+        mapped.domain = readString(body, "domain");
         mapped.monthly = readDouble(body, "monthly");
         mapped.currency = readString(body, "currency");
         mapped.spent = readDouble(body, "spent");
@@ -72,6 +77,10 @@ public class AiBudgetResponse extends BaseResponse {
 
     public String getAccount() {
         return account;
+    }
+
+    public String getDomain() {
+        return domain;
     }
 
     public Double getMonthly() {

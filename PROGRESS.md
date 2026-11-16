@@ -3305,3 +3305,49 @@ Nothing from the review is outstanding except `BudgetRecord`'s
 account-only primary key, which needs a migration and a change to a
 published command's identifier — recorded in CLAUDE.md as a decision
 rather than taken.
+
+## A budget belongs to an account in a domain
+
+The last finding from the security review, which an earlier note said
+was blocked. It was not: `aisvc_budget` lives in the engine's own
+database (ADR-0004), the budget commands are generated from this
+repository, and the only table CloudStack's own `cloud` database gets
+is `ai_deployment`. Nothing here is published or deployed, so there was
+no published identifier to break — the reasoning that deferred it was
+simply wrong.
+
+`BudgetRecord` now carries a surrogate id with `(account, domain)`
+beside it, unique together: the same shape `AdapterRecord` and
+`CertificateRecord` already had, and the reason their docstrings give
+is the reason here too.
+
+### What that changed above it
+
+The API identifies a budget by its own id, because an account name
+cannot — `PATCH /v1/budgets/{id}` and `DELETE` take the surrogate, and
+`createAiBudget` requires a `domain` alongside the account. The Java
+command sent neither before, so it could not have created a budget at
+all; it now sends both.
+
+`spent_anywhere` is gone. It existed only to serve a budget keyed on
+the account alone, and with the key fixed there is nothing account-wide
+left to measure. The listing keys its rows on the pair too — keying on
+the name collapsed two tenants' budgets into one row, which was the
+same collision one level up.
+
+### The migration
+
+0008 rebuilds the table rather than altering it, carrying existing rows
+across and attributing them to the root domain, which is the only
+domain their account name resolves to without guessing. It renders
+offline for `alembic upgrade --sql` by noticing the mock connection
+returns nothing, and the downgrade keeps the first row per account —
+the same ambiguity the old schema always had.
+
+Verified by running it, not by reading it: a fresh database reaches
+0008 with the right columns, a 0007 database with a row carries that
+row across with its notified thresholds intact, and the downgrade
+reverses.
+
+1,947 Python tests, 448 Java, Terraform green; ruff, mypy and gofmt
+clean. Nothing from the security review is outstanding.
