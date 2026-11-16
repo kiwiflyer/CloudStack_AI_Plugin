@@ -9,7 +9,8 @@
       "gpucardname": "NVIDIA H100 80GB HBM3",
       "gpudevicetype": "PCI",
       "busaddress": "0000:17:00.0",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Allocated",
       "numanode": "0",
       "virtualmachineid": "vm-1",
       "virtualmachinename": "aisvc-h100-pool-001",
@@ -23,7 +24,8 @@
       "gpucardname": "NVIDIA H100 80GB HBM3",
       "gpudevicetype": "PCI",
       "busaddress": "0000:18:00.0",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Allocated",
       "numanode": "0",
       "virtualmachineid": "vm-1",
       "virtualmachinename": "aisvc-h100-pool-001",
@@ -37,7 +39,8 @@
       "gpucardname": "NVIDIA H100 80GB HBM3",
       "gpudevicetype": "PCI",
       "busaddress": "0000:19:00.0",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Free",
       "numanode": "0"
     },
     {
@@ -48,7 +51,8 @@
       "gpucardname": "NVIDIA H100 80GB HBM3",
       "gpudevicetype": "PCI",
       "busaddress": "0000:1a:00.0",
-      "managedstate": "Disabled",
+      "managedstate": "Unmanaged",
+      "state": "Free",
       "numanode": "0"
     },
     {
@@ -59,7 +63,8 @@
       "gpucardname": "NVIDIA H100 80GB HBM3",
       "gpudevicetype": "PCI",
       "busaddress": "0000:17:00.0",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Free",
       "numanode": "0"
     },
     {
@@ -70,7 +75,8 @@
       "gpucardname": "NVIDIA H100 80GB HBM3",
       "gpudevicetype": "PCI",
       "busaddress": "0000:18:00.0",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Free",
       "numanode": "0"
     },
     {
@@ -81,7 +87,8 @@
       "gpucardname": "NVIDIA H100 80GB HBM3",
       "gpudevicetype": "PCI",
       "busaddress": "0000:19:00.0",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Free",
       "numanode": "1"
     },
     {
@@ -92,7 +99,8 @@
       "gpucardname": "NVIDIA H100 80GB HBM3",
       "gpudevicetype": "PCI",
       "busaddress": "0000:1a:00.0",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Free",
       "numanode": "1"
     },
     {
@@ -103,7 +111,8 @@
       "gpucardname": "NVIDIA H100 80GB HBM3",
       "gpudevicetype": "PCI",
       "busaddress": "0000:17:00.0",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Free",
       "numanode": "0"
     },
     {
@@ -114,7 +123,8 @@
       "gpucardname": "NVIDIA H100 80GB HBM3",
       "gpudevicetype": "PCI",
       "busaddress": "0000:18:00.0",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Free",
       "numanode": "0"
     },
     {
@@ -125,7 +135,8 @@
       "gpucardname": "NVIDIA L40S",
       "gpudevicetype": "PCI",
       "busaddress": "0000:3b:00.0",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Free",
       "numanode": "0"
     },
     {
@@ -136,7 +147,8 @@
       "gpucardname": "NVIDIA L40S",
       "gpudevicetype": "MDEV",
       "busaddress": "6f1b2c3d-0000-0000-0000-000000000001",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Allocated",
       "parentgpudeviceid": "gpu-l40s-phys",
       "vgpuprofileid": "prof-12q",
       "vgpuprofilename": "NVIDIA L40S-12Q",
@@ -152,7 +164,8 @@
       "gpucardname": "NVIDIA L40S",
       "gpudevicetype": "MDEV",
       "busaddress": "6f1b2c3d-0000-0000-0000-000000000002",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Allocated",
       "parentgpudeviceid": "gpu-l40s-phys",
       "vgpuprofileid": "prof-12q",
       "vgpuprofilename": "NVIDIA L40S-12Q",
@@ -168,7 +181,8 @@
       "gpucardname": "NVIDIA L40S",
       "gpudevicetype": "MDEV",
       "busaddress": "6f1b2c3d-0000-0000-0000-000000000003",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Free",
       "parentgpudeviceid": "gpu-l40s-phys",
       "vgpuprofileid": "prof-12q",
       "vgpuprofilename": "NVIDIA L40S-12Q"
@@ -181,7 +195,8 @@
       "gpucardname": "NVIDIA L40S",
       "gpudevicetype": "MDEV",
       "busaddress": "6f1b2c3d-0000-0000-0000-000000000004",
-      "managedstate": "Enabled",
+      "managedstate": "Managed",
+      "state": "Free",
       "parentgpudeviceid": "gpu-l40s-phys",
       "vgpuprofileid": "prof-12q",
       "vgpuprofilename": "NVIDIA L40S-12Q"

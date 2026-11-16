@@ -98,6 +98,31 @@ class TestParsing:
         devices = parse_gpu_devices(load_fixture("listgpudevices")["gpudevice"])
         assert len(devices) == 15
 
+    def test_the_fixture_still_looks_like_a_real_server(self) -> None:
+        """The fake agreed with two bugs; pin it to what 4.23.0.0 sends.
+
+        This file recorded `managedstate: "Enabled"` — a value
+        CloudStack never returns — and omitted `state`, which it always
+        sends. Both bugs lived behind that: `usable` tested for
+        "Enabled" and passed here while failing on every real GPU, and
+        `state` went unread while sixteen faulted H100s counted as free
+        capacity on a live zone.
+
+        A fixture that agrees with the code proves nothing. These are
+        the values the management server's own `GpuDevice` enums
+        declare.
+        """
+        raw = load_fixture("listgpudevices")["gpudevice"]
+
+        assert {d["managedstate"] for d in raw} <= {"Managed", "Unmanaged"}
+        assert all("state" in d for d in raw), "every device reports a state"
+        assert {d["state"] for d in raw} <= {
+            "Allocated",
+            "Free",
+            "Error",
+            "PartiallyAllocated",
+        }
+
     def test_devices_group_by_host(self) -> None:
         devices = parse_gpu_devices(load_fixture("listgpudevices")["gpudevice"])
         grouped = devices_by_host(devices)
@@ -132,7 +157,7 @@ class TestAllocatableUnits:
 
         assert {d.id for d in units} == {"phys"}
 
-    def test_the_fixture_counts_eleven_allocatable_units(self) -> None:
+    def test_the_fixture_counts_fourteen_allocatable_units(self) -> None:
         """10 passthrough H100s, plus 4 L40S vGPUs whose parent is excluded."""
         devices = parse_gpu_devices(load_fixture("listgpudevices")["gpudevice"])
 

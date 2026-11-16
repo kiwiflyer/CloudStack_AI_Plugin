@@ -3868,4 +3868,22 @@ in-cluster, or pass --no-observe ...
 So the evidence here is at the snapshot layer, where the bug was. The
 planner's own warning text on this data has still not been seen.
 
-1,997 unit tests pass.
+### The fixture agreed with both bugs
+
+`tests/fixtures/cloudstack/listgpudevices.json` is what the contract
+tests call a recorded CloudStack response. It recorded
+`managedstate: "Enabled"` — the value the API reference claims and the
+server never sends — and had no `state` field at all.
+
+That is how both bugs survived a green suite. The first one tested
+`== "Enabled"` and passed here while failing on every real GPU. The
+second read a field the fixture never mentioned, so there was nothing
+to disagree with.
+
+The fixture now carries the values the management server's own enums
+declare, and a test pins it there: every `managedstate` is `Managed`
+or `Unmanaged`, every device reports a `state`, and every `state` is
+one of the four. Its cardinality is unchanged, so the counts the other
+tests assert still hold.
+
+1,998 unit tests pass.
