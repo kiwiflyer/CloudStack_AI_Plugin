@@ -330,16 +330,20 @@ ownership table minimal (`ai_deployment`) so CloudStack enforces ownership, list
 cleanup natively — the engine stays the source of truth for runtime state. Before writing bespoke
 Java, check whether the target release's Extensions framework already covers the action.
 
-**Fifty-three column and detail labels are undefined.** A screen declares
-`columns: () => ['name', 'task', 'size', …]` and CloudStack renders each as
-`label.<field>`, so those keys have to exist. Of the 83 field names the section
-declares, 53 are defined by neither this repo nor CloudStack, and a live
-management server shows them raw: the model catalogue's headers read
-`label.task`, `label.license`, `label.pricetier`. `ui/tests/unit/i18n.spec.js`
-passes throughout, because it checks the keys the section names as strings —
-titles, tabs, action labels — and never the field names it renders through
-`label.<field>`. Fixing the keys without extending that test leaves the same
-hole.
+**A column or detail CloudStack has no word for needs a `customTitle`.** A screen
+declaring `columns: () => ['name', 'task', …]` gets each rendered as
+`label.<field>`, so a field CloudStack does not define shows raw — the model
+catalogue's headers read `label.task`, `label.license`, `label.pricetier` on a
+live server, and the section had 53 such fields out of 83. **Do not answer that
+by defining `label.task` here.** Our keys are merged into CloudStack's own
+`en.json`, so a bare key both collides with whatever CloudStack may add and
+silently overrides it in every language. `AutogenView.vue` and `DetailsTab.vue`
+both accept `{ field: 'task', customTitle: 'ai.task' }` and render
+`label.<customTitle>`, which keeps every string this repo owns inside
+`label.ai.*` — a rule `i18n.spec.js` enforces. That test now also checks each
+field resolves: either CloudStack defines `label.<field>`, recorded for 4.23.0.0
+in `ui/tests/fixtures/cloudstack-label-fields.json`, or the field carries a
+`customTitle` pointing at one of ours.
 
 **UI.** Standard CloudStack list/detail/action patterns so the section inherits search, pagination,
 async job notifications and role-based action visibility. Everything in the UI must also work

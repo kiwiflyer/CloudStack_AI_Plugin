@@ -63,9 +63,16 @@ export default {
       icon: 'appstore-outlined',
       permission: ['listAiModels'],
       resourceType: 'AiModel',
-      columns: () => ['name', 'task', 'size', 'license', 'pricetier'],
+      columns: () => [
+        'name', { field: 'task', customTitle: 'ai.task' }, 'size',
+        { field: 'license', customTitle: 'ai.license' },
+        { field: 'pricetier', customTitle: 'ai.pricetier' }
+      ],
       details: () => [
-        'id', 'name', 'task', 'size', 'license', 'pricetier', 'contextlength',
+        'id', 'name', { field: 'task', customTitle: 'ai.task' }, 'size',
+        { field: 'license', customTitle: 'ai.license' },
+        { field: 'pricetier', customTitle: 'ai.pricetier' },
+        { field: 'contextlength', customTitle: 'ai.contextlength' },
         'description'
       ],
       tabs: [detailsTab],
@@ -87,14 +94,21 @@ export default {
       permission: ['listAiEndpoints'],
       resourceType: 'AiEndpoint',
       columns: () => {
-        const fields = ['name', 'model', 'state', 'replicas', 'baseurl']
+        const fields = [
+          'name', { field: 'model', customTitle: 'ai.model' }, 'state',
+          { field: 'replicas', customTitle: 'ai.replicas' },
+          { field: 'baseurl', customTitle: 'ai.baseurl' }
+        ]
         // Only an operator benefits from the owner column; for a tenant
         // every row is theirs and it is a wasted column.
         if (isAdminOrDomainAdmin()) fields.push('account')
         return fields
       },
       details: () => [
-        'id', 'name', 'model', 'state', 'replicas', 'baseurl', 'pricetier',
+        'id', 'name', { field: 'model', customTitle: 'ai.model' }, 'state',
+        { field: 'replicas', customTitle: 'ai.replicas' },
+        { field: 'baseurl', customTitle: 'ai.baseurl' },
+        { field: 'pricetier', customTitle: 'ai.pricetier' },
         'account', 'domainpath', 'created'
       ],
       tabs: [
@@ -141,8 +155,8 @@ export default {
       icon: 'message-outlined',
       permission: ['createAiPlaygroundSession'],
       component: view('Playground'),
-      columns: () => ['model'],
-      details: () => ['model'],
+      columns: () => [{ field: 'model', customTitle: 'ai.model' }],
+      details: () => [{ field: 'model', customTitle: 'ai.model' }],
       actions: []
     },
     {
@@ -201,8 +215,10 @@ export default {
       // (SPEC.md section 6), and a plain detail view cannot show that
       // pairing, so this screen is its own component.
       component: view('EffectiveParameters'),
-      columns: () => ['parameter', 'value', 'source'],
-      details: () => ['parameter', 'value', 'source', 'policy'],
+      columns: () => [{ field: 'parameter', customTitle: 'ai.parameter' }, 'value', 'source'],
+      details: () => [
+        { field: 'parameter', customTitle: 'ai.parameter' }, 'value', 'source', 'policy'
+      ],
       actions: []
     },
     {
@@ -212,13 +228,23 @@ export default {
       permission: ['listAiUsage'],
       resourceType: 'AiUsage',
       columns: () => {
-        const fields = ['model', 'inputtokens', 'outputtokens', 'gpuhours', 'cost']
+        const fields = [
+          { field: 'model', customTitle: 'ai.model' },
+          { field: 'inputtokens', customTitle: 'ai.inputtokens' },
+          { field: 'outputtokens', customTitle: 'ai.outputtokens' },
+          { field: 'gpuhours', customTitle: 'ai.gpuhours' },
+          { field: 'cost', customTitle: 'ai.cost' }
+        ]
         if (isAdminOrDomainAdmin()) fields.push('account')
         return fields
       },
       details: () => [
-        'account', 'model', 'inputtokens', 'outputtokens', 'gpuhours', 'cost',
-        'currency', 'recorded'
+        'account', { field: 'model', customTitle: 'ai.model' },
+        { field: 'inputtokens', customTitle: 'ai.inputtokens' },
+        { field: 'outputtokens', customTitle: 'ai.outputtokens' },
+        { field: 'gpuhours', customTitle: 'ai.gpuhours' },
+        { field: 'cost', customTitle: 'ai.cost' },
+        'currency', { field: 'recorded', customTitle: 'ai.recorded' }
       ],
       tabs: [
         detailsTab,
@@ -269,12 +295,19 @@ export default {
         // `servedmodelname` is what a tenant actually puts in a
         // request — `<base>:<adapter>` — so it earns a column over the
         // adapter's own name, which addresses nothing.
-        const fields = ['name', 'basemodel', 'servedmodelname', 'rank']
+        const fields = [
+          'name', { field: 'basemodel', customTitle: 'ai.basemodel' },
+          { field: 'servedmodelname', customTitle: 'ai.servedmodelname' },
+          { field: 'rank', customTitle: 'ai.rank' }
+        ]
         if (isAdminOrDomainAdmin()) fields.push('account')
         return fields
       },
       details: () => [
-        'id', 'name', 'basemodel', 'servedmodelname', 'rank', 'sizebytes',
+        'id', 'name', { field: 'basemodel', customTitle: 'ai.basemodel' },
+        { field: 'servedmodelname', customTitle: 'ai.servedmodelname' },
+        { field: 'rank', customTitle: 'ai.rank' },
+        { field: 'sizebytes', customTitle: 'ai.sizebytes' },
         'shared', 'account', 'created'
       ],
       tabs: [detailsTab],
@@ -303,13 +336,19 @@ export default {
       permission: ['listAiBatches'],
       resourceType: 'AiBatch',
       columns: () => {
-        const fields = ['id', 'model', 'status', 'requestcount', 'created']
+        const fields = [
+          'id', { field: 'model', customTitle: 'ai.model' }, 'status',
+          { field: 'requestcount', customTitle: 'ai.requestcount' }, 'created'
+        ]
         if (isAdminOrDomainAdmin()) fields.push('account')
         return fields
       },
       details: () => [
-        'id', 'model', 'status', 'requestcount', 'account', 'created',
-        'finished', 'inputuri', 'outputuri'
+        'id', { field: 'model', customTitle: 'ai.model' }, 'status',
+        { field: 'requestcount', customTitle: 'ai.requestcount' }, 'account', 'created',
+        { field: 'finished', customTitle: 'ai.finished' },
+        { field: 'inputuri', customTitle: 'ai.inputuri' },
+        { field: 'outputuri', customTitle: 'ai.outputuri' }
       ],
       tabs: [detailsTab],
       actions: [
@@ -346,12 +385,17 @@ export default {
       // and never the key, so there is nothing here to put on a screen
       // that should not be on one.
       columns: () => {
-        const fields = ['customdomain', 'expires', 'fingerprint']
+        const fields = [
+          { field: 'customdomain', customTitle: 'ai.customdomain' },
+          { field: 'expires', customTitle: 'ai.expires' }, 'fingerprint'
+        ]
         if (isAdminOrDomainAdmin()) fields.push('account')
         return fields
       },
       details: () => [
-        'id', 'customdomain', 'fingerprint', 'serial', 'expires', 'account',
+        'id', { field: 'customdomain', customTitle: 'ai.customdomain' }, 'fingerprint',
+        { field: 'serial', customTitle: 'ai.serial' },
+        { field: 'expires', customTitle: 'ai.expires' }, 'account',
         'created'
       ],
       tabs: [detailsTab],
@@ -394,13 +438,21 @@ export default {
         // `exposure` is the phrase the engine builds — "private on
         // net-1 as ai.acme.example". It is the one column a buyer
         // checking that an endpoint really is private will read.
-        const fields = ['deployment', 'exposure', 'customdomain', 'tls']
+        const fields = [
+          { field: 'deployment', customTitle: 'ai.deployment' },
+          { field: 'exposure', customTitle: 'ai.exposure' },
+          { field: 'customdomain', customTitle: 'ai.customdomain' },
+          { field: 'tls', customTitle: 'ai.tls' }
+        ]
         if (isAdminOrDomainAdmin()) fields.push('account')
         return fields
       },
       details: () => [
-        'id', 'deployment', 'exposure', 'network', 'publicenabled',
-        'customdomain', 'tls', 'certificate', 'account', 'created'
+        'id', { field: 'deployment', customTitle: 'ai.deployment' },
+        { field: 'exposure', customTitle: 'ai.exposure' }, 'network',
+        { field: 'publicenabled', customTitle: 'ai.publicenabled' },
+        { field: 'customdomain', customTitle: 'ai.customdomain' },
+        { field: 'tls', customTitle: 'ai.tls' }, 'certificate', 'account', 'created'
       ],
       tabs: [detailsTab],
       actions: [
@@ -435,8 +487,11 @@ export default {
       // in aisvc/guardrails/authority.py — and refused there, with a
       // message saying what they can do instead.
       resourceType: 'AiGuardrailProfile',
-      columns: () => ['name', 'scope', 'target'],
-      details: () => ['id', 'name', 'scope', 'target', 'checks'],
+      columns: () => ['name', 'scope', { field: 'target', customTitle: 'ai.target' }],
+      details: () => [
+        'id', 'name', 'scope', { field: 'target', customTitle: 'ai.target' },
+        { field: 'checks', customTitle: 'ai.checks' }
+      ],
       tabs: [detailsTab],
       actions: [
         {
@@ -474,8 +529,11 @@ export default {
       show: isAdmin,
       // A wizard is a sequence, not a list of rows.
       component: view('SetupWizard'),
-      columns: () => ['name', 'status', 'detail'],
-      details: () => ['name', 'status', 'detail', 'remedy'],
+      columns: () => ['name', 'status', { field: 'detail', customTitle: 'ai.detail' }],
+      details: () => [
+        'name', 'status', { field: 'detail', customTitle: 'ai.detail' },
+        { field: 'remedy', customTitle: 'ai.remedy' }
+      ],
       actions: [
         {
           api: 'runAiSetupSelfTest',
@@ -500,8 +558,19 @@ export default {
       permission: ['searchAiHfModels'],
       show: isAdminOrDomainAdmin,
       component: view('HuggingFaceBrowser'),
-      columns: () => ['repo', 'task', 'license', 'downloads', 'compatible'],
-      details: () => ['repo', 'revision', 'task', 'license', 'params', 'problems'],
+      columns: () => [
+        { field: 'repo', customTitle: 'ai.repo' }, { field: 'task', customTitle: 'ai.task' },
+        { field: 'license', customTitle: 'ai.license' },
+        { field: 'downloads', customTitle: 'ai.downloads' },
+        { field: 'compatible', customTitle: 'ai.compatible' }
+      ],
+      details: () => [
+        { field: 'repo', customTitle: 'ai.repo' },
+        { field: 'revision', customTitle: 'ai.revision' },
+        { field: 'task', customTitle: 'ai.task' },
+        { field: 'license', customTitle: 'ai.license' }, 'params',
+        { field: 'problems', customTitle: 'ai.problems' }
+      ],
       actions: [
         {
           api: 'checkAiHfModel',
@@ -536,10 +605,20 @@ export default {
       permission: ['listAiModels'],
       show: isAdminOrDomainAdmin,
       resourceType: 'AiModel',
-      columns: () => ['name', 'repo', 'revision', 'license', 'sizegb', 'deployments'],
+      columns: () => [
+        'name', { field: 'repo', customTitle: 'ai.repo' },
+        { field: 'revision', customTitle: 'ai.revision' },
+        { field: 'license', customTitle: 'ai.license' }, 'sizegb',
+        { field: 'deployments', customTitle: 'ai.deployments' }
+      ],
       details: () => [
-        'id', 'name', 'repo', 'revision', 'sha256', 'license', 'sizegb',
-        'task', 'published', 'deployments'
+        'id', 'name', { field: 'repo', customTitle: 'ai.repo' },
+        { field: 'revision', customTitle: 'ai.revision' },
+        { field: 'sha256', customTitle: 'ai.sha256' },
+        { field: 'license', customTitle: 'ai.license' }, 'sizegb',
+        { field: 'task', customTitle: 'ai.task' },
+        { field: 'published', customTitle: 'ai.published' },
+        { field: 'deployments', customTitle: 'ai.deployments' }
       ],
       tabs: [
         detailsTab,
@@ -584,10 +663,15 @@ export default {
       // SPEC.md section 9 asks for a heatmap by zone and class, which
       // is not a table.
       component: view('GpuCapacity'),
-      columns: () => ['zone', 'gpuclass', 'total', 'allocated', 'free', 'unhealthy'],
+      columns: () => [
+        'zone', { field: 'gpuclass', customTitle: 'ai.gpuclass' }, 'total', 'allocated', 'free',
+        { field: 'unhealthy', customTitle: 'ai.unhealthy' }
+      ],
       details: () => [
-        'zone', 'gpuclass', 'hosttag', 'total', 'allocated', 'free',
-        'unhealthy', 'nodes'
+        'zone', { field: 'gpuclass', customTitle: 'ai.gpuclass' },
+        { field: 'hosttag', customTitle: 'ai.hosttag' }, 'total', 'allocated', 'free',
+        { field: 'unhealthy', customTitle: 'ai.unhealthy' },
+        { field: 'nodes', customTitle: 'ai.nodes' }
       ],
       actions: []
     },
@@ -598,8 +682,13 @@ export default {
       permission: ['listAiGpuCapacity'],
       show: isAdmin,
       component: view('FleetHealth'),
-      columns: () => ['host', 'template', 'driver', 'state', 'drift'],
-      details: () => ['host', 'template', 'driver', 'state', 'drift', 'nodes'],
+      columns: () => [
+        'host', 'template', 'driver', 'state', { field: 'drift', customTitle: 'ai.drift' }
+      ],
+      details: () => [
+        'host', 'template', 'driver', 'state', { field: 'drift', customTitle: 'ai.drift' },
+        { field: 'nodes', customTitle: 'ai.nodes' }
+      ],
       actions: [
         {
           api: 'drainAiNode',
@@ -621,10 +710,18 @@ export default {
       permission: ['listAiModelDeployments'],
       show: isAdminOrDomainAdmin,
       resourceType: 'AiDeployment',
-      columns: () => ['name', 'model', 'livecolour', 'candidate', 'weight', 'state'],
+      columns: () => [
+        'name', { field: 'model', customTitle: 'ai.model' },
+        { field: 'livecolour', customTitle: 'ai.livecolour' },
+        { field: 'candidate', customTitle: 'ai.candidate' },
+        { field: 'weight', customTitle: 'ai.weight' }, 'state'
+      ],
       details: () => [
-        'id', 'name', 'model', 'livecolour', 'candidate', 'weight', 'state',
-        'spechash'
+        'id', 'name', { field: 'model', customTitle: 'ai.model' },
+        { field: 'livecolour', customTitle: 'ai.livecolour' },
+        { field: 'candidate', customTitle: 'ai.candidate' },
+        { field: 'weight', customTitle: 'ai.weight' }, 'state',
+        { field: 'spechash', customTitle: 'ai.spechash' }
       ],
       tabs: [detailsTab],
       actions: [
@@ -653,10 +750,16 @@ export default {
       // changing one could take a GPU host down (SPEC.md section 7).
       show: isAdmin,
       resourceType: 'AiServingProfile',
-      columns: () => ['name', 'maxnumseqs', 'gpumemoryutilization', 'maxmodellen'],
+      columns: () => [
+        'name', { field: 'maxnumseqs', customTitle: 'ai.maxnumseqs' },
+        { field: 'gpumemoryutilization', customTitle: 'ai.gpumemoryutilization' },
+        { field: 'maxmodellen', customTitle: 'ai.maxmodellen' }
+      ],
       details: () => [
-        'id', 'name', 'description', 'maxnumseqs', 'gpumemoryutilization',
-        'maxmodellen', 'tensorparallel'
+        'id', 'name', 'description', { field: 'maxnumseqs', customTitle: 'ai.maxnumseqs' },
+        { field: 'gpumemoryutilization', customTitle: 'ai.gpumemoryutilization' },
+        { field: 'maxmodellen', customTitle: 'ai.maxmodellen' },
+        { field: 'tensorparallel', customTitle: 'ai.tensorparallel' }
       ],
       tabs: [detailsTab],
       actions: [
@@ -695,9 +798,13 @@ export default {
       permission: ['listAiReconcilerRuns'],
       show: isAdminOrDomainAdmin,
       resourceType: 'AiReconcilerRun',
-      columns: () => ['id', 'zone', 'status', 'actions', 'started', 'finished'],
+      columns: () => [
+        'id', 'zone', 'status', 'actions', 'started',
+        { field: 'finished', customTitle: 'ai.finished' }
+      ],
       details: () => [
-        'id', 'zone', 'status', 'actions', 'started', 'finished', 'error'
+        'id', 'zone', 'status', 'actions', 'started',
+        { field: 'finished', customTitle: 'ai.finished' }, 'error'
       ],
       tabs: [
         detailsTab,

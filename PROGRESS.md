@@ -4233,3 +4233,72 @@ was a sign-in that exceeded 60s while the dev server compiled, so the
 helper now allows 120s for it.
 
 101 Vitest tests still pass.
+
+## The fifty-three labels, and the right way to define them
+
+The obvious fix was to add `label.task` and the other 52 to this
+repo's `en.json`. That would have been wrong, and the existing tests
+said so before the live UI did.
+
+`i18n.spec.js` asserts every key this repo defines matches
+`^(label|message)\.ai`, deliberately, so our strings can never collide
+with CloudStack's. Our keys are *merged into* CloudStack's own
+`en.json` at install time, so a bare `label.task` would both collide
+with whatever CloudStack may define later and silently override it —
+in every language, not just English.
+
+CloudStack already has the mechanism. `AutogenView.vue` builds a
+column title as
+
+```js
+if ('customTitle' in columnKey && 'field' in columnKey) {
+  key = columnKey.field
+  title = columnKey.customTitle
+}
+...
+title: this.$t('label.' + String(title).toLowerCase())
+```
+
+and `DetailsTab.vue` does the same for details through
+`detailsTitles[field] = detail.customTitle`. So
+`{ field: 'task', customTitle: 'ai.task' }` renders `label.ai.task`,
+which is ours, namespaced, and translatable alongside everything else.
+
+111 field entries across 38 column and detail blocks were converted,
+covering the 53 distinct fields; the other 30 are names CloudStack
+already defines — `name`, `state`, `zone`, `account`, `size` and so on
+— and are left as bare strings so they keep CloudStack's own
+translations in every language.
+
+### The test that should have caught it
+
+`i18n.spec.js` now checks every field a screen lists. A bare field
+name has to be one CloudStack defines, and anything else needs a
+`customTitle` resolving to a key in our `en.json`. Which keys
+CloudStack defines is not knowable from this repo, so it is recorded:
+`ui/tests/fixtures/cloudstack-label-fields.json` holds the 30 field
+names a live 4.23.0.0 defines `label.<field>` for, with a note saying
+where it came from.
+
+`keysUsed()` had to learn about `customTitle` too, or the orphan check
+— every key we define must be used — would have called all 53 new
+strings orphans. The two tests now meet in the middle, which is the
+point: one says every field resolves, the other says nothing is
+defined that no field uses.
+
+### Live
+
+The model catalogue's headers read Name, Task, Size, License, Price
+tier, and its detail panel the same. The section config was reflowed
+to keep the file under 100 columns, which it had been before.
+
+### And one more flake, properly fixed this time
+
+The sign-in timeout was raised to 120s last entry and a run still
+failed in `beforeEach` with a bare "test timeout". The per-test budget
+in `playwright.config.js` was 60s, so it capped the wait it contained
+— raising the inner one could never have worked. The test timeout is
+now 180s, above the sign-in's own 120s, so a slow sign-in reports as a
+slow sign-in.
+
+22 of 22 Playwright specs pass, twice. 103 Vitest tests pass.

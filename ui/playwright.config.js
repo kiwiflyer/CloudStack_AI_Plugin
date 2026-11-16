@@ -20,7 +20,13 @@ import { defineConfig } from '@playwright/test'
 // unconditionally and these only when CLOUDSTACK_UI_URL is set.
 export default defineConfig({
   testDir: './tests/e2e',
-  timeout: 60_000,
+  // 60s was not enough for sign-in. These run against a real
+  // management server, and behind a webpack dev server the first
+  // navigation of a run waits for chunks to compile — one test per
+  // run would fail in `beforeEach` with a bare "test timeout". The
+  // per-test budget has to exceed the sign-in's own wait, or raising
+  // that wait does nothing.
+  timeout: 180_000,
   expect: { timeout: 10_000 },
   // A failing role test is usually a permissions question, and the
   // trace is what answers it.

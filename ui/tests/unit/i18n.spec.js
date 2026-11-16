@@ -41,6 +41,24 @@ function keysUsed () {
       if (action.label) keys.add(action.label)
       if (action.message) keys.add(action.message)
     }
+    // A column or detail may carry its own title, which CloudStack
+    // renders as `label.<customTitle>`. These count as used: without
+    // them the orphan check below calls every field label an orphan.
+    for (const key of ['columns', 'details']) {
+      const value = screen[key]
+      if (typeof value !== 'function') continue
+      let listed
+      try {
+        listed = value()
+      } catch {
+        continue
+      }
+      for (const entry of listed ?? []) {
+        if (entry && entry.customTitle) {
+          keys.add(`label.${String(entry.customTitle).toLowerCase()}`)
+        }
+      }
+    }
   }
   return keys
 }
@@ -98,5 +116,66 @@ describe('every translation file', () => {
       JSON.parse(readFileSync(resolve(LOCALES, file), 'utf8'))
     )
     expect(keys).toEqual([...keys].sort())
+  })
+})
+
+describe('the fields a screen lists', () => {
+  // CloudStack renders a column or detail as `label.<field>`, or as
+  // `label.<customTitle>` where one is given — AutogenView.vue and
+  // DetailsTab.vue both. So a bare field name needs CloudStack to
+  // define that key, and anything it does not define needs a
+  // customTitle pointing into our own namespace.
+  //
+  // This is the gap that let the section ship looking broken. A live
+  // 4.23.0.0 rendered the model catalogue's headers as `label.task`,
+  // `label.license` and `label.pricetier`, and the tests above passed
+  // throughout — they check the keys the section names as strings and
+  // never the field names it renders through `label.<field>`.
+  const provided = new Set(
+    JSON.parse(
+      readFileSync(resolve(process.cwd(), 'tests/fixtures/cloudstack-label-fields.json'), 'utf8')
+    ).fields
+  )
+
+  /** Every column and detail entry, as {field, customTitle}. */
+  function fields () {
+    const found = []
+    for (const screen of screens()) {
+      for (const key of ['columns', 'details']) {
+        const value = screen[key]
+        if (typeof value !== 'function') continue
+        let listed
+        try {
+          listed = value()
+        } catch {
+          continue // needs a record to decide; those are checked below
+        }
+        for (const entry of listed ?? []) {
+          if (typeof entry === 'string') found.push({ field: entry })
+          else if (entry && entry.field) found.push(entry)
+        }
+      }
+    }
+    return found
+  }
+
+  it('found fields to check', () => {
+    expect(fields().length).toBeGreaterThan(20)
+  })
+
+  it('every field resolves to a string somebody defines', () => {
+    const unresolved = []
+    for (const { field, customTitle } of fields()) {
+      if (customTitle) {
+        const key = `label.${String(customTitle).toLowerCase()}`
+        if (!(key in en)) unresolved.push(`${field}: customTitle ${key} is not in en.json`)
+      } else if (!provided.has(field)) {
+        unresolved.push(
+          `${field}: CloudStack defines no label.${field}, so give it a customTitle`
+        )
+      }
+    }
+
+    expect(unresolved).toEqual([])
   })
 })
