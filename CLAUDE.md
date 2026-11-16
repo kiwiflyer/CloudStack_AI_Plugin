@@ -392,6 +392,19 @@ dependencies, `.env`, migrations, reachability. **Standard library only** — it
 virtualenv the engine lives in, so it can never import `aisvc` or any dependency. It is in
 `ruff`'s targets and mypy's `files`.
 
+`README.md` is the front door: what this is, the five pieces and their one rule
+each, a quick start and the layout. `docs/README.md` indexes everything written
+down, including the published presentations — they are pages, not files, so they
+are linked rather than stored.
+
+**The repository is Apache 2.0 licensed.** `LICENSE` is the canonical text and
+`NOTICE` is the ASF attribution file. Every source file carries the ASF header:
+`.py`, `.java`, `.go`, `.js`, `.ts`, `.vue`, `.tf`, `.hcl`, `.yaml`. **Jinja
+templates are deliberately excluded** — `.j2` files render into manifests whose
+digest is `config_hash`, and fourteen comment lines would change every spec-hash
+and start a rollout everywhere. New files need the header; the Java generator
+already emits it.
+
 `docs/installation.md` is the operator-facing install and setup guide: prerequisites,
 the four pieces and their order, every config key and environment variable, and an
 honest list of what has never been run. Keep it current when any of those change.

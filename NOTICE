@@ -1,0 +1,12 @@
+Apache CloudStack AI Services
+Copyright 2026 The Apache Software Foundation
+
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+This product depends on third-party software whose licences are
+catalogued in docs/third-party-licenses.md. That file also records what
+a dependency scan cannot see: the NVIDIA driver EULA on the GPU golden
+image, the use restrictions carried by open-weight model licences, and
+the commercially licensed directory in LiteLLM that this project does
+not use.

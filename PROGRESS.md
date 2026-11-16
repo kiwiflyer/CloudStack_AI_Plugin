@@ -3104,3 +3104,39 @@ from 444.
 No handshake has happened. The stores were loaded by a JDK and the
 certificates verified by openssl, but no plugin has talked to an
 engine, so the chain is proven in parts rather than end to end.
+
+## Housekeeping — README, docs index and Apache 2.0
+
+The repository had no README and no LICENSE. Both now exist, and every
+source file carries the ASF header.
+
+`README.md` is the front door: what this is, the five pieces and the
+one rule each, a quick start, the layout, and the three conventions
+worth knowing before changing anything. It opens by saying the thing
+that matters most — nothing here has run against a real management
+server — because a reader who learns that on page four has been misled
+for three pages.
+
+`docs/README.md` indexes everything written down and links the four
+presentations. They are published pages rather than files, so they are
+linked rather than stored, and the index says they are snapshots: where
+one disagrees with the documents, the documents are current.
+
+### Licensing
+
+`LICENSE` is the canonical Apache 2.0 text, fetched from apache.org
+rather than reproduced from memory. `NOTICE` is the ASF attribution
+file and points at `docs/third-party-licenses.md` for what a dependency
+scan cannot see.
+
+202 files gained the ASF header: 153 Python, 15 JavaScript, 12 Vue, 10
+Go, 5 Java, 4 YAML, 2 HCL and one mjs. Shebangs stay on line one.
+
+**Jinja templates were deliberately excluded.** A `.j2` renders into a
+manifest whose digest is `config_hash`, so fourteen comment lines would
+change every spec-hash and start a rollout on every deployment. Nothing
+is deployed anywhere yet, so it would have been harmless in practice —
+which is exactly why it was worth noticing rather than discovering.
+
+Everything green afterwards: 1,884 Python, 446 Java, 101 UI, Terraform
+builds and tests, ruff and mypy clean.
