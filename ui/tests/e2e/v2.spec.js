@@ -14,6 +14,8 @@
 // under the License.
 import { expect, test } from '@playwright/test'
 
+import { signIn } from './sign-in.js'
+
 // The v2 screens (SPEC.md section 8).
 //
 // These only exist when the plugin registers the v2 commands, which it
@@ -36,11 +38,7 @@ const TENANT_SCREENS = [
 ]
 
 async function signIn (page, user, password) {
-  await page.goto('/client/#/user/login')
-  await page.getByLabel('Username').fill(user)
-  await page.getByLabel('Password').fill(password)
-  await page.getByRole('button', { name: /sign in/i }).click()
-  await page.waitForURL(/dashboard/)
+  await signIn(page, { user, password, domain: process.env.CLOUDSTACK_ADMIN_DOMAIN })
 }
 
 test.describe('with ai.services.v2.enabled off', () => {

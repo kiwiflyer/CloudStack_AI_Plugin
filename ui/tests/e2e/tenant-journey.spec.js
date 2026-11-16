@@ -14,6 +14,8 @@
 // under the License.
 import { expect, test } from '@playwright/test'
 
+import { credentials, signIn } from './sign-in.js'
+
 // Milestone 6 is "tenant first", so the journey that has to work is a
 // tenant's: find a model, deploy it, get a key, try it.
 
@@ -25,11 +27,7 @@ test.describe('a tenant going from catalog to a working endpoint', () => {
   test.skip(!configured, 'set CLOUDSTACK_UI_URL and CLOUDSTACK_USER_USER')
 
   test.beforeEach(async ({ page }) => {
-    await page.goto('/client/#/user/login')
-    await page.getByLabel('Username').fill(process.env.CLOUDSTACK_USER_USER)
-    await page.getByLabel('Password').fill(process.env.CLOUDSTACK_USER_PASSWORD)
-    await page.getByRole('button', { name: /sign in/i }).click()
-    await page.waitForURL(/dashboard/)
+    await signIn(page, credentials('user'))
   })
 
   test('the catalog lists approved models with their price tier', async ({ page }) => {

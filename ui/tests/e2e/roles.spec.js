@@ -14,6 +14,8 @@
 // under the License.
 import { expect, test } from '@playwright/test'
 
+import { credentials, signIn } from './sign-in.js'
+
 // SPEC.md section 9 and CLAUDE.md: every screen is checked per default
 // role, allowed and denied. Role-based visibility is config in
 // aiservices.js and unit-tested there; what these add is that
@@ -22,20 +24,17 @@ import { expect, test } from '@playwright/test'
 
 const ROLES = {
   admin: {
-    user: process.env.CLOUDSTACK_ADMIN_USER,
-    password: process.env.CLOUDSTACK_ADMIN_PASSWORD,
+    ...credentials('admin'),
     sees: ['Setup', 'GPU capacity', 'Model catalog', 'Endpoints'],
     hidden: []
   },
   domainadmin: {
-    user: process.env.CLOUDSTACK_DOMAINADMIN_USER,
-    password: process.env.CLOUDSTACK_DOMAINADMIN_PASSWORD,
+    ...credentials('domainadmin'),
     sees: ['Model registry', 'Model catalog', 'Rollouts'],
     hidden: ['Setup', 'GPU capacity', 'Serving profiles']
   },
   user: {
-    user: process.env.CLOUDSTACK_USER_USER,
-    password: process.env.CLOUDSTACK_USER_PASSWORD,
+    ...credentials('user'),
     sees: ['Model catalog', 'Endpoints', 'Playground', 'Usage and budgets'],
     hidden: ['Setup', 'GPU capacity', 'Fleet health', 'Model registry']
   }
@@ -53,11 +52,7 @@ test.describe('the AI Services section, per role', () => {
     test.describe(role, () => {
       test.beforeEach(async ({ page }) => {
         test.skip(!expected.user, `set CLOUDSTACK_${role.toUpperCase()}_USER`)
-        await page.goto('/client/#/user/login')
-        await page.getByLabel('Username').fill(expected.user)
-        await page.getByLabel('Password').fill(expected.password)
-        await page.getByRole('button', { name: /sign in/i }).click()
-        await page.waitForURL(/dashboard/)
+        await signIn(page, expected)
       })
 
       test('the section is reachable', async ({ page }) => {
@@ -68,7 +63,13 @@ test.describe('the AI Services section, per role', () => {
       for (const screen of expected.sees) {
         test(`shows ${screen}`, async ({ page }) => {
           await page.goto('/client/#/aiservices')
-          await expect(page.getByRole('link', { name: screen })).toBeVisible()
+          // `.first()` because /aiservices redirects to the section's
+          // first child, so whichever screen that is matches twice —
+          // once in the side menu and once in the breadcrumb, both
+          // links to the same route. Without it the assertion fails
+          // on a strict-mode violation for exactly one screen per
+          // role, which is a worse way to learn this.
+          await expect(page.getByRole('link', { name: screen }).first()).toBeVisible()
         })
       }
 
@@ -87,15 +88,20 @@ test.describe('a tenant cannot reach an admin screen by its URL', () => {
 
   test('the setup wizard refuses a tenant', async ({ page }) => {
     test.skip(!ROLES.user.user, 'set CLOUDSTACK_USER_USER')
-    await page.goto('/client/#/user/login')
-    await page.getByLabel('Username').fill(ROLES.user.user)
-    await page.getByLabel('Password').fill(ROLES.user.password)
-    await page.getByRole('button', { name: /sign in/i }).click()
-    await page.waitForURL(/dashboard/)
+    await signIn(page, ROLES.user)
 
-    // Hiding a link is presentation; the plugin has to refuse the call
-    // as well, and this is what proves it does.
+    // Hiding a link is presentation; this is about what a tenant gets
+    // when they type the URL anyway.
+    //
+    // It is 404, not "not authorised", and that was worth measuring
+    // rather than assuming. CloudStack drops a route whose
+    // `permission` is missing from the caller's `listApis`, so for a
+    // tenant the admin screen does not exist at all — there is no
+    // page to refuse them. The stronger half of the guarantee is at
+    // the API: `listAiSetupChecks` returns 432 to this account, which
+    // the engine's own per-role tests cover.
     await page.goto('/client/#/aisetup')
-    await expect(page.getByText(/not (authori[sz]ed|permitted)/i)).toBeVisible()
+    await expect(page.getByText('404')).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Setup' })).toHaveCount(0)
   })
 })

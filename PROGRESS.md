@@ -4130,3 +4130,106 @@ would also reformat about 1,500 lines, which does not belong in a
 permissions change.
 
 2,003 unit tests and 455 JUnit tests pass.
+
+## The Playwright specs, run at last
+
+They had never run. The reason given was that the UI and the plugin
+had never been in the same management server — which turned out to be
+false: the section had been copied into this harness's own CloudStack
+tree earlier, and the plugin was loaded into that same server two
+entries ago. The specs skip themselves unless `CLOUDSTACK_UI_URL` is
+set, and nobody had set it. That was the whole of it.
+
+Getting them running took a proxy and found three things.
+
+### The UI lives at /client/, the dev server serves it at /
+
+`npm run serve` hosts the app at `/` and forwards every `/client` path
+to the management server, so `/client/` returns CloudStack's "you're in
+developer mode" placeholder — while the specs, correctly, use
+`/client/#/...`, which is where a real deployment puts it. A
+production build would have settled it, but `npm run build` died in
+`thread-loader` with EPIPE, a worker crash.
+
+So an nginx sidecar fronts both: `/client/api` to the management
+server, everything else under `/client/` to the dev server with the
+prefix stripped. The prefix matters — the app loads its lazy chunks
+from `/client/js/*`, so an exact-match rule for `/client/` alone
+leaves the page spinning forever on 404s.
+
+The container was never recreated, deliberately: the plugin lives as
+classes exploded into `/root/client/target/classes` and the TLS
+material is inside it, so a `docker compose up` would have wiped the
+whole setup to publish one port.
+
+### The sign-in was wrong in three ways, in three copies
+
+All three e2e specs had their own copy of the sign-in, and every copy
+was wrong identically, because none had ever run. Against 4.23.0.0:
+
+- the fields carry `placeholder`, not a label, so `getByLabel`
+  never matches and the test times out on `fill`
+- the button says "Login", not "Sign in"
+- there is a third field, Domain, and an account outside ROOT cannot
+  sign in without it
+
+All 22 failed at the same line. They now share `tests/e2e/sign-in.js`,
+so the next surprise is fixed once rather than three times.
+
+### Every label rendered as its own key
+
+With sign-in fixed the section loaded, listed the two models from the
+engine — and showed its column headers as `label.task`,
+`label.license`, `label.pricetier`, with `label.ai.model.catalog` as
+the page title.
+
+This repo ships 74 i18n keys in `ui/public/locales/en.json` and **none
+of them had been merged into the CloudStack tree's locale**. CLAUDE.md
+listed four files needed in CloudStack's own tree; this is a fifth,
+and the one that makes the difference between a working section and a
+screen of identifiers. Compiling proves nothing about it: the section
+built to `Compiled successfully` without a single key.
+
+Merging the 74 fixed the titles. It did not fix the columns, because
+of the next thing.
+
+### Fifty-three labels nobody defines
+
+A screen declares `columns: () => ['name', 'task', 'size', …]` and
+CloudStack renders each as `label.<field>`. Of the 83 field names the
+section declares across `columns` and `details`, **53 are defined by
+neither this repo nor CloudStack**.
+
+`ui/tests/unit/i18n.spec.js` passes, and always has, because it checks
+the keys the section names as strings — the section title, screen
+titles, tab names, action labels — and never the field names rendered
+through `label.<field>`. The test and the defect do not overlap.
+
+Not fixed here: adding 53 keys without extending that test leaves the
+hole that hid them.
+
+### What the specs then proved
+
+22 of 22, against a live management server:
+
+- the section is reachable for root admin, domain admin and tenant
+- each role sees its own screens — Setup and GPU capacity for admin,
+  Model registry and Rollouts for a domain admin, Playground and
+  Usage for a tenant
+- **every "does not show" assertion passes**: no admin screen appears
+  for a domain admin or a tenant
+- a tenant typing `#/aisetup` gets **404**, not a refusal
+
+That last one was worth measuring rather than assuming. The spec
+expected "not authorised"; CloudStack drops a route whose `permission`
+is missing from the caller's `listApis`, so for a tenant the admin
+screen does not exist at all — there is no page to refuse them. The
+spec now asserts what actually happens, and says why.
+
+Three failures were strict-mode violations on one screen per role:
+`/aiservices` redirects to the section's first child, so that screen
+matches twice, once in the side menu and once in the breadcrumb. One
+was a sign-in that exceeded 60s while the dev server compiled, so the
+helper now allows 120s for it.
+
+101 Vitest tests still pass.

@@ -38,13 +38,16 @@ why a private endpoint is a proxy VM on the tenant's tier and not a Service. `ui
 its utils were copied into a 4.23.0.0 tree, registered in `router.js`, and built
 by its own webpack to `Compiled successfully`, appearing seven times in the served
 `app.js`. **The compiler writes to stdout, not the supervisor log file** — a grep of
-the latter will report no errors whatever happened. Its Playwright specs still have never run: they assert the section
-is *visible* per role, and its nineteen route-level `permission` entries name
-seventeen distinct commands, twelve v1 and five v2. Both halves of that gate are
-now proven against a live server — without the plugin `listApis` advertised none
-of them, and with it loaded all twelve v1 ones are there (thirty-eight in all)
-while the five v2 routes drop, which is what the `ai.services.v2.enabled` default
-is supposed to do. What has not run is the UI against the loaded
+the latter will report no errors whatever happened. **Its Playwright role specs now pass, 22 of 22**, against the UI
+and the plugin in the same management server — the section visible per role,
+every admin screen absent for a domain admin and a tenant, and a tenant typing an
+admin screen's URL getting a 404 rather than a refusal, because CloudStack drops
+a route whose `permission` is missing from that caller's `listApis`. Its nineteen
+route-level `permission` entries name seventeen distinct commands, twelve v1 and
+five v2, and both halves of that gate are proven: without the plugin `listApis`
+advertised none of them; with it loaded all twelve v1 ones are there (thirty-eight
+in all) while the five v2 routes drop, which is what the `ai.services.v2.enabled`
+default is supposed to do. What has not run is the UI against the loaded
 plugin: the two were verified in separate management servers, never the same one. `terraform/` builds and unit-tests (v1 and v2) but
 its acceptance tests have never run against a live management server.
 `setup` plans the self-test but cannot run it: the steps need GPU capacity, so
@@ -327,6 +330,17 @@ ownership table minimal (`ai_deployment`) so CloudStack enforces ownership, list
 cleanup natively — the engine stays the source of truth for runtime state. Before writing bespoke
 Java, check whether the target release's Extensions framework already covers the action.
 
+**Fifty-three column and detail labels are undefined.** A screen declares
+`columns: () => ['name', 'task', 'size', …]` and CloudStack renders each as
+`label.<field>`, so those keys have to exist. Of the 83 field names the section
+declares, 53 are defined by neither this repo nor CloudStack, and a live
+management server shows them raw: the model catalogue's headers read
+`label.task`, `label.license`, `label.pricetier`. `ui/tests/unit/i18n.spec.js`
+passes throughout, because it checks the keys the section names as strings —
+titles, tabs, action labels — and never the field names it renders through
+`label.<field>`. Fixing the keys without extending that test leaves the same
+hole.
+
 **UI.** Standard CloudStack list/detail/action patterns so the section inherits search, pagination,
 async job notifications and role-based action visibility. Everything in the UI must also work
 through CloudMonkey and Terraform.
@@ -493,10 +507,14 @@ because CloudStack's schema upgrade chain is closed to a plugin JAR and the bund
 not stop a management server from starting. Upstream the table belongs in
 `engine/schema` and this class should go.
 
-**Four files in CloudStack's own tree are still needed** to ship this: `plugins/pom.xml`
+**Five files in CloudStack's own tree are still needed** to ship this: `plugins/pom.xml`
 and `client/pom.xml` (no auto-discovery; the shade plugin bundles declared dependencies
-only), the `ui/` section plus its `router.js` registration, and — upstream — the table in
-`engine/schema`. Everything else is self-contained.
+only), the `ui/` section plus its `router.js` registration, **`ui/public/locales/en.json`,
+into which this repo's 74 keys must be merged**, and — upstream — the table in
+`engine/schema`. The locale was the one nobody had noticed: the section was copied into a
+real UI tree and compiled without it, so every label rendered as its own key —
+`label.ai.model.catalog` as a page title — and a build that says `Compiled successfully`
+says nothing about that. Everything else is self-contained.
 
 **Three warts the first end-to-end round trip exposed, two still open.**
 `AiServicesSyncCmd` used to report only the status — "the engine returned 503 for
