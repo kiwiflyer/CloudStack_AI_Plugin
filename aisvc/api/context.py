@@ -69,10 +69,31 @@ class CallerContext:
             return True
         return theirs == mine or theirs.startswith(f"{mine}/")
 
+    def is_my_domain(self, domain_path: str | None) -> bool:
+        """Whether `domain_path` is this caller's own domain, exactly.
+
+        Containment is the DOMAIN_ADMIN rule and stays theirs; a USER
+        is scoped to the one domain they are in.
+        """
+        if not domain_path:
+            return False
+        return domain_path.rstrip("/") == self.domain_path.rstrip("/")
+
     def may_see(self, *, account: str | None, domain_path: str | None) -> bool:
-        """Whether this caller may see a resource owned by that account."""
+        """Whether this caller may see a resource owned by that account.
+
+        **The domain is part of the identity.** A CloudStack account
+        name is unique only within its domain, so comparing names alone
+        let `dev` in one domain read — and revoke — `dev`'s rows in
+        another. `aisvc.adapters.may_use` already compares the pair;
+        this is the same rule in the filter that guards everything else.
+
+        A resource carrying no domain is refused rather than matched on
+        its name, because an unattributed row is not safe to hand to a
+        tenant just because the account name happens to agree.
+        """
         if self.role.is_admin:
             return True
         if self.role is Role.DOMAIN_ADMIN:
             return self.owns_domain(domain_path or "")
-        return account == self.account
+        return account == self.account and self.is_my_domain(domain_path)

@@ -60,6 +60,17 @@ if TYPE_CHECKING:
 __all__ = ["KeyStore", "UsageStore"]
 
 
+def _domain_variants(domain: str) -> tuple[str, str]:
+    """Both spellings of a domain path, so a trailing slash still matches.
+
+    Paths reach the engine from several sources and differ by a
+    trailing slash; refusing on that alone would hide a tenant's own
+    rows from them.
+    """
+    bare = domain.rstrip("/")
+    return (bare, f"{bare}/")
+
+
 class KeyStore:
     """Issue, verify and revoke tenant API keys."""
 
@@ -142,12 +153,20 @@ class KeyStore:
         if record.revoked_at is None:
             record.revoked_at = utcnow()
 
-    def list_for(self, *, account: str) -> list[ApiKeyRecord]:
-        """Every key an account holds. Never carries a secret."""
+    def list_for(self, *, account: str, domain: str) -> list[ApiKeyRecord]:
+        """Every key an account holds in one domain. Never carries a secret.
+
+        **The domain is required.** A CloudStack account name is unique
+        only within its domain, so a query on the name alone returns
+        another tenant's keys — and `may_see` is the second line of
+        defence, not the first. A default of "any domain" would be the
+        defect rather than a convenience.
+        """
         return list(
             self.session.scalars(
                 select(ApiKeyRecord)
                 .where(ApiKeyRecord.account == account)
+                .where(ApiKeyRecord.domain.in_(_domain_variants(domain)))
                 .order_by(ApiKeyRecord.created_at)
             )
         )
@@ -197,21 +216,50 @@ class UsageStore:
         self.session.flush()
         return row
 
-    def list_for(self, *, account: str, since: datetime | None = None) -> list[UsageRow]:
-        query = select(UsageRow).where(UsageRow.account == account)
+    def list_for(
+        self, *, account: str, domain: str, since: datetime | None = None
+    ) -> list[UsageRow]:
+        """Usage rows for one account in one domain.
+
+        The domain is required for the same reason as `KeyStore.list_for`:
+        account names collide across domains, and an unscoped query
+        bills — or discloses — the wrong tenant.
+        """
+        query = (
+            select(UsageRow)
+            .where(UsageRow.account == account)
+            .where(UsageRow.domain.in_(_domain_variants(domain)))
+        )
         if since is not None:
             query = query.where(UsageRow.recorded_at >= since)
         return list(self.session.scalars(query.order_by(UsageRow.recorded_at)))
 
-    def spent(self, *, account: str, since: datetime | None = None) -> float:
+    def spent_anywhere(self, *, account: str, since: datetime | None = None) -> float:
+        """What an account has spent across every domain of that name.
+
+        Named rather than reached by omitting a domain, because
+        account-wide is only right where the thing being measured is
+        itself account-wide — today that is the budget record, whose
+        key is the account alone. Tenant-facing reads use `spent`.
+        """
+        return self._spent(self._rows_anywhere(account), since=since)
+
+    def spent(self, *, account: str, domain: str, since: datetime | None = None) -> float:
         """What an account has spent in the current billing period.
 
         The window matters: a monthly budget that never resets would
         block a tenant permanently after one expensive month.
         """
+        return self._spent(self.list_for(account=account, domain=domain), since=since)
+
+    def _rows_anywhere(self, account: str) -> list[UsageRow]:
+        return list(self.session.scalars(select(UsageRow).where(UsageRow.account == account)))
+
+    @staticmethod
+    def _spent(rows: list[UsageRow], *, since: datetime | None) -> float:
         window = since if since is not None else _month_start()
         total = 0.0
-        for row in self.list_for(account=account):
+        for row in rows:
             recorded = _aware(row.recorded_at)
             # recorded_at is not nullable, but a row read back mid-flush
             # can be: count an unstamped row as current rather than
@@ -234,8 +282,15 @@ class UsageStore:
         self.session.flush()
         return record
 
-    def budget_state(self, account: str) -> BudgetState | None:
-        """How this account stands against its budget, or None if unlimited."""
+    def budget_state(self, account: str, domain: str | None = None) -> BudgetState | None:
+        """How this account stands against its budget, or None if unlimited.
+
+        Spend is counted within `domain`. The budget record itself is
+        still keyed on the account name alone, so two accounts
+        sharing a name across domains share a limit — a collision
+        that needs a schema migration and a change to the published
+        budget identifier to close.
+        """
         record = self.session.get(BudgetRecord, account)
         if record is None:
             return None
@@ -248,11 +303,17 @@ class UsageStore:
                 currency=record.currency,
                 on_exceed=record.on_exceed,
             ),
-            spent=self.spent(account=account),
+            spent=self._spent_for(account, domain),
             already_notified=list(record.notified or ()),
         )
 
-    def take_notifications(self, account: str) -> list[int]:
+    def _spent_for(self, account: str, domain: str | None) -> float:
+        """Spend against a budget: scoped where a domain is named."""
+        if domain is None:
+            return self.spent_anywhere(account=account)
+        return self.spent(account=account, domain=domain)
+
+    def take_notifications(self, account: str, domain: str | None = None) -> list[int]:
         """Thresholds crossed since the last call, and never repeated.
 
         Taking rather than reading is deliberate: the caller sends the
@@ -265,7 +326,7 @@ class UsageStore:
 
         already = list(record.notified or ())
         newly = crossed_thresholds(
-            spent=self.spent(account=account),
+            spent=self._spent_for(account, domain),
             limit=record.monthly,
             already_notified=already,
             thresholds=DEFAULT_THRESHOLDS,

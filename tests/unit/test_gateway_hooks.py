@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parents[2] / "gateway-hooks"))
 
 from enforcement import (
     AisvcEnforcement,
+    GuardrailBlocked,
     HttpError,
     to_http_error,
 )
@@ -605,3 +606,86 @@ class TestAdapterVisibility:
         )
 
         assert await self.call(hook)
+
+
+class TestGuardrailsSeeEveryTextField:
+    """Guardrails scanned only plain-string chat content.
+
+    A domain admin can lock a guardrail check so the tenant below
+    cannot loosen it, and the shipped `education-safe` preset locks
+    PII and topics. Anything the scan does not reach is that lock
+    silently not applying — so the shapes matter: a vision request
+    carries its text in a content list, completions use `prompt`, and
+    embeddings and rerank use `input`, none of which were read.
+    """
+
+    def blocking(self) -> AisvcEnforcement:
+        from aisvc.guardrails import GuardrailLayer, resolve_guardrails
+        from aisvc.profiles import Level
+        from aisvc.spec.models import GuardrailCheck
+
+        checks = resolve_guardrails(
+            [
+                GuardrailLayer(
+                    level=Level.ACCOUNT,
+                    checks={"topics": GuardrailCheck(action="block", value=["forbidden"])},
+                )
+            ]
+        )
+        return AisvcEnforcement(
+            resolve_context=lambda _k, _d: context_for(),
+            guardrails=lambda _account: checks,
+        )
+
+    def test_text_inside_a_vision_content_list_is_scanned(self) -> None:
+        body = {
+            "model": "m",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "forbidden"},
+                        {"type": "image_url", "image_url": {"url": "data:..."}},
+                    ],
+                }
+            ],
+        }
+
+        with pytest.raises(GuardrailBlocked):
+            self.blocking()._check_guardrails(context_for(), body)
+
+    def test_a_completions_prompt_is_scanned(self) -> None:
+        with pytest.raises(GuardrailBlocked):
+            self.blocking()._check_guardrails(context_for(), {"model": "m", "prompt": "forbidden"})
+
+    def test_an_embedding_input_is_scanned(self) -> None:
+        with pytest.raises(GuardrailBlocked):
+            self.blocking()._check_guardrails(context_for(), {"model": "m", "input": "forbidden"})
+
+    def test_a_list_of_embedding_inputs_is_scanned(self) -> None:
+        with pytest.raises(GuardrailBlocked):
+            self.blocking()._check_guardrails(
+                context_for(), {"model": "m", "input": ["fine", "forbidden"]}
+            )
+
+    def test_an_image_part_alone_is_not_blocked(self) -> None:
+        # There is no text in it to scan, and refusing it would make a
+        # vision model unusable rather than safe.
+        body = {
+            "model": "m",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "image_url", "image_url": {"url": "x"}}],
+                }
+            ],
+        }
+
+        self.blocking()._check_guardrails(context_for(), body)
+
+    def test_plain_string_content_still_works(self) -> None:
+        with pytest.raises(GuardrailBlocked):
+            self.blocking()._check_guardrails(
+                context_for(),
+                {"model": "m", "messages": [{"role": "user", "content": "forbidden"}]},
+            )

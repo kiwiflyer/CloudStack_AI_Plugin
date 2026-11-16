@@ -140,11 +140,21 @@ class BatchJob:
         return dt.datetime.now(dt.UTC) - self.finished_at > self.retention
 
 
-def parse_requests(jsonl: str) -> list[BatchRequest]:
-    """Parse and validate a batch input file.
+def parse_requests(jsonl: str, *, model: str) -> list[BatchRequest]:
+    """Parse and validate a batch input file against its declared model.
 
     Errors name the line. A tenant debugging a 50,000-line file with
     "invalid JSON" and nothing else has no way in.
+
+    **Every line must serve `model`.** The runner posts each body
+    verbatim under one shared operator key, so by the time the gateway
+    sees a request the submitting account is gone and every scope,
+    budget and guardrail check runs against that key instead. A line
+    naming a different model would reach the gateway with no
+    tenant-level check at all, while metering recorded the cost
+    against the model the batch declared. `model` is required rather
+    than optional because a check that can be omitted is one that will
+    be.
     """
     requests: list[BatchRequest] = []
     seen: set[str] = set()
@@ -185,12 +195,27 @@ def parse_requests(jsonl: str) -> list[BatchRequest]:
                 f"line {number} targets {url!r}; batches support {supported}",
             )
 
+        body = dict(parsed.get("body") or {})
+        named = body.get("model")
+        if named is None or named == "":
+            # Omitting it is ordinary, and the declared model is what
+            # metering already bills, so it is filled in rather than
+            # refused.
+            body["model"] = model
+        elif named != model:
+            raise BatchRejected(
+                "model_mismatch",
+                f"line {number} asks for model {named!r} but the batch declares "
+                f"{model!r}; a batch serves one model, and its requests are not "
+                f"checked against the submitting account's scopes",
+            )
+
         requests.append(
             BatchRequest(
                 custom_id=custom_id,
                 method=parsed.get("method", "POST"),
                 url=url,
-                body=parsed.get("body") or {},
+                body=body,
             )
         )
 

@@ -5,7 +5,7 @@
 // "License"); you may not use this file except in compliance with the
 // License. You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -110,8 +110,23 @@ func (c *Client) Call(command string, params map[string]string) ([]byte, error) 
 	values.Set("apiKey", c.APIKey)
 	values.Set("signature", signature(values, c.SecretKey))
 
-	endpoint := strings.TrimRight(c.BaseURL, "/") + "?" + values.Encode()
-	response, err := c.httpClient().Get(endpoint)
+	// POST with a form body, never GET with a query string.
+	//
+	// uploadAiCertificate and replaceAiCertificate carry an unencrypted
+	// PEM private key. CloudStack scrubs its API access log with a
+	// query-string regex covering password, accesskey and secretkey —
+	// and not privatekey, though the JSON scrubber in the same class
+	// does list it. So a key sent in the request line is kept verbatim
+	// by the access log and by every reverse proxy, APM trace and
+	// TF_LOG=DEBUG transcript in between. The signature is computed
+	// over the canonical query whatever the method, so nothing about
+	// authentication changes.
+	endpoint := strings.TrimRight(c.BaseURL, "/")
+	response, err := c.httpClient().Post(
+		endpoint,
+		"application/x-www-form-urlencoded",
+		strings.NewReader(values.Encode()),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", command, err)
 	}

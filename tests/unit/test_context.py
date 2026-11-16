@@ -107,3 +107,68 @@ class TestRole:
         assert Role("Admin") is Role.ADMIN
         assert Role("DomainAdmin") is Role.DOMAIN_ADMIN
         assert Role("User") is Role.USER
+
+
+class TestTheDomainIsPartOfIdentity:
+    """A CloudStack account name is unique only within its domain.
+
+    `may_see` compared account names alone, so a USER in `dev` under one
+    domain passed the filter for `dev` under another — and that filter
+    is the only tenant boundary on usage, keys, batches, certificates
+    and private endpoints. `adapters.may_use` already compares the pair;
+    this is the same rule in the place that guards everything else.
+    """
+
+    def test_the_same_name_in_another_domain_is_refused(self) -> None:
+        caller = CallerContext(
+            user_id="u", account="dev", domain_path="/Customers/AcmeA", role=Role.USER
+        )
+
+        assert not caller.may_see(account="dev", domain_path="/Customers/AcmeB")
+
+    def test_their_own_account_is_still_allowed(self) -> None:
+        caller = CallerContext(
+            user_id="u", account="dev", domain_path="/Customers/AcmeA", role=Role.USER
+        )
+
+        assert caller.may_see(account="dev", domain_path="/Customers/AcmeA")
+
+    def test_a_trailing_slash_does_not_change_the_answer(self) -> None:
+        # Domain paths reach the engine from several sources and differ
+        # by a trailing slash; refusing on that alone would lock a
+        # tenant out of their own rows.
+        caller = CallerContext(
+            user_id="u", account="dev", domain_path="/Customers/AcmeA/", role=Role.USER
+        )
+
+        assert caller.may_see(account="dev", domain_path="/Customers/AcmeA")
+
+    def test_a_resource_with_no_domain_is_refused(self) -> None:
+        # Failing closed: an unattributed row is not safe to hand to a
+        # tenant just because the name matches.
+        caller = CallerContext(
+            user_id="u", account="dev", domain_path="/Customers/AcmeA", role=Role.USER
+        )
+
+        assert not caller.may_see(account="dev", domain_path=None)
+
+    def test_a_sub_domain_is_not_the_same_domain(self) -> None:
+        # A USER is scoped to exactly their own domain. Containment is
+        # the DOMAIN_ADMIN rule, and it stays theirs.
+        caller = CallerContext(
+            user_id="u", account="dev", domain_path="/Customers/AcmeA", role=Role.USER
+        )
+
+        assert not caller.may_see(account="dev", domain_path="/Customers/AcmeA/Sub")
+
+    def test_an_admin_still_sees_everything(self) -> None:
+        caller = CallerContext(user_id="u", account="admin", domain_path="/", role=Role.ADMIN)
+
+        assert caller.may_see(account="dev", domain_path="/Customers/AcmeB")
+
+    def test_a_domain_admin_still_sees_below_them(self) -> None:
+        caller = CallerContext(
+            user_id="u", account="ops", domain_path="/Customers", role=Role.DOMAIN_ADMIN
+        )
+
+        assert caller.may_see(account="dev", domain_path="/Customers/AcmeA")

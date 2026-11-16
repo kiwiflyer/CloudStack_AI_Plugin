@@ -894,7 +894,10 @@ def _register_routes(app: FastAPI) -> None:
             if tenant.budget is None:
                 continue
             state = evaluate_budget(
-                tenant.budget, spent=store.spent(account=tenant.cloudstack_account)
+                tenant.budget,
+                spent=store.spent(
+                    account=tenant.cloudstack_account, domain=tenant.cloudstack_domain
+                ),
             )
             rows[tenant.cloudstack_account] = {
                 "id": tenant.name,
@@ -989,7 +992,9 @@ def _register_routes(app: FastAPI) -> None:
                 "expires": record.expires_at.isoformat() if record.expires_at else None,
                 "revoked": record.revoked_at is not None,
             }
-            for record in KeyStore(session).list_for(account=caller.account)
+            for record in KeyStore(session).list_for(
+                account=caller.account, domain=caller.domain_path
+            )
             if caller.may_see(account=record.account, domain_path=record.domain)
         ]
         return {"count": len(rows), "keys": rows}
@@ -1185,7 +1190,7 @@ def _register_routes(app: FastAPI) -> None:
             )
 
         try:
-            requests = parse_requests(body.input)
+            requests = parse_requests(body.input, model=body.model)
         except BatchRejected as exc:
             raise ApiError(status.HTTP_400_BAD_REQUEST, exc.detail, code=exc.reason) from exc
 

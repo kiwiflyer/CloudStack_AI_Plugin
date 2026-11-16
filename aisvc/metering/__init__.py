@@ -236,11 +236,11 @@ class UsageMeter:
         # missed alert is a missed alert.
         self.store.record(usage, tier=tier)
 
-        state = self.store.budget_state(usage.account)
+        state = self.store.budget_state(usage.account, usage.domain)
         if state is None:
             return
 
-        newly = self.store.take_notifications(usage.account)
+        newly = self.store.take_notifications(usage.account, usage.domain)
         if not newly:
             return
 

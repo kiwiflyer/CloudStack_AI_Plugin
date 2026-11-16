@@ -5,7 +5,7 @@
 // "License"); you may not use this file except in compliance with the
 // License. You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -76,10 +76,10 @@ func TestTheSignatureIsNotPartOfWhatIsSigned(t *testing.T) {
 
 func TestACallSendsTheCommandAndParses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("command"); got != "listAiModels" {
+		if got := r.FormValue("command"); got != "listAiModels" {
 			t.Errorf("command = %q", got)
 		}
-		if r.URL.Query().Get("signature") == "" {
+		if r.FormValue("signature") == "" {
 			t.Error("request was not signed")
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -131,7 +131,7 @@ func TestAnAsyncCallPollsUntilTheJobFinishes(t *testing.T) {
 	polls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Query().Get("command") {
+		switch r.FormValue("command") {
 		case "deployAiModel":
 			_, _ = w.Write([]byte(`{"deployaimodelresponse":{"jobid":"job-1"}}`))
 		case "queryAsyncJobResult":
@@ -162,7 +162,7 @@ func TestAnAsyncCallPollsUntilTheJobFinishes(t *testing.T) {
 func TestAFailedJobBecomesAnError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Query().Get("command") {
+		switch r.FormValue("command") {
 		case "deployAiModel":
 			_, _ = w.Write([]byte(`{"deployaimodelresponse":{"jobid":"job-1"}}`))
 		default:
@@ -180,5 +180,71 @@ func TestAFailedJobBecomesAnError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no GPU capacity") {
 		t.Fatalf("the job's reason was lost: %v", err)
+	}
+}
+
+// A TLS private key must not travel in the request line.
+//
+// CloudStack scrubs its API access log with a query-string regex that
+// covers password, accesskey and secretkey — and not privatekey. The
+// JSON scrubber in the same class does list privatekey, so CloudStack
+// classifies the field as a secret; the masking that applies to a GET
+// request line simply does not cover it. Anything that records a URL
+// — the access log, a reverse proxy, an APM trace, TF_LOG=DEBUG —
+// therefore keeps an unencrypted PEM key verbatim.
+func TestASecretNeverTravelsInTheRequestLine(t *testing.T) {
+	const pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----"
+
+	var rawQuery, posted string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawQuery = r.URL.RawQuery
+		_ = r.ParseForm()
+		posted = r.PostFormValue("privatekey")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"uploadaicertificateresponse":{}}`))
+	}))
+	defer server.Close()
+
+	client := &Client{BaseURL: server.URL, APIKey: "k", SecretKey: "s", HTTP: server.Client()}
+	if _, err := client.Call("uploadAiCertificate", map[string]string{
+		"privatekey": pem,
+		"domain":     "ai.example.com",
+	}); err != nil {
+		t.Fatalf("call failed: %v", err)
+	}
+
+	if strings.Contains(rawQuery, "BEGIN") || strings.Contains(rawQuery, "PRIVATE") {
+		t.Errorf("the private key reached the request line: %s", rawQuery)
+	}
+	if posted != pem {
+		t.Errorf("the private key did not arrive in the body: %q", posted)
+	}
+}
+
+func TestTheRequestIsStillSignedOverEveryParameter(t *testing.T) {
+	// The signature is computed over the canonical query whatever the
+	// method, so moving to a form body must not change what is signed.
+	var form url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		form = r.PostForm
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"uploadaicertificateresponse":{}}`))
+	}))
+	defer server.Close()
+
+	client := &Client{BaseURL: server.URL, APIKey: "k", SecretKey: "s", HTTP: server.Client()}
+	if _, err := client.Call("uploadAiCertificate", map[string]string{"privatekey": "x"}); err != nil {
+		t.Fatalf("call failed: %v", err)
+	}
+
+	signed := url.Values{}
+	for key, value := range form {
+		if key != "signature" {
+			signed[key] = value
+		}
+	}
+	if got := form.Get("signature"); got != signature(signed, "s") {
+		t.Errorf("signature = %q, not computed over the sent parameters", got)
 	}
 }

@@ -197,7 +197,7 @@ class TestLifecycle:
     def test_listing_shows_metadata_but_never_a_secret(self, keys: KeyStore) -> None:
         minted = issue(keys, name="ci")
 
-        listed = keys.list_for(account="acme")
+        listed = keys.list_for(account="acme", domain="/Customers/Acme")
 
         assert [k.name for k in listed] == ["ci"]
         assert all(minted.secret not in str(vars(k)) for k in listed)
@@ -206,7 +206,7 @@ class TestLifecycle:
         issue(keys, account="acme")
         issue(keys, account="other")
 
-        assert len(keys.list_for(account="acme")) == 1
+        assert len(keys.list_for(account="acme", domain="/Customers/Acme")) == 1
 
 
 class TestUsagePersistence:
@@ -224,36 +224,39 @@ class TestUsagePersistence:
     def test_a_request_is_recorded_and_priced(self, usage: UsageStore) -> None:
         usage.record(self.record(), tier=STANDARD)
 
-        assert usage.spent(account="acme") == pytest.approx(0.60)
+        assert usage.spent(account="acme", domain="/Customers/Acme") == pytest.approx(0.60)
 
     def test_usage_accumulates_across_requests(self, usage: UsageStore) -> None:
         usage.record(self.record(), tier=STANDARD)
         usage.record(self.record(), tier=STANDARD)
 
-        assert usage.spent(account="acme") == pytest.approx(1.20)
+        assert usage.spent(account="acme", domain="/Customers/Acme") == pytest.approx(1.20)
 
     def test_another_accounts_usage_is_not_counted(self, usage: UsageStore) -> None:
         usage.record(self.record(), tier=STANDARD)
         usage.record(self.record(account="other"), tier=STANDARD)
 
-        assert usage.spent(account="acme") == pytest.approx(0.60)
+        assert usage.spent(account="acme", domain="/Customers/Acme") == pytest.approx(0.60)
 
     def test_zero_usage_spends_nothing(self, usage: UsageStore) -> None:
-        assert usage.spent(account="acme") == 0.0
+        assert usage.spent(account="acme", domain="/Customers/Acme") == 0.0
 
     def test_usage_is_listed_per_model(self, usage: UsageStore) -> None:
         usage.record(self.record(model="llama"), tier=STANDARD)
         usage.record(self.record(model="gemma"), tier=STANDARD)
 
-        assert {r.model for r in usage.list_for(account="acme")} == {"llama", "gemma"}
+        assert {r.model for r in usage.list_for(account="acme", domain="/Customers/Acme")} == {
+            "llama",
+            "gemma",
+        }
 
     def test_last_months_usage_is_not_counted_this_month(self, usage: UsageStore) -> None:
         """A monthly budget that never resets would block forever."""
         usage.record(self.record(), tier=STANDARD)
-        row = usage.list_for(account="acme")[0]
+        row = usage.list_for(account="acme", domain="/Customers/Acme")[0]
         row.recorded_at = dt.datetime.now(dt.UTC) - dt.timedelta(days=60)
 
-        assert usage.spent(account="acme") == 0.0
+        assert usage.spent(account="acme", domain="/Customers/Acme") == 0.0
 
 
 class TestBudgets:
@@ -355,7 +358,7 @@ class TestMeteringRaisesBudgetAlerts:
 
         await meter(self.spend())
 
-        assert usage.spent(account="acme") == pytest.approx(0.60)
+        assert usage.spent(account="acme", domain="/Customers/Acme") == pytest.approx(0.60)
 
     async def test_no_budget_means_no_alert(self, usage: UsageStore) -> None:
         meter, sink = self.meter(usage)
@@ -402,7 +405,7 @@ class TestMeteringRaisesBudgetAlerts:
 
         await meter(self.spend())
 
-        assert usage.spent(account="acme") > 0
+        assert usage.spent(account="acme", domain="/Customers/Acme") > 0
 
     async def test_a_model_with_no_tier_is_still_recorded(self, usage: UsageStore) -> None:
         """An uncatalogued model must not drop usage on the floor."""
@@ -410,7 +413,7 @@ class TestMeteringRaisesBudgetAlerts:
 
         await meter(self.spend())
 
-        rows = usage.list_for(account="acme")
+        rows = usage.list_for(account="acme", domain="/Customers/Acme")
         assert len(rows) == 1
         assert rows[0].cost == 0.0
 
@@ -449,7 +452,7 @@ class TestMeteringV2Shapes:
 
         await meter(self.spend())
 
-        assert usage.spent(account="acme") == pytest.approx(0.60)
+        assert usage.spent(account="acme", domain="/Customers/Acme") == pytest.approx(0.60)
 
     async def test_an_adapter_adds_its_premium(self, usage: UsageStore) -> None:
         """SPEC.md section 8: base price plus a configurable premium."""
@@ -457,21 +460,21 @@ class TestMeteringV2Shapes:
 
         await meter(self.spend(model="llama:legal-tone"))
 
-        assert usage.spent(account="acme") == pytest.approx(0.75)
+        assert usage.spent(account="acme", domain="/Customers/Acme") == pytest.approx(0.75)
 
     async def test_no_premium_configured_bills_the_base_rate(self, usage: UsageStore) -> None:
         meter, _ = self.meter(usage)
 
         await meter(self.spend(model="llama:legal-tone"))
 
-        assert usage.spent(account="acme") == pytest.approx(0.60)
+        assert usage.spent(account="acme", domain="/Customers/Acme") == pytest.approx(0.60)
 
     async def test_the_premium_does_not_touch_the_bare_base(self, usage: UsageStore) -> None:
         meter, _ = self.meter(usage, adapter_premium=0.25)
 
         await meter(self.spend(model="llama"))
 
-        assert usage.spent(account="acme") == pytest.approx(0.60)
+        assert usage.spent(account="acme", domain="/Customers/Acme") == pytest.approx(0.60)
 
     async def test_the_adapter_is_priced_on_its_bases_tier(self, usage: UsageStore) -> None:
         """The tier is looked up for the base, not for `base:adapter`,
@@ -501,11 +504,72 @@ class TestMeteringV2Shapes:
 
         await meter(self.spend())
 
-        assert usage.spent(account="acme") == pytest.approx(0.60)
+        assert usage.spent(account="acme", domain="/Customers/Acme") == pytest.approx(0.60)
 
     async def test_without_a_task_lookup_nothing_is_checked(self, usage: UsageStore) -> None:
         meter, _ = self.meter(usage)
 
         await meter(self.spend(output_tokens=50))
 
-        assert usage.spent(account="acme") > 0
+        assert usage.spent(account="acme", domain="/Customers/Acme") > 0
+
+
+class TestQueriesAreScopedToADomain:
+    """A CloudStack account name is unique only within its domain.
+
+    `may_see` is the filter these feed, but a query that returns
+    another domain's rows has already leaked them — the filter is the
+    second line, not the first. The domain is required rather than
+    optional here on purpose: a default of "any domain" is the defect.
+    """
+
+    def test_keys_from_another_domain_are_not_listed(self, keys: KeyStore) -> None:
+        issue(keys, account="dev", domain="/Customers/AcmeA", name="theirs")
+        issue(keys, account="dev", domain="/Customers/AcmeB", name="mine")
+
+        listed = keys.list_for(account="dev", domain="/Customers/AcmeB")
+
+        assert [r.name for r in listed] == ["mine"]
+
+    def test_their_own_keys_are_still_listed(self, keys: KeyStore) -> None:
+        issue(keys, account="dev", domain="/Customers/AcmeA", name="one")
+        issue(keys, account="dev", domain="/Customers/AcmeA", name="two")
+
+        listed = keys.list_for(account="dev", domain="/Customers/AcmeA")
+
+        assert {r.name for r in listed} == {"one", "two"}
+
+    def test_usage_from_another_domain_is_not_counted(self, usage: UsageStore) -> None:
+        for domain in ("/Customers/AcmeA", "/Customers/AcmeB"):
+            usage.record(
+                UsageRecord(
+                    account="dev",
+                    domain=domain,
+                    model="llama-3-8b",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+                tier=STANDARD,
+            )
+
+        assert usage.spent(account="dev", domain="/Customers/AcmeA") == pytest.approx(0.60)
+
+    def test_usage_rows_are_scoped_too(self, usage: UsageStore) -> None:
+        for domain in ("/Customers/AcmeA", "/Customers/AcmeB"):
+            usage.record(
+                UsageRecord(
+                    account="dev", domain=domain, model="m", input_tokens=10, output_tokens=0
+                ),
+                tier=STANDARD,
+            )
+
+        rows = usage.list_for(account="dev", domain="/Customers/AcmeB")
+
+        assert [r.domain for r in rows] == ["/Customers/AcmeB"]
+
+    def test_a_trailing_slash_still_matches(self, keys: KeyStore) -> None:
+        # Domain paths reach the engine from several sources; refusing
+        # on a trailing slash would hide a tenant's own rows.
+        issue(keys, account="dev", domain="/Customers/AcmeA", name="mine")
+
+        assert keys.list_for(account="dev", domain="/Customers/AcmeA/")

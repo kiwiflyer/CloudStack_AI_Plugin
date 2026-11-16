@@ -5,7 +5,7 @@
 // "License"); you may not use this file except in compliance with the
 // License. You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -395,10 +395,10 @@ func resourceAiGenerationProfile() *schema.Resource {
 func resourceAiServingProfile() *schema.Resource {
 	// Admin-only (SPEC.md section 7); the plugin enforces that, not this.
 	return profileResource("serving", map[string]*schema.Schema{
-		"max_num_seqs":            {Type: schema.TypeInt, Optional: true},
-		"gpu_memory_utilization":  {Type: schema.TypeFloat, Optional: true},
-		"max_model_len":           {Type: schema.TypeInt, Optional: true},
-		"tensor_parallel":         {Type: schema.TypeInt, Optional: true},
+		"max_num_seqs":           {Type: schema.TypeInt, Optional: true},
+		"gpu_memory_utilization": {Type: schema.TypeFloat, Optional: true},
+		"max_model_len":          {Type: schema.TypeInt, Optional: true},
+		"tensor_parallel":        {Type: schema.TypeInt, Optional: true},
 	})
 }
 

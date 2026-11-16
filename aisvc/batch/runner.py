@@ -175,7 +175,7 @@ class BatchRunner:
 
         try:
             raw = self.registry.store.get(input_key(record)).decode("utf-8")
-            requests = parse_requests(raw)
+            requests = parse_requests(raw, model=record.model)
         except Exception as exc:
             # Without an input file there is nothing to run and no way
             # to recover; failing beats sitting in progress forever.

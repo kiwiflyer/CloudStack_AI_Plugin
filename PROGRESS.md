@@ -3140,3 +3140,110 @@ which is exactly why it was worth noticing rather than discovering.
 
 Everything green afterwards: 1,884 Python, 446 Java, 101 UI, Terraform
 builds and tests, ruff and mypy clean.
+
+## Security review — the four confirmed findings, fixed
+
+A full-project review raised fourteen candidates; four survived
+independent verification. All four are now fixed, each test-first.
+
+### The domain is part of a tenant's identity
+
+`CallerContext.may_see` compared account names alone for `Role.USER`
+and threw the `domain_path` away — and it is the only tenant boundary
+on usage, keys, batches, certificates and private endpoints. A
+CloudStack account name is unique only within its domain, which this
+codebase already knew: `adapters.may_use` compares the pair and says
+why in a comment.
+
+A plain user in `dev` under one domain could list, and then **revoke**,
+the keys of `dev` under another. The two queries feeding that filter
+made it worse by pre-filtering on the account column alone, so the
+rows were already in hand before the filter ran.
+
+`may_see` now compares the pair, and `KeyStore.list_for` and
+`UsageStore.list_for` require a domain. Required, not optional: a
+default of "any domain" is the defect rather than a convenience.
+Account-wide spend still exists but is now reached by the named
+`spent_anywhere`, used only where the thing being measured is itself
+account-wide.
+
+**Not fixed, and needs a decision.** `BudgetRecord`'s primary key is
+the account alone, so two accounts sharing a name across domains share
+a budget. Closing it needs a schema migration *and* a change to what
+`updateAiBudget`/`deleteAiBudget` take as an identifier — a breaking
+change to a published command, which CLAUDE.md says needs a new
+version prefix. The routes are admin-only, so this is an isolation
+defect rather than a privilege boundary, which is why it was left
+rather than decided silently.
+
+### A batch serves exactly one model
+
+`parse_requests` validated `custom_id` and `url` and copied `body`
+through untouched, never reading `body["model"]`. The runner posts each
+body verbatim under one shared `AISVC_BATCH_KEY`, so by the time the
+gateway sees a request the submitting account is gone and every scope,
+budget and guardrail check evaluates against that shared key. A line
+naming another account's adapter passed the ownership check because
+the check was looking at the wrong account.
+
+The declared model is now required and authoritative: a line naming
+another is refused, and a line naming none inherits it — filling in
+rather than refusing, because omitting it is ordinary and the declared
+model is what metering already bills.
+
+### Guardrails see every text field
+
+`_check_guardrails` skipped any content that was not a plain string,
+under a comment asserting a vision content list has "nothing to scan as
+text". It does: an OpenAI vision part carries `{"type": "text", ...}`.
+Nothing read `prompt`, `input`, `query` or rerank `documents` either,
+though all are first-class tasks.
+
+All of those are scanned now, with redactions written back in place. An
+image part alone is still allowed through — there is no text in it, and
+refusing it would make a vision model unusable rather than safe.
+
+### The Terraform client POSTs
+
+`Client.Call` built every request as a query string and issued
+`http.Get`, and the certificate resources pass an unencrypted PEM
+private key through it. CloudStack's query-string log scrubber covers
+password, accesskey and secretkey — and not `privatekey`, while the
+JSON scrubber in the same class does list it. So CloudStack classifies
+the field as a secret and then logs it verbatim anyway, along with
+every reverse proxy and `TF_LOG=DEBUG` transcript in between.
+
+It now POSTs a form body. The signature is computed over the canonical
+query whatever the method, so authentication is unchanged. The test
+asserts on `r.URL.RawQuery` directly — before the fix it printed the
+PEM header.
+
+### Also fixed in passing
+
+`gofmt` had been failing on every Go file since the licence headers
+landed: it wants a tab, not spaces, for the indented URL inside a
+comment block. Formatted.
+
+1,908 Python tests, 446 Java, Terraform building and testing, ruff,
+mypy and gofmt all clean.
+
+### What the review cleared
+
+Ten candidates were rejected on verification, several for reasons worth
+keeping: the proxy certificate fetch is *broken* rather than insecure
+(the engine's only listener requires a client certificate it never
+presents); `visibility` is catalog presentation, not authorization;
+an `http://` engine URL fails closed because the engine binds loopback
+whenever TLS is unconfigured; and the forged-maintenance-event path
+only plans a drain, since nothing executes one.
+
+Two confirmed defects landed below the reporting bar and are still
+open: `custom_domain` is an unescaped shell sink in the proxy's
+cloud-init, unreachable today only because the generated command omits
+the `tls` parameter that the UI and Terraform both already try to
+supply; and the fetched kubeconfig is written to a predictable path
+without `O_NOFOLLOW`.
+
+One claim never got a verdict — whether the mTLS keystore and
+truststore passwords sit in a CloudStack config category that
+`listConfigurations` returns in cleartext. Treat it as open.

@@ -228,20 +228,44 @@ class AisvcEnforcement(_Base):  # type: ignore[misc]  # base is Any without Lite
         if not checks:
             return
 
-        for message in body.get("messages") or []:
-            content = message.get("content")
-            if not isinstance(content, str):
-                # Vision parts are a list; nothing to scan as text.
-                continue
-
-            decision = check_input(content, checks)
+        def scan(text: str) -> str:
+            """Check one piece of prompt text, returning its replacement."""
+            decision = check_input(text, checks)
             if not decision.allowed:
                 if self.on_guardrail is not None:
                     self.on_guardrail(decision.as_event())
                 raise GuardrailBlocked(decision.category)
+            return decision.redacted if decision.redacted is not None else text
 
-            if decision.redacted is not None:
-                message["content"] = decision.redacted
+        # Every shape a prompt arrives in, not just chat strings. A
+        # vision request carries its text in a content list, completions
+        # use `prompt`, and embeddings and rerank use `input` — text the
+        # scan never saw is a locked guardrail silently not applying.
+        for message in body.get("messages") or []:
+            content = message.get("content")
+            if isinstance(content, str):
+                message["content"] = scan(content)
+            elif isinstance(content, list):
+                for part in content:
+                    # An image part has no text to scan; refusing it
+                    # would make a vision model unusable, not safe.
+                    if isinstance(part, dict) and isinstance(part.get("text"), str):
+                        part["text"] = scan(part["text"])
+
+        for field in ("prompt", "input", "query"):
+            value = body.get(field)
+            if isinstance(value, str):
+                body[field] = scan(value)
+            elif isinstance(value, list):
+                body[field] = [scan(item) if isinstance(item, str) else item for item in value]
+
+        documents = body.get("documents")
+        if isinstance(documents, list):
+            # Rerank scores a query against these, so they are prompt
+            # text too.
+            body["documents"] = [
+                scan(item) if isinstance(item, str) else item for item in documents
+            ]
 
     async def async_log_success_event(
         self,
@@ -286,7 +310,7 @@ class AisvcEnforcement(_Base):  # type: ignore[misc]  # base is Any without Lite
             result = self.meter(record)
             if inspect.isawaitable(result):
                 await result
-        except Exception:  # noqa: BLE001 - the response has already been sent
+        except Exception:
             log.exception("failed to meter a served request")
 
     def _context_for(self, user_api_key_dict: Any, data: dict[str, Any]) -> RequestContext:
@@ -315,9 +339,7 @@ def _token_counts(response_obj: Any) -> tuple[int, int] | None:
         return None
 
     def count(field: str) -> int | None:
-        value = (
-            usage.get(field) if isinstance(usage, dict) else getattr(usage, field, None)
-        )
+        value = usage.get(field) if isinstance(usage, dict) else getattr(usage, field, None)
         return int(value) if value is not None else None
 
     prompt, completion = count("prompt_tokens"), count("completion_tokens")

@@ -309,6 +309,34 @@ translates it back through `_entityMgr` before the body is built. Sending the ra
 that bug; the generator emits the imports for both, which it previously did not,
 so `entity=` alone used to produce Java that did not compile.
 
+**The domain is part of a tenant's identity.** A CloudStack account name is unique
+only within its domain, so `CallerContext.may_see` compares the `(account, domain)`
+pair and `KeyStore.list_for` / `UsageStore.list_for` **require** a domain — an
+optional one defaulting to "any" is the defect, not a convenience. Account-wide
+spend is reached by the named `spent_anywhere`, used only where the thing measured
+is itself account-wide. **`BudgetRecord` is still keyed on the account alone**, so
+two accounts sharing a name across domains share a limit; closing that needs a
+migration and a change to the published budget identifier, so it is unresolved.
+
+**A batch serves exactly one model.** `parse_requests` requires the declared model
+and refuses any line naming another, filling in a line that names none. The runner
+posts each body verbatim under one shared operator key, so by the time the gateway
+sees a request the submitting account is gone and every scope, budget and guardrail
+check runs against that key — a line naming a different model would reach it with no
+tenant-level check at all.
+
+**Guardrails scan every shape a prompt arrives in**, not just string chat content:
+the `text` parts of a vision content list, `prompt`, `input`, `query` and rerank
+`documents`. Text the scan does not reach is a locked guardrail silently not
+applying, which is the thing a domain admin was sold.
+
+**The Terraform client POSTs**, never GETs. `uploadAiCertificate` carries an
+unencrypted PEM key, and CloudStack's query-string log scrubber covers
+password/accesskey/secretkey but not `privatekey` — though its JSON scrubber does,
+so CloudStack itself classifies the field as a secret. The signature is computed
+over the canonical query whatever the method, so nothing about authentication
+changes.
+
 **Guardrail profiles are scoped to the caller**, not to a role: a caller writes at
 their own level and no higher (`aisvc/guardrails/authority.py`), so a tenant tightens
 their own account and cannot reach the platform profile. Deployment scope stays root

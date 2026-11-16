@@ -83,7 +83,7 @@ class TestSessionKeys:
 
         from aisvc.playground import is_session_key
 
-        listed = keys.list_for(account="acme")
+        listed = keys.list_for(account="acme", domain="/d")
         assert [k.name for k in listed if not is_session_key(k)] == ["ci"]
 
 

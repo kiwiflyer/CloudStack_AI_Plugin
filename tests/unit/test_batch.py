@@ -47,27 +47,27 @@ LINE = (
 
 class TestParsingTheInputFile:
     def test_a_well_formed_file_parses(self) -> None:
-        assert len(parse_requests(LINE)) == 1
+        assert len(parse_requests(LINE, model="llama")) == 1
 
     def test_every_line_is_one_request(self) -> None:
         lines = [LINE.replace('"custom_id":"a"', f'"custom_id":"r{i}"') for i in range(3)]
 
-        assert len(parse_requests("\n".join(lines))) == 3
+        assert len(parse_requests("\n".join(lines), model="llama")) == 3
 
     def test_blank_lines_are_ignored(self) -> None:
         """Files written by shell loops end with a newline."""
-        assert len(parse_requests(f"{LINE}\n\n")) == 1
+        assert len(parse_requests(f"{LINE}\n\n", model="llama")) == 1
 
     def test_an_empty_file_is_refused(self) -> None:
         with pytest.raises(BatchRejected) as caught:
-            parse_requests("")
+            parse_requests("", model="llama")
 
         assert caught.value.reason == "empty_batch"
 
     def test_malformed_json_names_the_line(self) -> None:
         """A tenant with a 50,000-line file needs the line number."""
         with pytest.raises(BatchRejected) as caught:
-            parse_requests(f"{LINE}\nnot json\n{LINE}")
+            parse_requests(f"{LINE}\nnot json\n{LINE}", model="llama")
 
         assert "line 2" in caught.value.detail
 
@@ -75,13 +75,15 @@ class TestParsingTheInputFile:
         """Results come back unordered; custom_id is how a tenant
         matches a result to its request."""
         with pytest.raises(BatchRejected) as caught:
-            parse_requests('{"method":"POST","url":"/v1/chat/completions","body":{}}')
+            parse_requests(
+                '{"method":"POST","url":"/v1/chat/completions","body":{}}', model="llama"
+            )
 
         assert caught.value.reason == "missing_custom_id"
 
     def test_duplicate_custom_ids_are_refused(self) -> None:
         with pytest.raises(BatchRejected) as caught:
-            parse_requests("\n".join([LINE, LINE]))
+            parse_requests("\n".join([LINE, LINE]), model="llama")
 
         assert caught.value.reason == "duplicate_custom_id"
 
@@ -89,7 +91,7 @@ class TestParsingTheInputFile:
         line = '{"custom_id":"a","method":"POST","url":"/v1/images","body":{}}'
 
         with pytest.raises(BatchRejected) as caught:
-            parse_requests(line)
+            parse_requests(line, model="llama")
 
         assert caught.value.reason == "unsupported_endpoint"
 
@@ -99,7 +101,7 @@ class TestParsingTheInputFile:
             '"body":{"model":"bge","input":"x"}}'
         )
 
-        assert len(parse_requests(line)) == 1
+        assert len(parse_requests(line, model="bge")) == 1
 
 
 class TestTheCompletionWindow:
@@ -260,3 +262,65 @@ class TestStates:
         job = BatchJob(id="b", account="a", domain="/d", model="m", state=BatchState.IN_PROGRESS)
 
         assert not job.terminal
+
+
+class TestEveryLineServesTheDeclaredModel:
+    """A batch declares one model; its lines may not name another.
+
+    The runner posts each line's body verbatim under a single shared
+    operator key, so by the time the gateway sees it the submitting
+    account is gone and every scope, budget and guardrail check runs
+    against that shared key. A line naming a different model therefore
+    reaches it with no tenant-level check at all, while metering is
+    recorded against the model the batch declared.
+    """
+
+    def line(self, **body: object) -> str:
+        import json
+
+        return json.dumps(
+            {
+                "custom_id": "a",
+                "method": "POST",
+                "url": "/v1/chat/completions",
+                "body": body,
+            }
+        )
+
+    def test_a_line_naming_another_model_is_refused(self) -> None:
+        with pytest.raises(BatchRejected) as raised:
+            parse_requests(self.line(model="someone-elses"), model="llama-3-8b")
+
+        assert "someone-elses" in str(raised.value)
+
+    def test_the_refusal_names_the_line(self) -> None:
+        with pytest.raises(BatchRejected) as raised:
+            parse_requests(self.line(model="other"), model="llama-3-8b")
+
+        assert "line 1" in str(raised.value)
+
+    def test_an_adapter_on_the_declared_base_is_still_refused(self) -> None:
+        # `base:adapter` is a different served model, and adapter
+        # ownership is checked against the presented key — which here
+        # is the platform's, not the tenant's.
+        with pytest.raises(BatchRejected):
+            parse_requests(self.line(model="llama-3-8b:their-adapter"), model="llama-3-8b")
+
+    def test_the_declared_model_is_accepted(self) -> None:
+        parsed = parse_requests(self.line(model="llama-3-8b"), model="llama-3-8b")
+
+        assert parsed[0].body["model"] == "llama-3-8b"
+
+    def test_a_line_with_no_model_inherits_the_declared_one(self) -> None:
+        # Filling it in rather than refusing: omitting it is ordinary,
+        # and the declared model is what metering already bills.
+        parsed = parse_requests(self.line(), model="llama-3-8b")
+
+        assert parsed[0].body["model"] == "llama-3-8b"
+
+    def test_the_original_body_is_otherwise_untouched(self) -> None:
+        parsed = parse_requests(
+            self.line(messages=[{"role": "user", "content": "hi"}]), model="llama-3-8b"
+        )
+
+        assert parsed[0].body["messages"] == [{"role": "user", "content": "hi"}]
