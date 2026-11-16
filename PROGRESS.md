@@ -3247,3 +3247,61 @@ without `O_NOFOLLOW`.
 One claim never got a verdict — whether the mTLS keystore and
 truststore passwords sit in a CloudStack config category that
 `listConfigurations` returns in cleartext. Treat it as open.
+
+## Security review — the remaining three, fixed
+
+The two findings that landed below the reporting bar, and the one
+whose verification never finished.
+
+### `custom_domain` is a hostname or it is refused
+
+It was interpolated raw into the proxy's cloud-init: into a `runcmd`
+string entry, which cloud-init runs through a shell, and into the
+nginx `server_name`. A `;` escaped the command, a newline escaped the
+YAML list. The command that sets it is granted to every role.
+
+`valid_hostname` is an allow-list, checked at the API body and again
+in `validate_exposure`. Two doors, two callers: the body guards the
+HTTP route, `validate_exposure` guards anything reaching the store by
+another path. An allow-list rather than escaping, because the set of
+things that are hostnames is small and known while the set of things
+dangerous in a shell *and* in YAML *and* in an nginx config is not.
+
+Twenty-seven cases pin it, including `$(id)`, backticks, pipes, nulls,
+a trailing dot, a 64-character label and a name over the DNS limit.
+
+### The kubeconfig directory is not taken as found
+
+`<tmp>/aisvc-<uid>` is predictable, so a local user creates it and a
+symlink inside it in advance — there is no race to win. `chmod 0700`
+narrows a mode and never changes an owner, so an attacker-owned
+directory stays attacker-readable however it is chmodded.
+
+The directory must now be owned by this user and not writable by
+anyone else, and the file is opened `O_NOFOLLOW`, so a symlink is
+refused rather than followed. The test plants one over a file it then
+checks is intact.
+
+### The key store password was in a cleartext category
+
+This is the claim whose verification agent died mid-run, so it was
+checked by hand. `javap` on `cloud-framework-config-4.23.0.0.jar`
+shows `ConfigurationVO.isEncrypted()` is a literal
+`StringUtils.equalsAny(getCategory(), "Hidden", "Secure")` — so every
+key in the `Advanced` category, including the PKCS12 key store's
+password, is stored and returned by `listConfigurations` in cleartext.
+
+`ai.services.engine.tls.client.key` now sits in `Secure`. The trust
+store's password deliberately does not: a trust store holds public
+certificates, its password protects nothing, and Java's own convention
+is the well-known `changeit`.
+
+1,940 Python tests, 448 Java, Terraform green; ruff, mypy and gofmt
+clean.
+
+### What is left
+
+Nothing from the review is outstanding except `BudgetRecord`'s
+account-only primary key, which needs a migration and a change to a
+published command's identifier — recorded in CLAUDE.md as a decision
+rather than taken.

@@ -35,6 +35,7 @@ to discover afterwards:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -43,10 +44,12 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 __all__ = [
+    "MAX_HOSTNAME",
     "EndpointExposure",
     "ExposureRejected",
     "TlsSource",
     "describe_exposure",
+    "valid_hostname",
     "validate_exposure",
 ]
 
@@ -90,6 +93,35 @@ class EndpointExposure:
     proxy_certificate_serial: int = 0
 
 
+#: One label of a hostname: alphanumeric, inner hyphens allowed, at
+#: most 63 characters.
+_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+_HOSTNAME = re.compile(rf"^{_LABEL}(?:\.{_LABEL})+$")
+
+#: The DNS limit. A longer name cannot resolve, and length is the one
+#: thing a per-label pattern does not bound.
+MAX_HOSTNAME = 253
+
+
+def valid_hostname(name: str) -> bool:
+    """Whether `name` is a hostname and nothing else.
+
+    This is a security boundary, not a formatting nicety. A custom
+    domain is interpolated into the proxy's cloud-init — into a
+    `runcmd` string entry, which cloud-init runs through a shell, and
+    into the nginx `server_name` — so a value carrying `;`, a newline
+    or `$(...)` escapes into one or both. The command that sets it is
+    granted to every role.
+
+    An allow-list rather than an escape: the set of things that are
+    hostnames is small and known, while the set of things that are
+    dangerous in a shell and in YAML and in an nginx config is neither.
+    """
+    if not name or len(name) > MAX_HOSTNAME:
+        return False
+    return _HOSTNAME.match(name.lower()) is not None
+
+
 def validate_exposure(exposure: EndpointExposure, *, owned_networks: Sequence[str]) -> bool:
     """Check an exposure is coherent and permitted, or refuse it."""
     if not exposure.public_enabled and not exposure.network_id:
@@ -109,6 +141,14 @@ def validate_exposure(exposure: EndpointExposure, *, owned_networks: Sequence[st
         )
 
     if exposure.custom_domain:
+        if not valid_hostname(exposure.custom_domain):
+            raise ExposureRejected(
+                "custom_domain_invalid",
+                "custom_domain must be a hostname such as ai.example.com; it is "
+                "rendered into the proxy's configuration, so anything else is "
+                "refused rather than escaped",
+            )
+
         if exposure.tls is TlsSource.NONE:
             raise ExposureRejected(
                 "no_tls_source",

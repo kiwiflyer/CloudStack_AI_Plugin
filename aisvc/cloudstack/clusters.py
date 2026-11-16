@@ -405,28 +405,81 @@ async def fetch_kubeconfig(client: Any, cluster: str) -> str:
 def write_kubeconfig(data: str, *, directory: str) -> str:
     """Write `data` where the Kubernetes client can load it.
 
-    Created private to this user and replaced rather than appended:
-    the file holds cluster-admin credentials, and the engine may run on
-    a host with other accounts on it.
+    The file holds cluster-admin credentials and the path is
+    predictable, so neither the directory nor the file is taken as
+    found. A local user can create `<tmp>/aisvc-<uid>` and a symlink
+    inside it well in advance — there is no race to win — and `chmod
+    0700` narrows a mode without ever changing an owner, so an
+    attacker-owned directory stays attacker-readable however it is
+    chmodded.
+
+    Two checks and one flag close that: the directory must be owned by
+    this user and not writable by anyone else, and the file is opened
+    `O_NOFOLLOW` so a symlink is refused rather than followed.
     """
     import os
+    import stat
 
-    os.makedirs(directory, mode=0o700, exist_ok=True)
-    # An existing directory keeps its old mode, so it is narrowed too:
-    # the file inside holds cluster-admin credentials.
-    os.chmod(directory, 0o700)
-    path = os.path.join(directory, KUBECONFIG_NAME)
-    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        out = os.fdopen(handle, "w")
-    except BaseException:
-        # fdopen did not take ownership of the descriptor, so it is
-        # still ours to close. Once it has, the `with` below owns it
-        # and closing here too would close an unrelated descriptor.
-        os.close(handle)
-        raise
-    with out:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+    except OSError as failure:
+        raise KubeconfigUnavailable(
+            f"could not create {directory} for the kubeconfig: {failure}"
+        ) from failure
+
+    _check_private_directory(directory)
+
+    path = os.path.join(directory, KUBECONFIG_NAME)
+    try:
+        handle = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+            0o600,
+        )
+    except OSError as failure:
+        # ELOOP here is the attack, not a mishap: something that is not
+        # a regular file is sitting on the path we are about to write.
+        raise KubeconfigUnavailable(
+            f"refusing to write the kubeconfig to {path}: {failure}. Remove "
+            f"whatever is at that path, or set AISVC_KUBECONFIG_DIR to a "
+            f"directory only this user can write."
+        ) from failure
+
+    with os.fdopen(handle, "w") as out:
         out.write(data)
     # An existing file keeps its old mode, so it is set either way.
-    os.chmod(path, 0o600)
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
     return path
+
+
+def _check_private_directory(directory: str) -> None:
+    """Refuse a directory this user does not own, or others can write.
+
+    Ownership is the half `chmod` cannot fix: narrowing the mode of a
+    directory somebody else owns leaves them owning it, free to widen
+    it again and to read whatever lands inside.
+    """
+    import os
+    import stat
+
+    try:
+        found = os.lstat(directory)
+    except OSError as failure:
+        raise KubeconfigUnavailable(f"could not read {directory}: {failure}") from failure
+
+    if not stat.S_ISDIR(found.st_mode):
+        raise KubeconfigUnavailable(f"{directory} is not a directory")
+
+    if found.st_uid != os.geteuid():
+        raise KubeconfigUnavailable(
+            f"{directory} is not owned by this user, so a kubeconfig written "
+            f"there would be readable by whoever does own it. Set "
+            f"AISVC_KUBECONFIG_DIR to a directory this user owns."
+        )
+
+    if found.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise KubeconfigUnavailable(
+            f"{directory} is writable by other users, so a kubeconfig written "
+            f"there could be replaced or redirected. Narrow it to 0700, or set "
+            f"AISVC_KUBECONFIG_DIR elsewhere."
+        )

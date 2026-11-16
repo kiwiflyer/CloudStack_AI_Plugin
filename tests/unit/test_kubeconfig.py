@@ -178,3 +178,68 @@ def test_the_exceptions_do_not_catch_each_other() -> None:
     # silently swallow the other.
     assert not issubclass(KubeconfigUnavailable, ClusterUnbuildable)
     assert not issubclass(ClusterUnbuildable, KubeconfigUnavailable)
+
+
+class TestTheDirectoryIsNotTakenAsFound:
+    """The kubeconfig holds cluster-admin credentials.
+
+    The path is predictable — `<tmp>/aisvc-<uid>` — so a local user can
+    create the directory, and a symlink inside it, in advance. There is
+    no race to win. `chmod 0700` narrows the mode but never changes the
+    owner, so an attacker-owned directory stays attacker-readable, and
+    an `os.open` that follows symlinks writes wherever they point.
+    """
+
+    def test_a_symlink_in_place_of_the_file_is_refused(self, tmp_path: Any) -> None:
+        import os
+
+        target = tmp_path / "elsewhere"
+        target.write_text("do not clobber me")
+        directory = tmp_path / "state"
+        directory.mkdir(mode=0o700)
+        os.symlink(target, directory / "kubeconfig")
+
+        with pytest.raises(KubeconfigUnavailable):
+            write_kubeconfig(CONFIG, directory=str(directory))
+
+        assert target.read_text() == "do not clobber me"
+
+    def test_a_directory_owned_by_someone_else_is_refused(
+        self, tmp_path: Any, monkeypatch: Any
+    ) -> None:
+        # Ownership is what `chmod 0700` cannot fix, so it is the thing
+        # worth checking.
+        directory = tmp_path / "state"
+        directory.mkdir(mode=0o700)
+        monkeypatch.setattr("os.geteuid", lambda: 999999)
+
+        with pytest.raises(KubeconfigUnavailable) as raised:
+            write_kubeconfig(CONFIG, directory=str(directory))
+
+        assert "owned" in str(raised.value).lower()
+
+    def test_a_world_writable_directory_is_refused(self, tmp_path: Any) -> None:
+        import os
+
+        directory = tmp_path / "state"
+        directory.mkdir(mode=0o777)
+        os.chmod(directory, 0o777)
+
+        with pytest.raises(KubeconfigUnavailable):
+            write_kubeconfig(CONFIG, directory=str(directory))
+
+    def test_an_ordinary_write_still_works(self, tmp_path: Any) -> None:
+        path = write_kubeconfig(CONFIG, directory=str(tmp_path / "fresh"))
+
+        with open(path) as out:
+            assert "kind: Config" in out.read()
+
+    def test_rewriting_over_a_real_file_still_works(self, tmp_path: Any) -> None:
+        # The second apply of a run rewrites it; only a symlink is a
+        # problem, not a file this code wrote itself.
+        directory = str(tmp_path / "fresh")
+        write_kubeconfig(CONFIG, directory=directory)
+        path = write_kubeconfig("apiVersion: v1\nkind: Config\n", directory=directory)
+
+        with open(path) as out:
+            assert "s3cret" not in out.read()

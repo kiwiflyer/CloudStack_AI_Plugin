@@ -325,6 +325,26 @@ sees a request the submitting account is gone and every scope, budget and guardr
 check runs against that key — a line naming a different model would reach it with no
 tenant-level check at all.
 
+**`custom_domain` is checked against a hostname allow-list** (`valid_hostname`),
+at the API body and again in `validate_exposure` — two different doors. It is
+rendered into the proxy's cloud-init, into a `runcmd` string entry that cloud-init
+runs through a shell and into the nginx `server_name`, so a value carrying `;` or a
+newline escapes both. An allow-list rather than escaping: what is a hostname is
+small and known, what is dangerous in a shell *and* YAML *and* nginx is not.
+
+**The fetched kubeconfig's directory is not taken as found.** The path is
+predictable, so a local user can plant a directory and a symlink in advance — no
+race to win — and `chmod 0700` narrows a mode without changing an owner. So the
+directory must be owned by this user and not writable by others, and the file is
+opened `O_NOFOLLOW`.
+
+**A password belongs in the `Secure` category.** `ConfigurationVO.isEncrypted()` is
+a literal `equalsAny(getCategory(), "Hidden", "Secure")`, verified against the
+bytecode — anything else is stored and returned by `listConfigurations` in
+cleartext. `ai.services.engine.tls.client.key` is the key store's password and sits
+there; the trust store's password stays `Advanced` because a trust store holds
+public certificates and its password protects nothing.
+
 **Guardrails scan every shape a prompt arrives in**, not just string chat content:
 the `text` parts of a vision content list, `prompt`, `input`, `query` and rerank
 `documents`. Text the scan does not reach is a locked guardrail silently not

@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import FastAPI, Query, Response, status
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from aisvc.adapters import (
@@ -69,6 +69,7 @@ from aisvc.endpoints import (
     ExposureRejected,
     TlsSource,
     describe_exposure,
+    valid_hostname,
     validate_exposure,
 )
 from aisvc.evaluation import (
@@ -240,6 +241,20 @@ class PrivateEndpointBody(BaseModel):
     custom_domain: str = ""
     tls: Literal["none", "acme", "uploaded"] = "none"
     certificate_id: str = ""
+
+    @field_validator("custom_domain")
+    @classmethod
+    def _is_a_hostname(cls, value: str) -> str:
+        """Refused here as well as in `validate_exposure`.
+
+        The two guard different doors: this one the HTTP route, that
+        one anything reaching the store by another path. The value is
+        rendered into the proxy's cloud-init, where a shell and a YAML
+        parser both read it.
+        """
+        if value and not valid_hostname(value):
+            raise ValueError("custom_domain must be a hostname such as ai.example.com")
+        return value
 
 
 def _max_lora_rank(services: Services, base_model: str) -> int:

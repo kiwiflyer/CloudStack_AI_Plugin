@@ -31,6 +31,18 @@ public final class AiServicesConfig {
 
     private static final String CATEGORY = "Advanced";
 
+    /**
+     * The category CloudStack encrypts.
+     *
+     * <p>{@code ConfigurationVO.isEncrypted()} is a literal
+     * {@code StringUtils.equalsAny(getCategory(), "Hidden", "Secure")},
+     * so a password declared anywhere else is stored in the database —
+     * and returned by {@code listConfigurations} — in cleartext.
+     * "Secure" rather than "Hidden" because an operator still has to
+     * find the setting to fill it in.
+     */
+    private static final String SECRET_CATEGORY = "Secure";
+
     public static final ConfigKey<Boolean> Enabled = new ConfigKey<>(
             CATEGORY, Boolean.class, "ai.services.enabled", "false",
             "Whether AI Services is enabled in this zone.", true, ConfigKey.Scope.Zone);
@@ -57,7 +69,7 @@ public final class AiServicesConfig {
             true, ConfigKey.Scope.Global);
 
     public static final ConfigKey<String> EngineClientKey = new ConfigKey<>(
-            CATEGORY, String.class, "ai.services.engine.tls.client.key", "",
+            SECRET_CATEGORY, String.class, "ai.services.engine.tls.client.key", "",
             "Password for that key store. Not a path — the description said one "
                     + "for a while, and the code has always read it as a password.",
             true, ConfigKey.Scope.Global);

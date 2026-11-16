@@ -122,4 +122,30 @@ class AiServicesConfigTest {
                     key.key() + " needs a usable description");
         }
     }
+
+    /**
+     * A password must sit in a category CloudStack encrypts.
+     *
+     * <p>{@code ConfigurationVO.isEncrypted()} returns true only for the
+     * categories "Hidden" and "Secure" — verified against the bytecode
+     * of cloud-framework-config, where it is a literal
+     * {@code StringUtils.equalsAny(getCategory(), "Hidden", "Secure")}.
+     * Anything else is stored in the database, and returned by
+     * {@code listConfigurations}, in cleartext.
+     *
+     * <p>The trust store's password is deliberately not here: a trust
+     * store holds public certificates, so its password protects
+     * nothing and Java's own convention is the well-known "changeit".
+     */
+    @Test
+    void theKeyStorePasswordSitsInAnEncryptedCategory() {
+        assertEquals("Secure", AiServicesConfig.EngineClientKey.category());
+    }
+
+    @Test
+    void theOtherKeysStayWhereAnOperatorLooksForThem() {
+        assertEquals("Advanced", AiServicesConfig.EngineClientCert.category());
+        assertEquals("Advanced", AiServicesConfig.EngineTrustStore.category());
+        assertEquals("Advanced", AiServicesConfig.EngineUrls.category());
+    }
 }
