@@ -17,6 +17,7 @@ package org.apache.cloudstack.ai.api.command;
 import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiDeploymentResponse;
 import org.apache.cloudstack.ai.engine.EngineJob;
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.ApiConstants;
 import org.apache.cloudstack.api.Parameter;
@@ -29,7 +30,11 @@ import com.google.gson.JsonObject;
         description = "Deploys an AI model, returning a job to poll.",
         responseObject = AiDeploymentResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false)
+        responseHasSensitiveInfo = false,
+        // Hand-written, so this list is not generated: the drift
+        // test in tests/unit/test_commands.py holds it to
+        // aisvc/api/commands.py like every other command's.
+        authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class DeployAiModelCmd extends AiServicesAsyncCmd {
 
     public static final String APINAME = "deployAiModel";

@@ -17,6 +17,7 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.command;
 
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.ai.api.response.AiEndpointResponse;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
@@ -28,7 +29,8 @@ import com.google.gson.JsonObject;
         description = "Lists the endpoints the caller may use.",
         responseObject = AiEndpointResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false)
+        responseHasSensitiveInfo = false,
+        authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class ListAiEndpointsCmd extends AiServicesListCmd<AiEndpointResponse> {
 
     public static final String APINAME = "listAiEndpoints";

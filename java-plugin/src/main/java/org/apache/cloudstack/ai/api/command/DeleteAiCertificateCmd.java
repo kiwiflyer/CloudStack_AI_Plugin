@@ -17,6 +17,7 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.command;
 
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
 import org.apache.cloudstack.api.response.SuccessResponse;
@@ -28,7 +29,8 @@ import com.google.gson.JsonObject;
         description = "Deletes a certificate.",
         responseObject = SuccessResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false)
+        responseHasSensitiveInfo = false,
+        authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class DeleteAiCertificateCmd extends AiServicesSyncCmd {
 
     public static final String APINAME = "deleteAiCertificate";

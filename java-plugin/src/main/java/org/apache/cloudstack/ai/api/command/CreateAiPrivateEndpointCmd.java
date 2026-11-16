@@ -19,6 +19,7 @@ package org.apache.cloudstack.ai.api.command;
 
 import com.cloud.exception.InvalidParameterValueException;
 import com.cloud.network.Network;
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiPrivateEndpointResponse;
 import org.apache.cloudstack.ai.engine.EngineJob;
@@ -33,7 +34,8 @@ import com.google.gson.JsonObject;
         description = "Attaches an endpoint to a tenant network.",
         responseObject = AiPrivateEndpointResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false)
+        responseHasSensitiveInfo = false,
+        authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class CreateAiPrivateEndpointCmd extends AiServicesAsyncCmd {
 
     public static final String APINAME = "createAiPrivateEndpoint";

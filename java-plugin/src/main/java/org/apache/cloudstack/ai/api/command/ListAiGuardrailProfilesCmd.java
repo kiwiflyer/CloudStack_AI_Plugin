@@ -17,6 +17,7 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.command;
 
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.ai.api.response.AiGuardrailProfileResponse;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
@@ -28,7 +29,8 @@ import com.google.gson.JsonObject;
         description = "Lists guardrail profiles.",
         responseObject = AiGuardrailProfileResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false)
+        responseHasSensitiveInfo = false,
+        authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class ListAiGuardrailProfilesCmd extends AiServicesListCmd<AiGuardrailProfileResponse> {
 
     public static final String APINAME = "listAiGuardrailProfiles";

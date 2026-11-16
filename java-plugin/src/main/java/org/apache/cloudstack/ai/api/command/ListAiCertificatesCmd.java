@@ -17,6 +17,7 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.command;
 
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.ai.api.response.AiCertificateResponse;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
@@ -28,7 +29,8 @@ import com.google.gson.JsonObject;
         description = "Lists uploaded certificates.",
         responseObject = AiCertificateResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false)
+        responseHasSensitiveInfo = false,
+        authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class ListAiCertificatesCmd extends AiServicesListCmd<AiCertificateResponse> {
 
     public static final String APINAME = "listAiCertificates";

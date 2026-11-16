@@ -17,6 +17,7 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.command;
 
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiProfileResponse;
 import org.apache.cloudstack.ai.engine.EngineJob;
@@ -30,7 +31,8 @@ import com.google.gson.JsonObject;
         description = "Updates a serving profile, rolling it out.",
         responseObject = AiProfileResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false)
+        responseHasSensitiveInfo = false,
+        authorized = {RoleType.Admin})
 public class UpdateAiServingProfileCmd extends AiServicesAsyncCmd {
 
     public static final String APINAME = "updateAiServingProfile";

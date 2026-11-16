@@ -16,6 +16,7 @@ package org.apache.cloudstack.ai.api.command;
 
 import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.engine.EngineJob;
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.ApiConstants;
 import org.apache.cloudstack.api.Parameter;
@@ -26,7 +27,11 @@ import org.apache.cloudstack.api.response.SuccessResponse;
         description = "Deletes an AI model deployment.",
         responseObject = SuccessResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false)
+        responseHasSensitiveInfo = false,
+        // Hand-written, so this list is not generated: the drift
+        // test in tests/unit/test_commands.py holds it to
+        // aisvc/api/commands.py like every other command's.
+        authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class DeleteAiModelDeploymentCmd extends AiServicesAsyncCmd {
 
     public static final String APINAME = "deleteAiModelDeployment";

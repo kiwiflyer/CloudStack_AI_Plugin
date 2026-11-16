@@ -17,6 +17,7 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.command;
 
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiProfileResponse;
 import org.apache.cloudstack.ai.engine.EngineJob;
@@ -30,7 +31,8 @@ import com.google.gson.JsonObject;
         description = "Assigns a tuning profile at a scope.",
         responseObject = AiProfileResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false)
+        responseHasSensitiveInfo = false,
+        authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class AssignAiTuningProfileCmd extends AiServicesAsyncCmd {
 
     public static final String APINAME = "assignAiTuningProfile";

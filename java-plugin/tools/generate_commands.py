@@ -17,10 +17,16 @@ Generated files carry a header saying so. Edit this script, not them.
 
 from __future__ import annotations
 
-import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+
+# Who may call each command comes from the engine's map rather than a
+# fourth copy of it. Both modules are pure standard library, so this
+# costs the generator nothing and cannot drift.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from aisvc.api.commands import COMMANDS as ENGINE_COMMANDS
 
 ROOT = Path(__file__).resolve().parent.parent
 PKG = ROOT / "src/main/java/org/apache/cloudstack/ai/api"
@@ -1015,6 +1021,7 @@ def render_body(command: Command) -> str:
 def render_command(command: Command) -> str:
     cls = class_name(command.name)
     imports = [
+        "org.apache.cloudstack.acl.RoleType",
         "org.apache.cloudstack.api.APICommand",
         "org.apache.cloudstack.api.Parameter",
     ]
@@ -1123,12 +1130,39 @@ def render_command(command: Command) -> str:
         description = "{command.doc}",
         responseObject = {response_type}.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = {str(command.name == "createAiApiKey").lower()})
+        responseHasSensitiveInfo = {str(command.name == "createAiApiKey").lower()},
+        authorized = {{{authorized_roles(command.name)}}})
 public class {cls} extends {extends} {{
 
 {chr(10).join(s + chr(10) for s in sections).rstrip()}
 }}
 """
+
+
+def authorized_roles(name: str) -> str:
+    """The RoleTypes that may call this command, for `@APICommand`.
+
+    CloudStack's `DynamicRoleBasedAPIAccessChecker.start()` reads this
+    annotation off every `PluggableService`'s commands and consults it
+    whenever no explicit `role_permissions` rule matches the caller's
+    role. Without it a plugin's commands reach root admin alone, which
+    is how a live management server denied a tenant all thirty-eight.
+
+    An explicit rule still wins either way: the checker returns on the
+    first matching rule, so the restricted default roles — which end
+    in `*  DENY` — never reach this fallback, and an operator can deny
+    or grant any of these by hand.
+
+    `ResourceAdmin` is deliberately never emitted. The engine models
+    three roles, and inventing a grant for a fourth is worse than
+    leaving it to an operator who wants one.
+    """
+    command = next((c for c in ENGINE_COMMANDS if c.name == name), None)
+    if command is None:
+        raise SystemExit(f"{name} is not in aisvc/api/commands.py")
+    order = ["Admin", "DomainAdmin", "User"]
+    names = sorted({role.value for role in command.roles}, key=order.index)
+    return ", ".join(f"RoleType.{n}" for n in names)
 
 
 def _subject(command: Command) -> str:

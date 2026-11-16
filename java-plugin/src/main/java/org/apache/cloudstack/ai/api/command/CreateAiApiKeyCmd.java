@@ -17,6 +17,7 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.command;
 
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.ai.api.response.AiApiKeyResponse;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
@@ -28,7 +29,8 @@ import com.google.gson.JsonObject;
         description = "Creates a scoped API key. The secret is shown once.",
         responseObject = AiApiKeyResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = true)
+        responseHasSensitiveInfo = true,
+        authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class CreateAiApiKeyCmd extends AiServicesSyncCmd {
 
     public static final String APINAME = "createAiApiKey";

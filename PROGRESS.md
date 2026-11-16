@@ -4002,3 +4002,131 @@ effect without a management-server restart. And `isEnabledInZone` has
 no callers, so `ai.services.enabled` gates nothing at all.
 
 1,998 unit tests and 455 JUnit tests pass.
+
+## The permissions gap, answered by the platform
+
+The last entry recorded that a tenant was refused all thirty-eight AI
+commands, and the milestone 9 entry had already called seeding
+CloudStack 4.23 dynamic roles an open question rather than an
+oversight to patch quietly. It turns out the platform answers it.
+
+`DynamicRoleBasedAPIAccessChecker.start()`, read from the management
+server's own source:
+
+```java
+for (PluggableService service : services) {
+    for (Class<?> clz : service.getCommands()) {
+        APICommand command = clz.getAnnotation(APICommand.class);
+        for (RoleType role : command.authorized()) {
+            addApiToRoleBasedAnnotationsMap(role, command.name());
+        }
+    }
+}
+```
+
+and in `checkApiPermissionByRole`, after no explicit rule has matched:
+
+```java
+return annotationRoleBasedApisMap.get(role.getRoleType()) != null &&
+       annotationRoleBasedApisMap.get(role.getRoleType()).contains(apiName) &&
+       !keyPairOverride;
+```
+
+So a plugin declares its default role access on `@APICommand`, and
+CloudStack consults it whenever `role_permissions` has nothing to say.
+No migration, no `commands.properties`, no operator step, nothing
+written into a table this project does not own. None of our commands
+set it, which is the whole of the bug: a plugin that does not is
+reachable by root admin alone, and only because the checker
+short-circuits for role id 1.
+
+### Why this is safe, checked rather than assumed
+
+An annotation grants by role *type*, not by role, so the obvious worry
+is "Read-Only Admin" — type `Admin` — picking up `deployAiModel`. It
+does not, and the reason is in the data. Asked for the last rule of
+every default role on the live server:
+
+```
+Root Admin                       *   ALLOW
+Resource Admin                   (no catch-all)
+Domain Admin                     (no catch-all)
+User                             (no catch-all)
+Read-Only Admin - Default        *   DENY
+Read-Only User - Default         *   DENY
+Support Admin - Default          *   DENY
+Support User - Default           *   DENY
+Project Kubernetes Service Role  *   DENY
+```
+
+The checker returns on the first matching rule, so every restricted
+role's `*  DENY` matches and the annotation fallback is never reached.
+Only the three roles that end without a catch-all fall through to it —
+which are the three the annotation is meant for. An operator can still
+deny any of these by hand, and that denial wins.
+
+`ResourceAdmin` is deliberately never emitted. The engine models three
+roles; inventing a grant for a fourth is worse than leaving it to an
+operator who wants one.
+
+### Generated from the one source
+
+`aisvc/api/commands.py` already records who may call each command, and
+both it and `aisvc/api/context.py` are pure standard library, so the
+generator imports the map rather than keeping a fourth copy of it. Our
+`Role` values — `Admin`, `DomainAdmin`, `User` — are CloudStack's own
+`RoleType` names, so the mapping is one for one.
+
+Of the thirty-eight v1 commands: 23 to all three roles, 14 to admin
+alone, 1 to admin and domain admin.
+
+Five tests first, four failing. They check that every generated class
+carries an `authorized` list, that it matches the engine's map
+name for name, that the two commands a tenant most obviously needs name
+`RoleType.User`, and that an admin-only one does not. Two commands are
+hand-written rather than generated and carry the annotation by hand;
+the same test holds them to the map.
+
+### What the live server says now
+
+Same tenant that was refused everything:
+
+```
+listAiModels      200     listAiGpuCapacity     432 denied
+listAiEndpoints   200     listAiReconcilerRuns  432 denied
+listAiApiKeys     200     listAiSetupChecks     432 denied
+listAiUsage       200     drainAiNode           432 denied
+```
+
+Both halves: granted where the map grants, still refused where it does
+not. That is the "allowed and denied per default role" pair SPEC
+section 12 asks of every command, run against a real management server
+for the first time.
+
+### And the filtering underneath it
+
+The tenant's `listAiModels` returned **zero** models where root admin
+saw two, which looked wrong until the spec was read: both models are
+`visibility.domains: [/Customers]`, and that account is in `/ROOT`. An
+account was created in `/Customers/Acme` to complete the picture:
+
+```
+root admin            (ROOT)              2 models
+aisvc-tenant          (/ROOT)             0 models
+acme                  (/Customers/Acme)   2 models
+```
+
+One command, three identities, three answers — filtered by the engine
+on the domain the plugin asserted from `CallContext`. The rule that
+every response is filtered by `CallerContext.may_see` had until now
+only ever run against fakes.
+
+### Noticed, not fixed
+
+`make check` lints `aisvc tests install.py`, so
+`java-plugin/tools/generate_commands.py` is not linted and had
+accumulated two dead imports, removed here. Adding it to the targets
+would also reformat about 1,500 lines, which does not belong in a
+permissions change.
+
+2,003 unit tests and 455 JUnit tests pass.

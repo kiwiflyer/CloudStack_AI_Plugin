@@ -17,6 +17,7 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.command;
 
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiGuardrailProfileResponse;
 import org.apache.cloudstack.api.APICommand;
@@ -29,7 +30,8 @@ import com.google.gson.JsonObject;
         description = "Updates a guardrail profile.",
         responseObject = AiGuardrailProfileResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false)
+        responseHasSensitiveInfo = false,
+        authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class UpdateAiGuardrailProfileCmd extends AiServicesSyncCmd {
 
     public static final String APINAME = "updateAiGuardrailProfile";

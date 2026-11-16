@@ -108,10 +108,11 @@ capacity planner and its warnings on that observed data, `listKubernetesClusters
 migrations on Postgres. **And now the Java plugin itself** — built, installed,
 loaded into the running management server, and talking to the engine over
 mTLS: `listAiModels`, `listAiEndpoints` and `listAiSetupChecks` all answer
-200 through a signed CloudStack API call. **But only for root admin** — a
-test tenant is refused every AI command, because `cloud.role_permissions`
-holds no rule naming one and Root Admin works only through its trailing
-`*  ALLOW`. All thirty-eight v1 commands register
+200 through a signed CloudStack API call. **And for tenants** — the
+same `listAiModels` returns two models to root admin, two to an account in
+`/Customers/Acme`, and none to one in `/ROOT`, because the spec publishes to
+`/Customers` and the engine filters on the domain the plugin asserts from
+`CallContext`. That invariant had never run outside a unit test. All thirty-eight v1 commands register
 (`listApis` goes from 865 to 903, exactly the thirty-eight) while the nineteen v2
 commands stay away, so the `ai.services.v2.enabled` gate holds on a real server;
 `AiServicesSchema` creates `ai_deployment` at startup; all ten `ai.services.*`
@@ -507,6 +508,23 @@ because a proxy may have answered. **Still open:** `getEngineClient()` caches th
 client in a field, so every `ai.services.engine.*` key is declared dynamic
 (`true`) and none of them takes effect without a management-server restart; and
 `isEnabledInZone` has no callers, so `ai.services.enabled` gates nothing.
+
+**Default role access is `@APICommand(authorized = ...)`, not a schema seed.**
+`DynamicRoleBasedAPIAccessChecker.start()` walks every `PluggableService`'s
+commands, reads that attribute, and consults the resulting map whenever no
+explicit `role_permissions` rule matches the caller's role — so a plugin
+declares its defaults on the annotation and needs no migration, no
+`commands.properties` and no operator step. Without it, a plugin's commands
+reach root admin alone, which is exactly what a live 4.23.0.0 did: a tenant was
+refused all thirty-eight, and root admin worked only because the checker
+short-circuits for role id 1. The generator emits the list from
+`aisvc/api/commands.py`, so it cannot drift from what the engine enforces; the
+two hand-written commands carry it by hand and the same test holds them to it.
+**An explicit rule still wins** — the checker returns on the first matching
+rule, which is why the restricted default roles are unaffected: Read-Only and
+Support, admin and user alike, all end in `*  DENY` and never reach the
+fallback. **`ResourceAdmin` is never emitted**: the engine models three roles,
+and inventing a grant for a fourth is worse than leaving it to an operator.
 
 **In the Java plugin:** build the caller context from `CallContext`, never from request
 parameters — the engine filters every response by what the plugin asserts. Never weaken the

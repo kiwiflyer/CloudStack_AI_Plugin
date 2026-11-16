@@ -17,6 +17,7 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.command;
 
+import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiPrivateEndpointResponse;
 import org.apache.cloudstack.ai.engine.EngineJob;
@@ -28,7 +29,8 @@ import org.apache.cloudstack.api.Parameter;
         description = "Removes a private endpoint.",
         responseObject = AiPrivateEndpointResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false)
+        responseHasSensitiveInfo = false,
+        authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class DeleteAiPrivateEndpointCmd extends AiServicesAsyncCmd {
 
     public static final String APINAME = "deleteAiPrivateEndpoint";

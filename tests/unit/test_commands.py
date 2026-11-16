@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -613,3 +614,83 @@ class TestTheGrantMatchesTheEngine:
                 f"{name} is admin-only again; tenants are meant to be able to "
                 "tighten their own account"
             )
+
+
+class TestEveryCommandDeclaresWhoMayCallIt:
+    """A tenant was denied every AI command on a real management server.
+
+    Found end to end: a test account in a live 4.23.0.0 got
+
+        The API [listAiModels] does not exist or is not available
+        for the account aisvc-tenant.
+
+    for all thirty-eight, `listAiModels` and `listAiEndpoints`
+    included, which this map grants to every role. Root admin worked
+    only because `DynamicRoleBasedAPIAccessChecker` short-circuits for
+    role id 1.
+
+    The platform's answer, read from that checker's `start()`: it
+    walks every `PluggableService`'s commands, reads
+    `@APICommand.authorized()`, and consults that map whenever no
+    explicit `role_permissions` rule matches. So a plugin declares its
+    default role access on the annotation — no schema seeding, no
+    operator step, and an explicit DENY still wins because a matching
+    rule returns before the fallback is reached.
+
+    Our `Role` values are CloudStack's own `RoleType` names, so the
+    mapping is one for one. `ResourceAdmin` is deliberately not
+    granted anything: the engine does not model it, and inventing a
+    grant is worse than leaving it to an operator who wants one.
+    """
+
+    def generated(self) -> dict[str, str]:
+        """Each generated command class, by API name."""
+        root = Path(__file__).resolve().parents[2] / "java-plugin" / "src" / "main"
+        out = {}
+        for path in (root / "java/org/apache/cloudstack/ai/api/command").rglob("*Cmd.java"):
+            text = path.read_text(encoding="utf-8")
+            match = re.search(r'APINAME\s*=\s*"([A-Za-z]+)"', text)
+            if match:
+                out[match.group(1)] = text
+        return out
+
+    def test_the_generated_classes_were_found(self) -> None:
+        assert len(self.generated()) >= 38
+
+    def test_every_command_carries_an_authorized_list(self) -> None:
+        missing = [name for name, text in self.generated().items() if "authorized" not in text]
+
+        assert not missing, (
+            f"{len(missing)} command(s) declare no authorized roles, so every "
+            f"role but root admin is denied them: {sorted(missing)[:5]}"
+        )
+
+    def test_the_annotation_matches_the_command_map(self) -> None:
+        from aisvc.api.commands import COMMANDS
+
+        by_name = {c.name: c for c in COMMANDS}
+        wrong = []
+        for name, text in self.generated().items():
+            command = by_name.get(name)
+            if command is None:
+                continue
+            found = re.search(r"authorized\s*=\s*\{([^}]*)\}", text)
+            declared = set(re.findall(r"RoleType\.(\w+)", found.group(1))) if found else set()
+            expected = {role.value for role in command.roles}
+            if declared != expected:
+                wrong.append(f"{name}: annotation {sorted(declared)} vs map {sorted(expected)}")
+
+        assert not wrong, "\n".join(wrong)
+
+    def test_a_tenant_facing_command_actually_names_the_user_role(self) -> None:
+        # The specific failure that started this: the two commands a
+        # tenant most obviously needs.
+        for name in ("listAiModels", "listAiEndpoints"):
+            text = self.generated()[name]
+            assert "RoleType.User" in text, f"{name} would still deny every tenant"
+
+    def test_an_admin_only_command_does_not_name_the_user_role(self) -> None:
+        text = self.generated()["listAiGpuCapacity"]
+
+        assert "RoleType.User" not in text
+        assert "RoleType.Admin" in text
