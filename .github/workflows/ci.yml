@@ -77,7 +77,7 @@ jobs:
             https://github.com/apache/cloudstack.git /tmp/cloudstack
           cd /tmp/cloudstack
           mvn -q install -DskipTests -Dcheckstyle.skip -Dlicense.skip -Drat.skip \
-            -pl api,utils,framework/config,framework/db -am
+            -pl api,utils,framework/config,framework/db,framework/events,engine/schema -am
 
       - run: mvn -q test
         working-directory: java-plugin
@@ -110,7 +110,7 @@ jobs:
             https://github.com/apache/cloudstack.git /tmp/cloudstack-lts
           cd /tmp/cloudstack-lts
           mvn -q install -DskipTests -Dcheckstyle.skip -Dlicense.skip -Drat.skip \
-            -pl api,utils,framework/config,framework/db,engine/schema -am
+            -pl api,utils,framework/config,framework/db,framework/events,engine/schema -am
 
       - run: mvn -q -Dcs.version=4.22.1.1 test
         working-directory: java-plugin

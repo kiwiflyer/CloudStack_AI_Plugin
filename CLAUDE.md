@@ -113,7 +113,12 @@ examples/platform.yaml
 ## Commands
 
 **Building `java-plugin/` needs setup.** CloudStack publishes no Maven artifacts, so its
-modules must be built from source into `~/.m2` first — `java-plugin/README.md` has the two
+modules must be built from source into `~/.m2` first — all six the pom names:
+`api,utils,framework/config,framework/db,framework/events,engine/schema`. That list
+is repeated in both CI jobs and two documents and derived from nothing, so
+`tests/unit/test_java_build.py` compares every one of them against the pom. Two
+modules were missing from all four for three milestones, and local builds kept
+passing because an earlier, wider build had already put the jars in `~/.m2` — `java-plugin/README.md` has the two
 commands. JDK 17 (`JAVA_HOME=/opt/homebrew/opt/openjdk@17`, keg-only), targeting JDK 11
 bytecode. `make test-java` fails with a clear message if the artifacts are absent.
 

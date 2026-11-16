@@ -3351,3 +3351,40 @@ reverses.
 
 1,947 Python tests, 448 Java, Terraform green; ruff, mypy and gofmt
 clean. Nothing from the security review is outstanding.
+
+## CI could not resolve two dependencies
+
+`mvn test` failed in CI on `cloud-framework-events` and
+`cloud-engine-schema`, which Maven Central does not carry because
+CloudStack publishes no artifacts at all. Both must be built from
+source into `~/.m2` first, and the list that does so named only four
+of the six modules the pom depends on.
+
+Both arrived in milestone 8 with the maintenance listener and the
+ownership DAO. The build command was never updated, and nobody
+noticed for three milestones because `-am` had already put the jars
+into every local `~/.m2` as transitive dependencies of an earlier,
+wider build. The failure was invisible to anyone who had ever built
+more than the minimum.
+
+The two CI jobs had also drifted apart: `engine/schema` had been added
+to the LTS job and not to the other, so they were testing different
+things.
+
+### Reproduced before it was fixed
+
+`cloud-framework-events-4.22.1.1` was missing locally, so running
+`mvn -o -Dcs.version=4.22.1.1 test` reproduced the LTS half of the CI
+failure exactly. After building that one module, both configurations
+pass — 448 tests on 4.23.0.0 and on 4.22.1.1.
+
+### A guard, because the list is copied four times
+
+`tests/unit/test_java_build.py` parses the pom's CloudStack
+dependencies, maps each to its source module by CloudStack's own
+naming, and asserts every `-pl` list in the repository covers all of
+them — in both CI jobs, `java-plugin/README.md` and
+`docs/installation.md`. It also asserts the two CI jobs build the same
+set, since that is the other way this rotted.
+
+It fails on the state that caused the outage and passes on the fix.

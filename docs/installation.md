@@ -275,7 +275,7 @@ git clone --depth 1 --branch 4.23.0.0 --single-branch https://github.com/apache/
 ```
 
 ```bash
-cd cloudstack && mvn install -DskipTests -Dcheckstyle.skip -Dlicense.skip -Drat.skip -pl api,utils,framework/config,framework/db -am
+cd cloudstack && mvn install -DskipTests -Dcheckstyle.skip -Dlicense.skip -Drat.skip -pl api,utils,framework/config,framework/db,framework/events,engine/schema -am
 ```
 
 JDK 17 is needed to build. On macOS `openjdk@17` is keg-only:
