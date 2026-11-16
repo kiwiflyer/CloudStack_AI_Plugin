@@ -141,6 +141,68 @@ class AiServicesSyncCmdTest {
     }
 
     @Test
+    void theEnginesOwnExplanationReachesTheOperator() throws Exception {
+        // Found by the first end-to-end round trip. listAiGpuCapacity
+        // reported "the AI Services engine returned 503 for
+        // /v1/capacity" while the engine had said, in the body,
+        // "capacity has not been observed yet" — which is the
+        // sentence that tells an operator to run a reconcile.
+        //
+        // The engine answers in RFC 9457 problem JSON precisely so
+        // its callers can say why. The plugin is its only caller.
+        TestListCmd command = wire(
+                new TestListCmd(),
+                new EngineResponse(503, "{\"title\":\"unavailable\","
+                        + "\"detail\":\"capacity has not been observed yet\"}"));
+
+        ServerApiException failure =
+                assertThrows(ServerApiException.class, command::execute);
+
+        assertTrue(failure.getDescription().contains("capacity has not been observed yet"),
+                "lost the engine's detail: " + failure.getDescription());
+    }
+
+    @Test
+    void theStatusAndPathSurviveAlongsideTheDetail() throws Exception {
+        // The detail is added to what was already there, not swapped
+        // for it: the status is what an operator greps for.
+        TestListCmd command = wire(
+                new TestListCmd(),
+                new EngineResponse(503, "{\"detail\":\"capacity has not been observed yet\"}"));
+
+        ServerApiException failure =
+                assertThrows(ServerApiException.class, command::execute);
+
+        assertTrue(failure.getDescription().contains("503"), failure.getDescription());
+    }
+
+    @Test
+    void aProblemWithNoDetailFallsBackToTheTitle() throws Exception {
+        TestListCmd command =
+                wire(new TestListCmd(), new EngineResponse(500, "{\"title\":\"internal error\"}"));
+
+        ServerApiException failure =
+                assertThrows(ServerApiException.class, command::execute);
+
+        assertTrue(failure.getDescription().contains("internal error"), failure.getDescription());
+    }
+
+    @Test
+    void anUnparseableErrorBodyStillReportsTheStatus() throws Exception {
+        // A body that is not problem JSON must not turn a clean
+        // failure into a parse failure: the status is still the
+        // useful thing, and this path is reached when something
+        // other than the engine answers — a proxy, a load balancer.
+        TestListCmd command =
+                wire(new TestListCmd(), new EngineResponse(502, "<html>Bad Gateway</html>"));
+
+        ServerApiException failure =
+                assertThrows(ServerApiException.class, command::execute);
+
+        assertTrue(failure.getDescription().contains("502"), failure.getDescription());
+    }
+
+    @Test
     void anUnreadableBodyIsReportedClearly() throws Exception {
         TestListCmd command =
                 wire(new TestListCmd(), new EngineResponse(200, "<html>nope</html>"));

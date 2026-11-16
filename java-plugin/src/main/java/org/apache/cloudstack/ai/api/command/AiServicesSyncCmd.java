@@ -67,7 +67,7 @@ public abstract class AiServicesSyncCmd extends BaseCmd {
                         AiServicesAsyncCmd.errorCodeFor(
                                 new EngineException("", answer.getStatusCode(), null)),
                         "the AI Services engine returned " + answer.getStatusCode()
-                                + " for " + enginePath());
+                                + " for " + enginePath() + explain(answer.getBody()));
             }
             return parse(answer.getBody());
         } catch (EngineException failure) {
@@ -90,6 +90,43 @@ public abstract class AiServicesSyncCmd extends BaseCmd {
             default:
                 return aiServices.getEngineClient().get(path, aiServices.currentCaller());
         }
+    }
+
+    /**
+     * The engine's own account of a failure, where it gave one.
+     *
+     * <p>The engine answers in RFC 9457 problem JSON so that its
+     * caller can say why something failed, and this plugin is its
+     * only caller. Without this the status was all an operator saw:
+     * the first end-to-end round trip reported "the AI Services
+     * engine returned 503 for /v1/capacity" while the engine had
+     * said "capacity has not been observed yet" — the sentence that
+     * names the remedy.
+     *
+     * <p>Appended to the status rather than replacing it, because the
+     * status is what gets grepped for. A body that is not problem
+     * JSON yields nothing: something other than the engine — a proxy,
+     * a load balancer — may have answered, and a parse failure must
+     * not displace the real one.
+     */
+    private static String explain(String body) {
+        if (body == null || body.trim().isEmpty()) {
+            return "";
+        }
+        try {
+            JsonObject problem = JsonParser.parseString(body).getAsJsonObject();
+            for (String field : new String[] {"detail", "title"}) {
+                if (problem.has(field) && problem.get(field).isJsonPrimitive()) {
+                    String said = problem.get(field).getAsString().trim();
+                    if (!said.isEmpty()) {
+                        return ": " + said;
+                    }
+                }
+            }
+        } catch (RuntimeException notProblemJson) {
+            return "";
+        }
+        return "";
     }
 
     static JsonObject parse(String body) {

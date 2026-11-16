@@ -3887,3 +3887,118 @@ one of the four. Its cardinality is unchanged, so the counts the other
 tests assert still hold.
 
 1,998 unit tests pass.
+
+## The plugin talking to the engine, over mTLS, for the first time
+
+The plugin loaded last entry and refused to call anything, correctly,
+for want of mTLS material. This entry gives it some.
+
+`install.py --make-certs` built a CA, an engine certificate with
+`subjectAltName=DNS:host.docker.internal` and a plugin client
+certificate; the engine ran with `AISVC_TLS_*` bound to `0.0.0.0:8443`,
+and the key store and trust store went into the management server's
+filesystem with the five `ai.services.engine.*` settings pointed at
+them.
+
+From inside the CloudStack container, before involving the plugin at
+all: `GET /v1/health` with the client certificate returned **200**, and
+the same call without one **failed to connect** — the handshake
+refused, not a 401. Both halves of the engine's "mTLS or nothing" rule,
+from the machine that has to satisfy it.
+
+Then through CloudStack, as root admin, signed:
+
+```
+listAiModels            200  count=2   (the two models in the spec)
+listAiEndpoints         200  count=2
+listAiSetupChecks       200  count=8   (one failing honestly: no S3 credentials)
+listAiModelDeployments  200  {}        (none exist)
+```
+
+That is a tenant-facing API call travelling signature verification,
+command dispatch, RBAC, the manager, the engine client, a mutually
+authenticated TLS handshake, the engine's caller-context filter, and
+back as CloudStack response objects. None of that had run before.
+
+`listAiModelDeployments` returning a bare `{}` looked wrong until the
+same server was asked what its own empty lists look like:
+`listKubernetesClusters`, `listSnapshots` and `listAutoScaleVmGroups`
+all return `{}` too. The plugin matches the platform. Checked rather
+than "fixed" into an inconsistency.
+
+### The engine explained itself and the plugin threw it away
+
+`listAiGpuCapacity` came back:
+
+```
+the AI Services engine returned 503 for /v1/capacity
+```
+
+The engine had said, in the body, `"capacity has not been observed
+yet"` — the sentence that tells an operator to run a reconcile. The
+engine answers in RFC 9457 problem JSON specifically so its caller can
+explain itself, and the plugin is its only caller.
+`AiServicesSyncCmd.callEngine` built its message from the status and
+the path and discarded `answer.getBody()` entirely.
+
+Four tests first, two of which failed. The detail is now appended to
+the status rather than replacing it, because the status is what gets
+grepped for; `title` is the fallback; and a body that is not problem
+JSON yields nothing, because a proxy or load balancer may have
+answered and a parse failure must not displace the real one. Live,
+after redeploying:
+
+```
+the AI Services engine returned 503 for /v1/capacity: capacity has
+not been observed yet
+```
+
+### A tenant is denied every AI command
+
+A test account was created in the simulator and given API keys. Every
+AI command refused it:
+
+```
+The API [listAiModels] does not exist or is not available
+for the account aisvc-tenant.
+```
+
+Including `listAiModels` and `listAiEndpoints`, which the command map
+grants to every role. `cloud.role_permissions` holds **zero** rules
+naming any AI Services command, and Root Admin works only because its
+rule list ends in `*  ALLOW`.
+
+This is not new — the milestone 9 entry already records that
+`role_permissions_rules()` computes the lines and nothing emits them,
+and calls seeding CloudStack 4.23 dynamic roles an open question. What
+is new is that it has now been seen from the outside: the product's
+whole tenant surface is unreachable by tenants on a real server, and
+the UI section a tenant would open gates on commands `listApis` will
+not advertise to them. Every "allowed" half of the per-role Marvin
+tests SPEC section 12 requires would fail today.
+
+### `Secure` is a request, not a guarantee
+
+`ai.services.engine.tls.client.key` is the key store password and sits
+in the `Secure` category, which `ConfigurationVO.isEncrypted()` keys
+off. With a real password in it, on this server:
+
+```
+listConfigurations        returned it in cleartext
+cloud.configuration       stored it in cleartext
+```
+
+because the image ships `db.cloud.encryption.type=none`. The category
+marks a value as *to be* encrypted; whether anything encrypts it is
+the operator's `db.properties`. The choice of category is still right.
+The guarantee was overstated, and `docs/installation.md` now warns
+operators to turn database encryption on before setting it.
+
+### Two warts left open
+
+`getEngineClient()` caches the client in a field, so every
+`ai.services.engine.*` key is declared dynamic and none of them takes
+effect without a management-server restart. And `isEnabledInZone` has
+no callers, so `ai.services.enabled` gates nothing at all.
+
+1,998 unit tests and 455 JUnit tests pass.

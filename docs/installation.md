@@ -310,12 +310,23 @@ All nine, with their defaults:
 | `ai.services.engine.urls` | — | Global | Engine replicas, comma-separated. The client fails over across them. |
 | `ai.services.engine.timeout` | `30` | Global | Seconds. |
 | `ai.services.engine.tls.client.cert` | — | Global | Path to the **PKCS12 key store** holding the plugin's client certificate and key. |
-| `ai.services.engine.tls.client.key` | — | Global | **That key store's password, not a path.** The description said "path" for a while; the code has always read it as a password. |
+| `ai.services.engine.tls.client.key` | — | Global | **That key store's password, not a path.** The description said "path" for a while; the code has always read it as a password. It is in the `Secure` category — see the warning below. |
 | `ai.services.engine.tls.truststore` | — | Global | Path to the PKCS12 trust store holding the engine's CA. |
 | `ai.services.engine.tls.truststore.password` | `changeit` | Global | The trust store's password. It needs one — see below. |
 | `ai.services.hf.require.approval` | `true` | Domain | Whether a domain admin may mirror directly or only request it. |
 | `ai.services.maintenance.drain.timeout` | `900` | Global | Seconds to wait draining GPU nodes before host maintenance. |
 | `ai.services.v2.enabled` | `false` | Global | Registers the Tier 2 commands. See [Turning on v2](#turning-on-v2). |
+
+> **The `Secure` category is a request, not a guarantee.** CloudStack
+> encrypts a configuration value only when the management server has
+> database encryption switched on in `db.properties`
+> (`db.cloud.encryption.type`). Measured on a stock 4.23.0.0 with the
+> default `db.cloud.encryption.type=none`, the key store password set
+> here came back from `listConfigurations` in cleartext and was stored
+> in `cloud.configuration` in cleartext. If that matters to you —
+> and for a key store password it should — turn database encryption on
+> before setting it, and treat anyone who can call `listConfigurations`
+> as able to read it until you have.
 
 **Generate all of it with `install.py`:**
 

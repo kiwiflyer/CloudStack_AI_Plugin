@@ -105,8 +105,13 @@ thing, read both.**
 request signing, `take_snapshot` reading GPU capacity from tagged hosts, the
 capacity planner and its warnings on that observed data, `listKubernetesClusters`,
 `listGpuCards`, `listGpuDevices`, the tenant-network lookup, and all eight
-migrations on Postgres. **And now the Java plugin itself** — built, installed and
-loaded into the running management server. All thirty-eight v1 commands register
+migrations on Postgres. **And now the Java plugin itself** — built, installed,
+loaded into the running management server, and talking to the engine over
+mTLS: `listAiModels`, `listAiEndpoints` and `listAiSetupChecks` all answer
+200 through a signed CloudStack API call. **But only for root admin** — a
+test tenant is refused every AI command, because `cloud.role_permissions`
+holds no rule naming one and Root Admin works only through its trailing
+`*  ALLOW`. All thirty-eight v1 commands register
 (`listApis` goes from 865 to 903, exactly the thirty-eight) while the nineteen v2
 commands stay away, so the `ai.services.v2.enabled` gate holds on a real server;
 `AiServicesSchema` creates `ai_deployment` at startup; all ten `ai.services.*`
@@ -438,12 +443,19 @@ race to win — and `chmod 0700` narrows a mode without changing an owner. So th
 directory must be owned by this user and not writable by others, and the file is
 opened `O_NOFOLLOW`.
 
-**A password belongs in the `Secure` category.** `ConfigurationVO.isEncrypted()` is
-a literal `equalsAny(getCategory(), "Hidden", "Secure")`, verified against the
-bytecode — anything else is stored and returned by `listConfigurations` in
-cleartext. `ai.services.engine.tls.client.key` is the key store's password and sits
-there; the trust store's password stays `Advanced` because a trust store holds
-public certificates and its password protects nothing.
+**A password belongs in the `Secure` category — but the category alone protects
+nothing.** `ConfigurationVO.isEncrypted()` is a literal
+`equalsAny(getCategory(), "Hidden", "Secure")`, verified against the bytecode, so
+the category is the only way to ask for encryption and
+`ai.services.engine.tls.client.key` sits there. **What it buys depends on the
+deployment.** With a real value set on a live 4.23.0.0, `listConfigurations`
+returned that password in cleartext and `cloud.configuration` stored it in
+cleartext, because that server has `db.cloud.encryption.type=none` — the default
+in the simulator image. The category marks a value as *to be* encrypted; whether
+anything encrypts it is the operator's `db.properties`. Say so in the install
+guide rather than implying the category is a control. The trust store's password
+stays `Advanced` because a trust store holds public certificates and its password
+protects nothing.
 
 **Guardrails scan every shape a prompt arrives in**, not just string chat content:
 the `text` parts of a vision content list, `prompt`, `input`, `query` and rerank
@@ -484,6 +496,17 @@ not stop a management server from starting. Upstream the table belongs in
 and `client/pom.xml` (no auto-discovery; the shade plugin bundles declared dependencies
 only), the `ui/` section plus its `router.js` registration, and — upstream — the table in
 `engine/schema`. Everything else is self-contained.
+
+**Three warts the first end-to-end round trip exposed, two still open.**
+`AiServicesSyncCmd` used to report only the status — "the engine returned 503 for
+/v1/capacity" — while the engine's RFC 9457 body said "capacity has not been
+observed yet", the sentence naming the remedy. The engine speaks problem JSON so
+its caller can explain itself and the plugin is its only caller; the detail is now
+appended to the status, and a body that is not problem JSON yields nothing,
+because a proxy may have answered. **Still open:** `getEngineClient()` caches the
+client in a field, so every `ai.services.engine.*` key is declared dynamic
+(`true`) and none of them takes effect without a management-server restart; and
+`isEnabledInZone` has no callers, so `ai.services.enabled` gates nothing.
 
 **In the Java plugin:** build the caller context from `CallContext`, never from request
 parameters — the engine filters every response by what the plugin asserts. Never weaken the
