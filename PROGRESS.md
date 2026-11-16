@@ -3426,3 +3426,64 @@ asserts the raw output really does hide `--dry-run` — if that ever
 stops being true, the helper has stopped earning its place.
 
 1,958 tests pass with `FORCE_COLOR=1`, without it, and at 80 columns.
+
+## First contact with a real management server
+
+CloudStack 4.23.0.0 — the release ADR-0003 targets — running as the
+project's own simulator image, with the engine on the host talking to
+it over the ordinary API. Not a fake.
+
+`deploy/compose/docker-compose.yml` is the harness: the simulator,
+Postgres, and MinIO behind a profile. `make stack-up` waits for the
+API to answer rather than for the container to start, because jetty
+binds minutes before CloudStack is ready.
+
+### What it proved
+
+Every CloudStack call written this session works against the real API:
+
+- **Request signing.** HMAC-SHA1 over the canonical query is accepted;
+  `listCapabilities` returns 4.23.0.0.
+- **`listKubernetesClusters`** (ADR-0007) answers, and `read_clusters`
+  returns `state=None, error=''` for an absent cluster — the
+  distinction between "not there" and "could not ask" that the
+  preflight checks are built on, confirmed end to end.
+- **`listGpuCards`** (4.21+) answers rather than erroring on an
+  unknown command, so the GPU catalogue check has a real API behind it.
+- **`TenantNetworks`** resolves a domain path and lists an account's
+  networks.
+
+### What it found, which no unit test could
+
+`aisvc plan --observe` reached CloudStack, correctly reported that it
+could not fetch a kubeconfig — and then dumped a forty-line Python
+traceback from the Kubernetes client's `load_incluster_config`.
+
+Missing CloudStack credentials give an operator one sentence naming the
+variable. Missing Kubernetes gave them a stack trace. Nothing caught
+the client's own `ConfigException`, and nothing could have caught it in
+a unit test: every one uses `FakeKubernetes`, and
+`ClusterKubernetes.__init__` carries `pragma: no cover - needs a real
+cluster`, which was exactly true.
+
+It now says what to set. Verified against the live server: two
+sentences, no traceback, exit 1.
+
+### Corrections this forced
+
+CLAUDE.md claimed `make test-int` ran "docker compose: CloudStack
+simulator, kind, MinIO, Postgres, LiteLLM, mocks". There was no compose
+file anywhere in the repository; the target runs pytest against
+`tests/integration/fake_cloudstack.py` and passes in a second because
+nothing real is involved. The line now says what it does, and the real
+stack has its own targets.
+
+### What is still not true
+
+The simulator has no zone deployed, so no GPU capacity was observed and
+no node was provisioned. The plugin has not been loaded into this
+management server, no proxy VM has booted, and MinIO's public images
+are no longer pullable anonymously from either Docker Hub or quay.io,
+so the registry service is behind a profile and untested.
+
+1,962 unit tests pass, with the stack up and with it unreachable.

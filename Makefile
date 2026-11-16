@@ -1,7 +1,7 @@
 PY := .venv/bin/python
 PYTEST := .venv/bin/pytest
 
-.PHONY: install lint types test-unit test-contract test-int test-java test-ui test-tf test-security test-gpu record check
+.PHONY: install lint types test-unit test-contract test-int test-java test-ui test-tf test-security test-gpu record check stack-up stack-down stack-logs
 
 install:
 	$(PY) -m pip install -q -e ".[dev]"
@@ -19,8 +19,24 @@ test-unit:
 test-contract:
 	$(PYTEST) tests/contract -q
 
+# Fakes, not containers: fast, and what CI runs. The stack below is
+# what talks to something real.
 test-int:
 	$(PYTEST) tests/integration -q
+
+COMPOSE = docker compose -f deploy/compose/docker-compose.yml
+
+# The CloudStack simulator takes minutes to come up, so --wait is the
+# point of these: `stack-up` returns when the API answers, not when the
+# container starts.
+stack-up:
+	$(COMPOSE) up -d --wait
+
+stack-down:
+	$(COMPOSE) down -v
+
+stack-logs:
+	$(COMPOSE) logs --tail=50
 
 # JDK 17 from Homebrew is keg-only, so point JAVA_HOME at it explicitly.
 JAVA_HOME ?= /opt/homebrew/opt/openjdk@17

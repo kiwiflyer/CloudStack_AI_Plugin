@@ -238,7 +238,22 @@ def _cluster(kubeconfig: str = "") -> ClusterKubernetes:
     it, and overriding them with something fetched from CloudStack
     would be the engine deciding which cluster they serve.
     """
-    return ClusterKubernetes(kubeconfig=os.environ.get("KUBECONFIG") or kubeconfig or None)
+    try:
+        return ClusterKubernetes(kubeconfig=os.environ.get("KUBECONFIG") or kubeconfig or None)
+    except Exception as unreachable:
+        # The Kubernetes client raises its own ConfigException when
+        # there is neither a kubeconfig nor a service account, and
+        # nothing caught it: an operator with CloudStack configured and
+        # no cluster got a forty-line traceback, where missing
+        # CloudStack credentials give them one sentence. Found by the
+        # first run against a real management server, because every
+        # unit test uses a fake cluster.
+        err.print(
+            "[bold red]Cannot reach Kubernetes:[/bold red] set KUBECONFIG, or run "
+            "the engine in-cluster, or pass --no-observe to plan against an empty "
+            f"snapshot. ({type(unreachable).__name__}: {unreachable})"
+        )
+        raise typer.Exit(code=1) from unreachable
 
 
 def _kubeconfig_dir() -> str:

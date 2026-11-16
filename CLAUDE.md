@@ -127,7 +127,9 @@ make install        # editable install into .venv
 make check          # lint + types + unit + contract + integration + security
 make test-unit      # pytest, no GPU, no network
 make test-contract  # schemathesis + recorded CloudStack responses
-make test-int       # docker compose: CloudStack simulator, kind, MinIO, Postgres, LiteLLM, mocks
+make test-int      # pytest against tests/integration/fake_cloudstack.py — fakes, not containers
+make stack-up      # the real thing: CloudStack simulator, Postgres, MinIO (deploy/compose/)
+make stack-down    # and tear it down, volumes included
 make test-java      # JUnit 5; needs CloudStack artifacts in ~/.m2
 make test-ui        # Vitest + Playwright
 make test-tf        # Terraform acceptance against the simulator

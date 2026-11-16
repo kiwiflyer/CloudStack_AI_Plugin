@@ -17,7 +17,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -164,4 +166,99 @@ class TestExampleSpec:
     def test_the_shipped_example_validates(self) -> None:
         example = Path(__file__).parents[2] / "examples" / "platform.yaml"
         result = runner.invoke(app, ["validate", "--spec", str(example)])
+        assert result.exit_code == 0, plain(result)
+
+
+class TestWhenThereIsNoKubernetesCluster:
+    """The engine reached CloudStack, then fell over on Kubernetes.
+
+    Found by the first run against a real management server: with
+    CloudStack configured and no cluster, `plan` printed a clear
+    warning that it could not fetch a kubeconfig and then dumped a
+    forty-line Python traceback from the Kubernetes client's
+    `load_incluster_config`. Missing CloudStack credentials, by
+    contrast, produce one sentence naming the variable.
+
+    No unit test caught it because they all use `FakeKubernetes`;
+    `ClusterKubernetes.__init__` is marked `pragma: no cover - needs a
+    real cluster`, which was exactly true.
+    """
+
+    def refuse_a_cluster(self, monkeypatch: Any) -> None:
+        from kubernetes.config.config_exception import ConfigException
+
+        def refuse(*args: Any, **kwargs: Any) -> Any:
+            raise ConfigException("Service host/port is not set.")
+
+        monkeypatch.setattr("aisvc.cli.main.ClusterKubernetes", refuse)
+        monkeypatch.delenv("KUBECONFIG", raising=False)
+
+    def with_cloudstack(self, monkeypatch: Any) -> None:
+        monkeypatch.setenv("CLOUDSTACK_API_URL", "http://localhost:8080/client/api")
+        monkeypatch.setenv("CLOUDSTACK_API_KEY", "k")
+        monkeypatch.setenv("CLOUDSTACK_SECRET_KEY", "s")
+
+    def plan(self, tmp_path: Path, *extra: str) -> Any:
+        return runner.invoke(
+            app,
+            [
+                "plan",
+                "--spec",
+                str(write_spec(tmp_path)),
+                "--licenses",
+                str(licenses_file(tmp_path, "llama3.3")),
+                *extra,
+            ],
+        )
+
+    def test_it_says_what_to_set_rather_than_raising(self, monkeypatch: Any, capsys: Any) -> None:
+        # `_cluster` directly, not through `plan`: reaching Kubernetes
+        # means getting past CloudStack first, and a unit test must not
+        # call out to one.
+        import typer
+
+        from aisvc.cli import main
+
+        self.refuse_a_cluster(monkeypatch)
+
+        with pytest.raises(typer.Exit) as raised:
+            main._cluster()
+
+        assert raised.value.exit_code == 1
+        assert "KUBECONFIG" in capsys.readouterr().err
+
+    def test_the_message_offers_the_way_out(self, monkeypatch: Any, capsys: Any) -> None:
+        import typer
+
+        from aisvc.cli import main
+
+        self.refuse_a_cluster(monkeypatch)
+
+        with pytest.raises(typer.Exit):
+            main._cluster()
+
+        assert "--no-observe" in capsys.readouterr().err
+
+    def test_a_working_cluster_is_not_swallowed(self, monkeypatch: Any) -> None:
+        # The guard must only catch a failure to build one, not turn
+        # every call into an error.
+        from aisvc.cli import main
+
+        built: list[dict[str, Any]] = []
+
+        def record(**kw: Any) -> object:
+            built.append(kw)
+            return object()
+
+        monkeypatch.setattr("aisvc.cli.main.ClusterKubernetes", record)
+
+        assert main._cluster() is not None
+        assert built, "the real client was never constructed"
+
+    def test_no_observe_still_needs_no_cluster(self, tmp_path: Path, monkeypatch: Any) -> None:
+        # The documented way out has to keep working.
+        self.refuse_a_cluster(monkeypatch)
+
+        result = self.plan(tmp_path, "--no-observe")
+
         assert result.exit_code == 0, plain(result)

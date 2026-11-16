@@ -1,0 +1,94 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements. See the NOTICE file distributed with this
+# work for additional information regarding copyright ownership. The ASF
+# licenses this file to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance with the
+# License. You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+# Everything the engine talks to, for a test against something real.
+#
+# The engine itself runs on the host and reaches these on localhost, so
+# `aisvc plan --observe` here is the same code path an operator runs —
+# only the far end is a simulator.
+#
+# The CloudStack image is self-contained: it bundles mysqld and runs
+# `deploydb` and `deploydb-simulator` at build time, so there is no
+# separate database for it. It is published for amd64 only, so on
+# Apple Silicon it runs under emulation — it works, and it is slow,
+# which is why the health check is patient.
+#
+# The tag tracks ADR-0003's target release. Pin a different one with
+# CLOUDSTACK_TAG if you need to check behaviour on another.
+
+name: aisvc-harness
+
+services:
+  cloudstack:
+    # The project's own simulator image, built from tools/docker in the
+    # CloudStack tree and published by their CI.
+    image: apache/cloudstack-simulator:${CLOUDSTACK_TAG:-4.23.0.0}
+    # Published for amd64 only. On Apple Silicon this runs emulated,
+    # which works and is slow — hence the patience below.
+    platform: linux/amd64
+    ports:
+      - "8080:8080"   # the API an operator and the engine use
+      - "8096:8096"   # the unauthenticated API, for first-run setup
+    healthcheck:
+      # The management server is up when it answers an API call, not
+      # when the port opens: jetty binds long before CloudStack has
+      # finished starting.
+      # 401 is a pass: an unauthenticated call being *rejected* proves
+      # the management server is answering. `curl -f` would treat that
+      # as a failure and the container would never go healthy while
+      # working perfectly.
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' 'http://localhost:8080/client/api?command=listCapabilities&response=json' | grep -qE '^(200|401)$'"]
+      interval: 20s
+      timeout: 15s
+      retries: 60
+      # A Java management server under emulation takes many minutes to
+      # answer, and failing early here would just hide that.
+      start_period: 600s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aisvc
+      POSTGRES_PASSWORD: aisvc
+      POSTGRES_DB: aisvc
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aisvc -d aisvc"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # The object store, for the model registry. Behind a profile because
+  # it is not needed to exercise CloudStack or the database, and
+  # MinIO's public images are no longer pullable without credentials —
+  # both Docker Hub and quay.io refuse anonymously. Bring it up with
+  # `--profile registry` once you have an image you can reach, or
+  # point AISVC_REGISTRY_ENDPOINT at an object store you already run.
+  minio:
+    profiles: ["registry"]
+    image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: aisvc
+      MINIO_ROOT_PASSWORD: aisvc-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
