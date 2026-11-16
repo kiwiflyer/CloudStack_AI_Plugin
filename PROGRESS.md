@@ -3542,3 +3542,51 @@ The hosts carry no GPU host tags, so no `gpu_class` matches them and
 `take_snapshot` still reports no pool capacity. Nothing has been
 provisioned, the plugin JAR has not been loaded into this management
 server, and the registry service is still unpullable.
+
+## Real capacity, observed and planned
+
+With a zone deployed and two hosts tagged `h100-sxm` carrying eight
+GPU devices each, the engine's own `take_snapshot` read a real
+CloudStack and got it right:
+
+```
+sandbox/h100-8x: hosts 2/2  gpus_per_node=8  free=16 allocated=0 total=16
+sandbox/l40s-1x: hosts 0/0                   free=0  allocated=0 total=0
+h100-pool: 0 node(s)
+l40s-pool: 0 node(s)
+```
+
+`l40s-1x` reading zero is the check working, not a gap: no host carries
+that tag.
+
+Feeding that snapshot to `plan_capacity` produced the right plan and
+the right warning:
+
+```
++ gpu-node h100-pool x1  (service offering Small Instance, ...)
++ gpu-node l40s-pool x1  (service offering Small Instance, ...)
+warning: nodePools.l40s-pool: 1 node(s) to add but only 0 free
+         l40s-1x host(s) in sandbox
+```
+
+So the reconciler's diffing and its capacity warnings work on observed
+data from a real management server, not a fixture.
+
+`examples/simulator.yaml` is that spec, so this is repeatable. Both
+offerings a simulator ships — `Small Instance` and `Medium Instance` —
+have a space in the name, which is how the signing bug surfaced at all.
+
+### The migrations, on their real database
+
+Every migration had only ever run on SQLite. Against the harness's
+Postgres 16 all eight apply cleanly to `0008`, producing fourteen
+tables — including `alembic_version` and `aisvc_job`, the two the old
+`create_all` path used to miss.
+
+### What is still not true
+
+No node has been provisioned: `apply` needs a Kubernetes cluster for
+its deployer, and there is none, so the write half of the reconciler
+remains unexercised. The plugin JAR has not been loaded into this
+management server, no proxy VM has booted, and the registry service is
+still unpullable.

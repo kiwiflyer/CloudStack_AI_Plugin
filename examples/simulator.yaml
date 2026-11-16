@@ -1,0 +1,235 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements. See the NOTICE file distributed with this
+# work for additional information regarding copyright ownership. The ASF
+# licenses this file to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance with the
+# License. You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+# A spec that matches what `make stack-up` actually gives you.
+#
+# The zone, offering and template names here are the ones a Marvin
+# advanced-zone deployment creates in the simulator, so `take_snapshot`
+# against that stack returns real capacity rather than nothing. Both
+# offerings the simulator ships have a space in the name, which is how
+# the request-signing bug was found.
+#
+# To use it, after `make stack-up`:
+#
+#   docker exec <cloudstack> python3 -m marvin.deployDataCenter \
+#       -i /root/setup/dev/advanced.cfg
+#
+# then tag two hosts `h100-sxm` and give them GPU devices with
+# createGpuCard and createGpuDevice. The l40s class is deliberately
+# left without a tagged host: the planner should warn about it.
+
+apiVersion: aisvc/v1
+zones:
+- name: sandbox
+  cloudstack_zone: Sandbox-simulator
+  cks_cluster: sandbox-cks
+gpuClasses:
+- name: h100-8x
+  host_tag: h100-sxm
+  service_offering: Small Instance
+  gpus_per_node: 8
+  gpu_mem_gb: 80
+  mode: passthrough
+  gpu_card: NVIDIA H100 80GB HBM3
+- name: l40s-1x
+  host_tag: l40s
+  service_offering: Small Instance
+  gpus_per_node: 1
+  gpu_mem_gb: 48
+  mode: passthrough
+  gpu_card: NVIDIA L40S
+nodePools:
+- name: h100-pool
+  zone: sandbox
+  gpu_class: h100-8x
+  min_nodes: 1
+  max_nodes: 6
+  template: CentOS 5.6 (64-bit) no GUI (Simulator)
+- name: l40s-pool
+  zone: sandbox
+  gpu_class: l40s-1x
+  min_nodes: 1
+  max_nodes: 4
+  template: CentOS 5.6 (64-bit) no GUI (Simulator)
+huggingface:
+  endpoint: https://huggingface.co
+  token_secret: aisvc/hf-token
+  allow_patterns:
+  - '*.safetensors'
+  - '*.json'
+  - tokenizer*
+  - '*.model'
+  block_pickle: true
+  trust_remote_code: false
+  require_approval: true
+  storage_quota_gb_per_domain: 2000
+models:
+- name: llama-3.3-70b-instruct
+  source: hf://meta-llama/Llama-3.3-70B-Instruct@6f6073b423013f6a7d4d9f39144961bfbfbc386b
+  license: llama3.3
+  task: chat
+  engine: vllm
+  quantization: fp8
+  tensor_parallel: 2
+  max_model_len: 32768
+  node_pool: h100-pool
+  replicas:
+    min: 2
+    max: 4
+  slo:
+    ttft_p95_ms: 800
+    queue_depth_target: 8
+  rollout:
+    strategy: bluegreen
+    canary_percent: 10
+  serving_profile: h100-throughput
+  visibility:
+    domains:
+    - /Customers
+  price_tier: standard
+  architecture:
+    params_b: 70.6
+    num_layers: 80
+    num_kv_heads: 8
+    head_dim: 128
+  concurrency:
+    working_context_tokens: 1536
+  lora:
+    enabled: true
+    max_adapters_per_account: 20
+  batch:
+    enabled: true
+    discount: 0.5
+- name: bge-m3-embedding
+  source: hf://BAAI/bge-m3@5617a9f61b028005a4858fdac845db406aefb181
+  license: mit
+  task: embedding
+  engine: vllm
+  quantization: bf16
+  tensor_parallel: 1
+  max_model_len: 8192
+  node_pool: l40s-pool
+  replicas:
+    min: 1
+    max: 3
+  slo:
+    ttft_p95_ms: 200
+  serving_profile: l40s-packed
+  visibility:
+    domains:
+    - /Customers
+  price_tier: embedding
+  architecture:
+    params_b: 0.57
+    num_layers: 24
+    num_kv_heads: 16
+    head_dim: 64
+  concurrency:
+    working_context_tokens: 512
+tuningProfiles:
+  serving:
+  - name: h100-throughput
+    params:
+      gpu_memory_utilization: 0.92
+      max_num_seqs: 256
+      enable_prefix_caching: true
+      kv_cache_dtype: fp8
+      enable_lora: true
+      max_loras: 16
+      max_lora_rank: 64
+  - name: l40s-packed
+    params:
+      gpu_memory_utilization: 0.9
+      max_num_seqs: 64
+      kv_cache_dtype: fp16
+  generation:
+  - name: precise
+    params:
+      temperature:
+        default: 0.2
+        min: 0.0
+        max: 0.5
+        policy: clamp
+      top_p:
+        default: 0.9
+        policy: default
+      max_tokens:
+        default: 1024
+        max: 4096
+        policy: clamp
+      system_prompt_prefix:
+        value: Answer concisely.
+        policy: locked
+  - name: creative
+    params:
+      temperature:
+        default: 0.9
+        min: 0.0
+        max: 1.5
+        policy: default
+      max_tokens:
+        default: 2048
+        max: 8192
+        policy: clamp
+  guardrail:
+  - name: education-safe
+    checks:
+      safety:
+        action: block
+        policy: locked
+      pii:
+        action: redact
+      max_input_tokens:
+        value: 8000
+assignments:
+- scope: domain
+  target: /Customers/Acme
+  generation_profile: precise
+- scope: deployment
+  target: llama-3.3-70b-instruct
+  serving_profile: h100-throughput
+- scope: deployment
+  target: bge-m3-embedding
+  serving_profile: l40s-packed
+priceTiers:
+- name: standard
+  input_per_mtok: 0.6
+  output_per_mtok: 1.8
+  currency: USD
+- name: embedding
+  input_per_mtok: 0.02
+  output_per_mtok: 0.0
+  currency: USD
+tenants:
+- name: acme
+  cloudstack_domain: /Customers/Acme
+  cloudstack_account: acme
+  models:
+  - llama-3.3-70b-instruct
+  - bge-m3-embedding
+  quota:
+    tpm: 500000
+    rpm: 600
+    gpu_hours_month: 2000
+  budget:
+    monthly: 5000
+    currency: USD
+    on_exceed: block
+  tier: shared
+evaluation:
+  suites:
+  - standard-core
+  - customer-golden
+  max_regression_points: 2
