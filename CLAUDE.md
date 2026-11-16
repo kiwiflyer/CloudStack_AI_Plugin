@@ -65,7 +65,18 @@ rendering must flow through `config_hash` or convergence breaks silently.
 rollout state to desync. A spec change on a `bluegreen` model creates the other colour; the
 live one keeps serving until an operator promotes.
 
-Before claiming a command works, run it. Before referencing a module, confirm the file exists.
+**Two things a real management server corrected, both of which a fake had agreed
+with.** Request signing encodes a space as `%20`, not `+` — CloudStack's servlet
+decodes `+` back to a space and re-encodes it as `%20` before verifying, so every
+call carrying a space in a value was rejected, and the test pinned `name=my+host`
+in place. And `GpuDevice.usable` tested for `managedstate == "Enabled"`, a value
+4.23.0.0 never returns: it reports `Managed` or `Unmanaged`, so every real GPU read
+as unusable and a platform full of idle cards would have refused every deployment.
+The check is now a deny-list, because an allow-list that misses a value fails
+silently everywhere while a deny-list that misses one fails loudly in one place.
+
+Before claiming a command works, run it against `make stack-up`, not a fake.
+Before referencing a module, confirm the file exists.
 
 ## What is being built
 

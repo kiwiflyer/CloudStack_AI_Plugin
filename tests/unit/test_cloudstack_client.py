@@ -64,7 +64,9 @@ class TestCanonicalQuery:
         assert canonical_query({"Command": "ListHosts"}) == "command=listhosts"
 
     def test_values_are_url_encoded(self) -> None:
-        assert canonical_query({"name": "my host"}) == "name=my+host"
+        # %20, not +. This asserted `name=my+host` and so pinned the
+        # bug in place: the test shared the code's wrong assumption.
+        assert canonical_query({"name": "my host"}) == "name=my%20host"
 
     def test_signature_is_never_part_of_the_signed_string(self) -> None:
         assert canonical_query({"a": "1", "signature": "xyz"}) == "a=1"
@@ -377,3 +379,41 @@ class TestAsyncJobs:
         async with client(handler, poll_interval=0.0) as cs:
             with pytest.raises(CloudStackError, match="jobid"):
                 await cs.call_async("deployVirtualMachine")
+
+
+class TestASpaceIsSignedAsPercentTwenty:
+    """CloudStack rejects a `+` in the signed string.
+
+    Found against a real 4.23.0.0 management server, not in a fake:
+    every call whose parameter value contained a space came back
+    "unable to verify user credentials and/or request signature", and
+    every call without one worked. `a+b` and `a/b` were fine, so it is
+    the space specifically.
+
+    The two sides of our own request agreed — `quote_plus` and httpx
+    both render a space as `+`. The server is the one that does not:
+    the servlet decodes `+` to a space and re-encodes it as `%20` when
+    it rebuilds the string to verify, so a `+` signature can never
+    match. Only the signature needs fixing; the request may still send
+    `+`, because the server decodes it before looking.
+
+    `proxy_offering: Small Instance` is in the shipped
+    examples/platform.yaml, so this was reachable with the defaults.
+    """
+
+    def test_a_space_becomes_percent_twenty(self) -> None:
+        assert "%20" in canonical_query({"keyword": "Small Instance"})
+
+    def test_a_space_never_becomes_a_plus(self) -> None:
+        assert "+" not in canonical_query({"keyword": "Small Instance"})
+
+    def test_a_literal_plus_is_still_escaped(self) -> None:
+        # %2B, not a bare +: the server would read a bare one as a
+        # space and verify a different string than we signed.
+        assert canonical_query({"keyword": "a+b"}) == "keyword=a%2bb"
+
+    def test_a_slash_is_still_escaped(self) -> None:
+        assert canonical_query({"path": "/Customers/Acme"}) == "path=%2fcustomers%2facme"
+
+    def test_ordinary_values_are_unchanged(self) -> None:
+        assert canonical_query({"command": "listZones"}) == "command=listzones"

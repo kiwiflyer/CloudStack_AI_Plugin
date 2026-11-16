@@ -21,7 +21,7 @@ import pytest
 import yaml
 
 from aisvc.cloudstack import CloudStackClient
-from aisvc.inventory import CapacitySnapshot, ClassCapacity, take_snapshot
+from aisvc.inventory import CapacitySnapshot, ClassCapacity, GpuDevice, take_snapshot
 from aisvc.spec import PlatformSpec, load_spec_from_string
 from tests.conftest import CREDENTIALS, recorded_handler
 from tests.unit.test_spec import LICENSES, MINIMAL
@@ -302,3 +302,64 @@ class TestClassCapacity:
         )
 
         assert capacity.nodes_unhealthy == 1
+
+
+class TestManagedStateAsCloudStackActuallyReportsIt:
+    """`usable` tested for "Enabled", which 4.23.0.0 never returns.
+
+    Measured against a real management server: `managedstate` is
+    `Managed` or `Unmanaged`, and the separate `state` field reads
+    `Free`. The API reference says "Enabled or Disabled", and the code
+    believed it — so every real GPU came back unusable, every class
+    counted zero, and every deployment would have been refused for want
+    of capacity on hosts full of idle cards.
+
+    The check is now a deny-list rather than an allow-list, because the
+    two fail differently: an allow-list that misses a value makes the
+    whole platform silently capacity-blind with nothing in the logs to
+    explain it, while a deny-list that misses one lets a single
+    placement fail loudly where an operator can see it.
+    """
+
+    def device(self, **raw: object) -> GpuDevice:
+        return GpuDevice.from_api(
+            {"id": "d1", "hostid": "h1", "gpucardname": "NVIDIA H100 80GB HBM3", **raw}
+        )
+
+    def test_a_managed_device_is_usable(self) -> None:
+        assert self.device(managedstate="Managed").usable
+
+    def test_an_unmanaged_device_is_not(self) -> None:
+        assert not self.device(managedstate="Unmanaged").usable
+
+    def test_a_disabled_device_is_not(self) -> None:
+        # What the documentation claimed. Honoured in case some
+        # release does return it.
+        assert not self.device(managedstate="Disabled").usable
+
+    def test_the_documented_enabled_still_counts(self) -> None:
+        assert self.device(managedstate="Enabled").usable
+
+    def test_a_managed_free_device_is_free(self) -> None:
+        device = self.device(managedstate="Managed")
+
+        assert device.free
+        assert not device.allocated
+
+    def test_a_managed_device_held_by_a_vm_is_not_free(self) -> None:
+        device = self.device(managedstate="Managed", virtualmachineid="vm-1")
+
+        assert device.allocated
+        assert not device.free
+
+    def test_an_unrecognised_state_counts_rather_than_vanishing(self) -> None:
+        # The deny-list choice, stated as a test: a value nobody
+        # anticipated is visible capacity, not silent absence.
+        assert self.device(managedstate="SomethingNew").usable
+
+    def test_no_state_at_all_is_still_unusable(self) -> None:
+        # Absent differs from unrecognised: a response that never
+        # mentioned the field is one to distrust, not to read
+        # optimistically.
+        assert not self.device(managedstate="").usable
+        assert not self.device().usable

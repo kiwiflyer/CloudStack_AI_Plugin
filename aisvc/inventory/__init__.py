@@ -106,10 +106,39 @@ class GpuDevice:
     def allocated(self) -> bool:
         return bool(self.virtual_machine_id)
 
+    #: States that mean CloudStack will not place anything on this
+    #: device. Measured against 4.23.0.0, which reports `Managed` or
+    #: `Unmanaged`; `Disabled` is what the API reference claims, kept
+    #: in case some release returns it.
+    NOT_USABLE = frozenset({"unmanaged", "disabled"})
+
     @property
     def usable(self) -> bool:
-        """Enabled devices only; anything else is not free capacity."""
-        return self.managed_state == "Enabled"
+        """Whether this device is capacity at all.
+
+        A deny-list, not an allow-list, and the asymmetry is the point.
+        This used to test `== "Enabled"` — a value 4.23.0.0 never
+        returns — so every real GPU read as unusable, every class
+        counted zero, and a platform with idle cards everywhere would
+        have refused every deployment for want of capacity, with
+        nothing in the logs naming the cause.
+
+        An allow-list that misses a value fails exactly that way:
+        silently, everywhere, invisibly. A deny-list that misses one
+        lets a single placement fail where an operator can see it. Of
+        the two, the loud local failure is the one to prefer.
+
+        A device reporting no state at all is the exception, and stays
+        unusable: that is a response to distrust rather than a value to
+        interpret.
+        """
+        state = self.managed_state.strip().lower()
+        if not state:
+            # Absent is not the same as unrecognised. A response that
+            # never mentioned the field is one to distrust, not one to
+            # read optimistically — do not invent capacity out of it.
+            return False
+        return state not in self.NOT_USABLE
 
     @property
     def free(self) -> bool:

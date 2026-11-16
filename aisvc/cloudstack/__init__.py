@@ -25,7 +25,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Self
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 import httpx
 
@@ -92,7 +92,13 @@ def canonical_query(params: Mapping[str, object]) -> str:
         rendered = _render(raw)
         if rendered is None:
             continue
-        pairs.append((key.lower(), quote_plus(rendered)))
+        # `quote`, not `quote_plus`: a space must be %20. CloudStack's
+        # servlet decodes a `+` back to a space and re-encodes it as
+        # %20 when it rebuilds the string to verify, so a `+` here can
+        # never match whatever we send. Found against a real 4.23.0.0
+        # server, where every call carrying a space in a value was
+        # rejected as an invalid signature.
+        pairs.append((key.lower(), quote(rendered, safe="")))
     pairs.sort(key=lambda kv: kv[0])
     return "&".join(f"{k}={v}" for k, v in pairs).lower()
 

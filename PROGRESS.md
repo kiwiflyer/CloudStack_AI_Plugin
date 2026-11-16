@@ -3487,3 +3487,58 @@ are no longer pullable anonymously from either Docker Hub or quay.io,
 so the registry service is behind a profile and untested.
 
 1,962 unit tests pass, with the stack up and with it unreachable.
+
+## A zone, GPUs, and two bugs a fake had agreed with
+
+Marvin deployed `Sandbox-simulator` into the running 4.23.0.0 server —
+one zone, four hosts, two clusters. Then CloudStack's own GPU APIs
+(`createGpuCard`, `createGpuDevice`, 4.21+) gave a host real GPU
+devices to find. All five GPU commands exist on 4.23.0.0.
+
+### Spaces broke request signing
+
+`createGpuCard` with `devicename='H100 80GB HBM3'` came back "unable to
+verify user credentials and/or request signature" while every call
+without a space worked. `a+b` and `a/b` were fine, so it was the space
+specifically.
+
+Both sides of our own request agreed — `quote_plus` and httpx each
+render a space as `+`. **The server is the one that does not.** Its
+servlet decodes `+` to a space and re-encodes it as `%20` when
+rebuilding the string to verify, so a `+` signature can never match.
+Measured: signing with `%20` and letting httpx still send `+` returns
+200, because the server decodes before it looks. Only the signature
+needed changing.
+
+The unit test had pinned the bug: `canonical_query({"name": "my host"})
+== "name=my+host"`. It shared the code's assumption, so it could never
+have caught it. `proxy_offering: Small Instance` is in the shipped
+example spec, so this was reachable with the defaults.
+
+### Every real GPU read as unusable
+
+`GpuDevice.usable` tested `managed_state == "Enabled"`. A real
+4.23.0.0 server reports **`Managed`** or **`Unmanaged`**, with a
+separate `state` field reading `Free`. The API reference says "Enabled
+or Disabled" and the code believed it.
+
+So every GPU was unusable, every class counted zero, and a platform
+with idle cards everywhere would have refused every deployment for want
+of capacity — with nothing in the logs naming the cause. Against the
+live server the count went from 0 usable to 25 of 25 free.
+
+It is a deny-list now. The asymmetry is the argument: an allow-list
+that misses a value is silently and totally capacity-blind, while a
+deny-list that misses one lets a single placement fail where an
+operator can see it. A device reporting *no* state stays unusable —
+absent is a response to distrust, not a value to interpret, which is
+what the existing test already said.
+
+1,975 unit tests pass; both fixes verified against the live server.
+
+### What is still not true
+
+The hosts carry no GPU host tags, so no `gpu_class` matches them and
+`take_snapshot` still reports no pool capacity. Nothing has been
+provisioned, the plugin JAR has not been loaded into this management
+server, and the registry service is still unpullable.
