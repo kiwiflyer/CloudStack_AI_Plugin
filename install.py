@@ -942,10 +942,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
-
-
 # --------------------------------------------------------------------------
 # mTLS material
 #
@@ -1013,9 +1009,7 @@ def _openssl(*args: str) -> str:
             "Install it, or generate the certificates yourself and pass their "
             "paths instead."
         )
-    done = subprocess.run(
-        [binary, *args], capture_output=True, text=True, check=False
-    )
+    done = subprocess.run([binary, *args], capture_output=True, text=True, check=False)
     if done.returncode != 0:
         raise InstallError(
             f"openssl {args[0]} failed: {done.stderr.strip() or done.stdout.strip()}"
@@ -1336,3 +1330,7 @@ def print_plugin_tls(material: TlsMaterial) -> None:
         "\n  Copy the key store and the trust store to the management server, "
         "readable only by the account CloudStack runs as."
     )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

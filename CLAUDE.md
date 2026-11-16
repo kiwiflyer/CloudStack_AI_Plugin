@@ -84,6 +84,19 @@ migrations on Postgres. **What has not:** the write half of the reconciler, beca
 `deployVirtualMachine` and everything after it is unexercised. The simulator's
 hosts are simulated: the API, the signing and the schema are real, the GPUs are not.
 
+**The engine client presents its certificate through an `ssl.SSLContext`**, never
+httpx's `cert=`. That parameter is deprecated in httpx 0.28 and **silently sends
+nothing** — still in the signature, only a DeprecationWarning — so `AISVC_TLS_CERT`
+and `AISVC_TLS_KEY` appeared to work while no certificate was ever presented, and
+the engine's refusal surfaced as "Server disconnected without sending a response".
+mTLS over loopback has now completed a real handshake in both directions: refused
+without a certificate, HTTP 200 with one.
+
+**Anything defined after `install.py`'s `__main__` guard does not exist when it
+runs.** The guard calls `main()`, so it must stay last. Appending helpers below it
+made `install.py --make-certs` die with a `NameError` while all eighty installer
+tests passed, because they import the module rather than execute it.
+
 Before claiming a command works, run it against `make stack-up`, not a fake.
 Before referencing a module, confirm the file exists.
 

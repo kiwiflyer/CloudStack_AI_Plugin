@@ -3590,3 +3590,67 @@ its deployer, and there is none, so the write half of the reconciler
 remains unexercised. The plugin JAR has not been loaded into this
 management server, no proxy VM has booted, and the registry service is
 still unpullable.
+
+## mTLS, end to end, and two bugs on the way there
+
+Earlier this session the certificate generation was recorded as
+"proven in parts, not end to end" — the stores loaded in Java, the
+certificates verified against the CA, but no handshake had happened.
+One has now, and getting there found two defects.
+
+### `install.py --make-certs` could not run at all
+
+`NameError: make_tls_material is not defined`. The TLS helpers were
+appended to the end of the file, **below** the
+`if __name__ == "__main__"` guard — and that guard calls `main()`, so
+the module never reaches the definitions before running.
+
+Every one of the eighty installer tests passed throughout, because
+they `import install`, where the guard is false and the whole file
+defines. The command-line entry point, which is the only way anyone
+uses it, was broken.
+
+The guard is last now, and two tests run the script *as a script*: one
+executes `--help` in a subprocess, and one asserts structurally that
+nothing is defined below the guard.
+
+### The engine client never sent its certificate
+
+`aisvc status` against the running engine reported "Server
+disconnected without sending a response" while `curl` with the same
+files got HTTP 200 — a handshake failing for want of a client
+certificate.
+
+httpx 0.28 deprecated `cert=` in favour of an `ssl.SSLContext` passed
+as `verify=`. It is **still in `Client.__init__`'s signature** and
+raises only a `DeprecationWarning`, so nothing failed and nothing was
+logged: `AISVC_TLS_CERT` and `AISVC_TLS_KEY` were doing nothing, on
+the client whose certificate is the entire reason the engine trusts
+the caller context it is handed.
+
+`EngineClient.ssl_context()` builds a real context now. Verified
+against the live engine: `aisvc status` returns `engine: ok, catalog:
+2 model(s)`, and the same command without a certificate is still
+refused.
+
+### What the handshake proved
+
+- `install.py --make-certs` produces material that works.
+- `aisvc/api/server.py`'s `ssl_cert_reqs=CERT_REQUIRED` genuinely
+  enforces: no certificate, no connection.
+- `GET /v1/setup/preflight` over that connection ran this session's
+  checks against the live CloudStack and got every verdict right —
+  the H100 card it knows passes, the L40S card nobody created fails
+  with the message about counting zero GPUs, the missing CKS cluster
+  fails, and Kubernetes is skipped rather than guessed at.
+
+### Terraform acceptance, still never run
+
+`TF_ACC=1 go test` against the live CloudStack cannot start here: the
+Terraform CLI is not installed and its auto-installer fails with
+`unable to verify checksums signature: openpgp: key expired`. That is
+a toolchain problem rather than a finding about this code, and the
+acceptance tests remain unrun — they would also need the plugin JAR
+loaded, since they call commands only it registers.
+
+1,984 unit tests pass.

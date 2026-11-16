@@ -30,12 +30,20 @@ from __future__ import annotations
 
 import socket
 import stat
+import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 import install
+
+
+def install_path() -> Path:
+    """The script itself, for running it as one."""
+    return Path(install.__file__)
+
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -619,3 +627,52 @@ class TestMakingTlsMaterial:
             install.make_tls_material(str(tmp_path), hostname="engine.internal")
 
         assert "openssl" in str(raised.value).lower()
+
+
+class TestTheScriptRunsAsAScript:
+    """Importing `install` is not the same as running it.
+
+    Every other test here imports the module, which defines everything
+    and leaves the `__main__` guard false. Running it executes top to
+    bottom and stops at that guard — so anything defined *after* it
+    does not exist yet when `main()` is called.
+
+    That is exactly what happened: the TLS helpers were appended to the
+    end of the file, below the guard, and `install.py --make-certs`
+    died with `NameError: make_tls_material is not defined` while all
+    eighty tests passed.
+    """
+
+    def run(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(install_path()), *args],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            # A tty-less run must not hang waiting for a prompt.
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+
+    def test_help_works_from_the_command_line(self) -> None:
+        done = self.run("--help")
+
+        assert done.returncode == 0, done.stderr
+        assert "--make-certs" in done.stdout
+
+    def test_nothing_is_defined_after_the_entry_point(self) -> None:
+        # The structural rule, stated directly: the guard runs main(),
+        # so it has to be last.
+        source = install_path().read_text()
+        guard = source.index('if __name__ == "__main__"')
+        after = source[guard:]
+
+        assert "\ndef " not in after, (
+            "a function is defined after the __main__ guard, so it does not exist when main() runs"
+        )
+        assert "\nclass " not in after
+
+    def test_making_certs_does_not_crash_on_a_missing_name(self, tmp_path: Path) -> None:
+        done = self.run("--make-certs", "localhost", "--certs-dir", str(tmp_path / "tls"), "--yes")
+
+        assert "NameError" not in done.stderr, done.stderr

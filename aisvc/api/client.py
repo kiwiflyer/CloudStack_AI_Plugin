@@ -22,6 +22,7 @@ response shape breaks the plugin, it breaks `aisvc` too.
 from __future__ import annotations
 
 import os
+import ssl
 from dataclasses import dataclass
 from typing import Any
 
@@ -74,14 +75,41 @@ class EngineClient:
             "X-Aisvc-Role": self.role,
         }
 
+    def ssl_context(self) -> ssl.SSLContext | bool:
+        """How to verify the engine, and what to present to it.
+
+        An `ssl.SSLContext`, not httpx's `cert=`. That parameter is
+        deprecated in httpx 0.28 and **silently sends nothing** — it is
+        still in `Client.__init__`'s signature and raises only a
+        DeprecationWarning, so `AISVC_TLS_CERT` and `AISVC_TLS_KEY`
+        appeared to work while no client certificate was ever
+        presented. The engine requires one, so every call failed at the
+        handshake with "Server disconnected without sending a
+        response", which names neither the certificate nor the cause.
+
+        True where nothing is configured: an engine on loopback with
+        TLS unset needs no certificate, and that path still has to
+        work.
+        """
+        if not self.client_cert and not self.ca_bundle:
+            return True
+
+        context = (
+            ssl.create_default_context(cafile=self.ca_bundle)
+            if self.ca_bundle
+            else ssl.create_default_context()
+        )
+        if self.client_cert:
+            certfile, keyfile = self.client_cert
+            context.load_cert_chain(certfile=certfile, keyfile=keyfile)
+        return context
+
     def _client(self) -> httpx.Client:
-        verify: Any = self.ca_bundle if self.ca_bundle else True
         return httpx.Client(
             base_url=self.base_url,
             headers=self.headers,
             timeout=self.timeout,
-            cert=self.client_cert,
-            verify=verify,
+            verify=self.ssl_context(),
         )
 
     def get(self, path: str, **params: Any) -> dict[str, Any]:
