@@ -22,6 +22,7 @@ import yaml
 from typer.testing import CliRunner
 
 from aisvc.cli.main import app
+from tests.unit.cli_output import plain
 from tests.unit.test_spec import MINIMAL
 
 runner = CliRunner()
@@ -54,8 +55,8 @@ class TestValidate:
                 str(licenses_file(tmp_path, "llama3.3")),
             ],
         )
-        assert result.exit_code == 0, result.output
-        assert "valid" in result.output.lower()
+        assert result.exit_code == 0, plain(result)
+        assert "valid" in plain(result).lower()
 
     def test_invalid_spec_exits_nonzero_and_lists_problems(self, tmp_path: Path) -> None:
         result = runner.invoke(
@@ -69,12 +70,12 @@ class TestValidate:
             ],
         )
         assert result.exit_code == 1
-        assert "ghost-tier" in result.output
+        assert "ghost-tier" in plain(result)
 
     def test_missing_file_is_reported_cleanly(self, tmp_path: Path) -> None:
         result = runner.invoke(app, ["validate", "--spec", str(tmp_path / "nope.yaml")])
         assert result.exit_code == 1
-        assert "nope.yaml" in result.output
+        assert "nope.yaml" in plain(result)
 
     def test_warnings_are_shown_without_failing(self, tmp_path: Path) -> None:
         result = runner.invoke(
@@ -88,7 +89,7 @@ class TestValidate:
             ],
         )
         assert result.exit_code == 0
-        assert "max_num_seqs" in result.output
+        assert "max_num_seqs" in plain(result)
 
 
 class TestPlan:
@@ -104,9 +105,9 @@ class TestPlan:
                 "--no-observe",
             ],
         )
-        assert result.exit_code == 0, result.output
-        assert "gpu-node" in result.output
-        assert "h100-pool" in result.output
+        assert result.exit_code == 0, plain(result)
+        assert "gpu-node" in plain(result)
+        assert "h100-pool" in plain(result)
 
     def test_plan_makes_no_api_writes(self, tmp_path: Path) -> None:
         """SPEC.md section 12: plan and --dry-run never write."""
@@ -122,7 +123,7 @@ class TestPlan:
             ],
         )
         assert result.exit_code == 0
-        assert "read-only" in result.output.lower()
+        assert "read-only" in plain(result).lower()
 
     def test_plan_on_an_invalid_spec_aborts_before_observing(self, tmp_path: Path) -> None:
         result = runner.invoke(
@@ -137,7 +138,7 @@ class TestPlan:
             ],
         )
         assert result.exit_code == 1
-        assert "ghost-pool" in result.output
+        assert "ghost-pool" in plain(result)
 
     def test_observing_without_credentials_is_a_clear_error(self, tmp_path: Path) -> None:
         result = runner.invoke(
@@ -156,11 +157,11 @@ class TestPlan:
             },
         )
         assert result.exit_code == 1
-        assert "CLOUDSTACK_API_URL" in result.output
+        assert "CLOUDSTACK_API_URL" in plain(result)
 
 
 class TestExampleSpec:
     def test_the_shipped_example_validates(self) -> None:
         example = Path(__file__).parents[2] / "examples" / "platform.yaml"
         result = runner.invoke(app, ["validate", "--spec", str(example)])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 0, plain(result)

@@ -3388,3 +3388,41 @@ them — in both CI jobs, `java-plugin/README.md` and
 set, since that is the other way this rotted.
 
 It fails on the state that caused the outage and passes on the fix.
+
+## CI failed on a test that passed everywhere else
+
+`test_apply_help_mentions_dry_run` asserted `"--dry-run" in
+result.output` and failed in CI while passing locally under every
+width and terminal I tried.
+
+The cause is that Typer renders help through Rich, and Rich styles
+each span separately: with colour on it writes `--dry-run` as three
+spans — `-`, `-dry`, `-run` — each wrapped in its own escape sequence,
+so the literal string is not in the bytes at all. Whether colour is on
+is decided by the environment, and the CI runner exports
+`FORCE_COLOR`.
+
+### Reproduced, and it was worse than reported
+
+`FORCE_COLOR=1 pytest tests/unit` reproduced it exactly — and found
+**two** failures where CI reported one. `test_it_reports_the_catalog`
+breaks the same way on a coloured status line. Every CLI assertion in
+the three CLI test files had the same dependency; only two happened to
+land on text Rich splits.
+
+### Stripping, not forcing
+
+The obvious fix — turn colour off in the test environment — rests on
+precedence that is not what anyone would guess. With `FORCE_COLOR`
+already set, neither `NO_COLOR=1` nor `FORCE_COLOR=0` nor
+`FORCE_COLOR=""` turns colour off; only `TERM=dumb` does. That was
+measured, not assumed, and depending on one library's ordering is how
+this recurs.
+
+`tests/unit/cli_output.py` strips the escapes instead, which depends
+on nothing, and all twenty-six CLI assertions across the three files
+read through it. Three tests pin the behaviour, including one that
+asserts the raw output really does hide `--dry-run` — if that ever
+stops being true, the helper has stopped earning its place.
+
+1,958 tests pass with `FORCE_COLOR=1`, without it, and at 80 columns.

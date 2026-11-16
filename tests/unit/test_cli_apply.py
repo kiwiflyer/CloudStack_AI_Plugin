@@ -22,6 +22,7 @@ import yaml
 from typer.testing import CliRunner
 
 from aisvc.cli.main import app
+from tests.unit.cli_output import plain
 from tests.unit.test_spec import MINIMAL
 
 runner = CliRunner()
@@ -73,7 +74,7 @@ class TestGuards:
         )
 
         assert result.exit_code == 1
-        assert "ghost-tier" in result.output
+        assert "ghost-tier" in plain(result)
 
     def test_apply_without_credentials_is_a_clear_error(self, tmp_path: Path) -> None:
         result = runner.invoke(
@@ -83,7 +84,7 @@ class TestGuards:
         )
 
         assert result.exit_code == 1
-        assert "CLOUDSTACK_API_URL" in result.output
+        assert "CLOUDSTACK_API_URL" in plain(result)
 
     def test_apply_without_cluster_join_details_is_a_clear_error(self, tmp_path: Path) -> None:
         result = runner.invoke(
@@ -93,7 +94,7 @@ class TestGuards:
         )
 
         assert result.exit_code == 1
-        assert "AISVC_CKS_JOIN_TOKEN" in result.output
+        assert "AISVC_CKS_JOIN_TOKEN" in plain(result)
 
     def test_apply_requires_confirmation_without_yes(self, tmp_path: Path) -> None:
         """A write that reaches CloudStack should not happen by accident."""
@@ -105,7 +106,7 @@ class TestGuards:
         )
 
         assert result.exit_code == 1
-        assert "aborted" in result.output.lower()
+        assert "aborted" in plain(result).lower()
 
     def test_declining_contacts_cloudstack_for_nothing(self, tmp_path: Path) -> None:
         """Answering no must abort before any write is attempted."""
@@ -116,8 +117,8 @@ class TestGuards:
             input="n\n",
         )
 
-        assert "h100-pool" in result.output
-        assert "Run " not in result.output
+        assert "h100-pool" in plain(result)
+        assert "Run " not in plain(result)
 
     def test_the_plan_is_shown_before_the_prompt(self, tmp_path: Path) -> None:
         result = runner.invoke(
@@ -127,14 +128,44 @@ class TestGuards:
             input="n\n",
         )
 
-        assert result.output.index("Planned actions") < result.output.index("Apply these")
+        assert plain(result).index("Planned actions") < plain(result).index("Apply these")
 
 
 class TestHelp:
     def test_apply_is_listed(self) -> None:
         result = runner.invoke(app, ["--help"])
-        assert "apply" in result.output
+        assert "apply" in plain(result)
 
     def test_apply_help_mentions_dry_run(self) -> None:
         result = runner.invoke(app, ["apply", "--help"])
-        assert "--dry-run" in result.output
+        assert "--dry-run" in plain(result)
+
+
+class TestOutputIsReadWithoutStyling:
+    """Rich splits a styled span wherever it changes colour.
+
+    `--dry-run` is written as three spans, so the literal string is
+    absent from the raw bytes whenever colour is on — which the
+    environment decides, not the test. These pin the reading, so a
+    runner that exports FORCE_COLOR cannot turn every CLI assertion
+    into a failure nobody can reproduce.
+    """
+
+    def test_the_option_is_found_even_when_colour_is_forced(self) -> None:
+        from typer.testing import CliRunner
+
+        result = CliRunner(env={"FORCE_COLOR": "1"}).invoke(app, ["apply", "--help"])
+
+        assert "--dry-run" in plain(result)
+
+    def test_the_raw_output_really_does_hide_it(self) -> None:
+        # The premise. If this ever stops being true the helper is no
+        # longer earning its place.
+        from typer.testing import CliRunner
+
+        result = CliRunner(env={"FORCE_COLOR": "1"}).invoke(app, ["apply", "--help"])
+
+        assert "--dry-run" not in result.output
+
+    def test_plain_leaves_unstyled_text_alone(self) -> None:
+        assert plain("already plain") == "already plain"

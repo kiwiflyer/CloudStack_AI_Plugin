@@ -37,6 +37,7 @@ from aisvc.cli.main import app as cli
 from aisvc.db import Base
 from aisvc.registry import InMemoryObjectStore, ModelRegistry
 from aisvc.spec import load_spec_from_string
+from tests.unit.cli_output import plain
 from tests.unit.test_spec import LICENSES, MINIMAL
 
 runner = CliRunner()
@@ -119,8 +120,8 @@ class TestStatusCommand:
 
         result = runner.invoke(cli, ["status"])
 
-        assert result.exit_code == 0, result.output
-        assert "1 model(s)" in result.output
+        assert result.exit_code == 0, plain(result)
+        assert "1 model(s)" in plain(result)
 
     def test_it_says_when_nothing_is_running(
         self, client: EngineClient, monkeypatch: pytest.MonkeyPatch
@@ -129,7 +130,7 @@ class TestStatusCommand:
 
         result = runner.invoke(cli, ["status"])
 
-        assert "none running" in result.output
+        assert "none running" in plain(result)
 
     def test_without_an_engine_url_it_explains_what_to_set(
         self, monkeypatch: pytest.MonkeyPatch
@@ -139,7 +140,7 @@ class TestStatusCommand:
         result = runner.invoke(cli, ["status"])
 
         assert result.exit_code == 1
-        assert "AISVC_ENGINE_URL" in result.output
+        assert "AISVC_ENGINE_URL" in plain(result)
 
     def test_an_unreachable_engine_exits_nonzero(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("AISVC_ENGINE_URL", "http://127.0.0.1:1")
@@ -147,4 +148,4 @@ class TestStatusCommand:
         result = runner.invoke(cli, ["status"])
 
         assert result.exit_code == 1
-        assert "cannot reach" in result.output
+        assert "cannot reach" in plain(result)
