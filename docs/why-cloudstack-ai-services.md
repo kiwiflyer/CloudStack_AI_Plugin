@@ -193,10 +193,18 @@ Terraform support, metering, budgets, autoscaling, and the Tier 2
 differentiators. The test suites pass — engine, plugin, UI and
 provider.
 
-What has not happened: **no CloudStack management server has loaded the
-plugin, and no proxy VM has booted.** Every test that needs a live
-management server, a CKS cluster or a GPU host is skipped. The next
-milestone is a lab deployment that exercises the self-test end to end.
+What has happened since: the engine's CloudStack-facing half now runs
+against a real Apache CloudStack 4.23.0.0. It reads GPU capacity from
+tagged hosts and plans against it correctly, and doing so found two
+defects that every fake had agreed with — one of which would have made
+the platform see no GPU capacity anywhere.
+
+What still has not: **no CloudStack management server has loaded the
+plugin, nothing has been provisioned, and no proxy VM has booted.** The
+write half of the reconciler needs a Kubernetes cluster and has not
+run, and the simulator's hosts are simulated — the API and the schema
+are real, the GPUs are not. The next milestone is a lab deployment with
+actual hardware that exercises the self-test end to end.
 
 Read [PROGRESS.md](../PROGRESS.md) for the unvarnished version and
 [docs/installation.md](installation.md) for what standing it up

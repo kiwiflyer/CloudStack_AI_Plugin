@@ -10,12 +10,14 @@ The tenant sees a familiar API. The operator sees GPUs, quotas, budgets
 and usage records in the same console they already run their cloud from.
 
 > **Status: not production software.** Every milestone is implemented
-> and the test suites are green, but **nothing here has run against a
-> real CloudStack management server.** No plugin has been loaded, no
-> GPU node has booted, no model has served a token.
+> and the test suites are green. The engine's CloudStack side now runs
+> against a real Apache CloudStack 4.23.0.0 — `make stack-up` brings one
+> up — and that is how two bugs were found that every fake had agreed
+> with. But **no plugin has been loaded into a management server, no GPU
+> node has booted, and no model has served a token.**
 > [docs/installation.md](docs/installation.md) ends with an honest list
-> of what has never run, and [PROGRESS.md](PROGRESS.md) keeps the long
-> version.
+> of what has and has not run, and [PROGRESS.md](PROGRESS.md) keeps the
+> long version.
 
 ## How it fits together
 

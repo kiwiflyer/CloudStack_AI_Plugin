@@ -3,10 +3,11 @@
 Every number here is read from the code, not from the specification.
 Where the two disagree the code wins and the row says so.
 
-**Status:** all nine milestones implemented; nothing has run against a
-real management server. [PROGRESS.md](../PROGRESS.md) keeps the
-unvarnished list, and the gaps are marked **·not built** in the tables
-below.
+**Status:** all nine milestones implemented. The engine's
+CloudStack-facing half is verified against a real Apache CloudStack
+4.23.0.0; the write half, the plugin, the UI and the gateway are not.
+[PROGRESS.md](../PROGRESS.md) keeps the unvarnished list, and the gaps
+are marked **·not built** in the tables below.
 
 ---
 
@@ -145,10 +146,19 @@ below.
 ## What the numbers do not cover
 
 Counts and limits are real and read from the code. What they cannot
-tell you is whether any of it works on a management server, and none of
-it has been tried on one: no CloudStack has loaded the plugin, no proxy
-VM has booted, and every test needing a live server, a CKS cluster or a
-GPU host is skipped.
+tell you is how much of it has been exercised against something real.
 
-Treat this sheet as a specification of what is built, not a claim about
-what is proven.
+**Verified against Apache CloudStack 4.23.0.0** (`make stack-up`):
+request signing, `take_snapshot` reading GPU capacity from tagged
+hosts, the capacity planner and its warnings on that observed data,
+`listKubernetesClusters`, `listGpuCards`, `listGpuDevices` and the
+tenant-network lookup — plus all eight database migrations on
+Postgres 16.
+
+**Not verified against anything:** the write half of the reconciler
+(`apply` needs a Kubernetes cluster and there is none), the plugin JAR
+in a management server, the UI section, Terraform acceptance, the
+gateway, and any GPU that is not simulated.
+
+Treat the rest of this sheet as a specification of what is built, not a
+claim about what is proven.

@@ -11,7 +11,8 @@ will bite you.
 > but every integration test that needs a live management server, a CKS
 > cluster or a GPU host is skipped, and `make record` deliberately exits
 > 1. Treat this as a build-and-deploy guide for a lab, not a production
-> runbook. [What has never run](#what-has-never-run) is the honest list.
+> runbook. [What has and has not run](#what-has-and-has-not-run) is the
+> honest list, and `make stack-up` gives you a CloudStack to try it on.
 
 ## What you are installing
 
@@ -525,12 +526,67 @@ exactly one**:
 
 ---
 
-## What has never run
+## Testing it without a management server of your own
 
-Stated plainly so you know what you are walking into:
+`make stack-up` brings up Apache CloudStack 4.23.0.0 (the project's own
+simulator image), Postgres, and MinIO behind a profile. The engine runs
+on your host and reaches them on localhost, so `aisvc plan --observe`
+here is the same code path an operator runs — only the far end is
+simulated.
 
-- **No CloudStack has loaded the plugin.** It compiles and 423 unit
+```bash
+make stack-up
+```
+
+It takes several minutes: the health check waits for the API to answer
+rather than for the container to start, because jetty binds long before
+CloudStack is ready. On Apple Silicon the image runs emulated, which
+works and is slower.
+
+A fresh simulator has an empty database, so deploy a zone and give it
+GPUs before there is anything to observe:
+
+```bash
+docker exec $(docker compose -f deploy/compose/docker-compose.yml ps -q cloudstack) python3 -m marvin.deployDataCenter -i /root/setup/dev/advanced.cfg
+```
+
+Then register API keys for `admin` through CloudStack's own API, tag
+two hosts `h100-sxm`, and create GPU cards and devices on them with
+`createGpuCard` and `createGpuDevice`.
+[`examples/simulator.yaml`](../examples/simulator.yaml) is a spec that
+matches what that leaves you with, and its header has the detail.
+
+```bash
+make stack-down   # and `colima stop` if that is your runtime
+```
+
+**One caveat worth knowing.** The hosts are simulated. The API surface,
+the request signing, the database schema and the responses are a real
+CloudStack; the hypervisors and the GPUs are not. It proves the engine
+talks to CloudStack correctly. It proves nothing about a GPU.
+
+## What has and has not run
+
+Stated plainly so you know what you are walking into.
+
+**Verified against a real CloudStack 4.23.0.0:**
+
+- Request signing, including values containing spaces — which is how a
+  signing bug was found, since every offering a simulator ships has one
+  in its name.
+- `take_snapshot` reading real GPU capacity from tagged hosts, and the
+  capacity planner producing the right plan and warnings from it.
+- `listKubernetesClusters`, `listGpuCards`, `listGpuDevices`, and the
+  tenant-network lookup.
+- All eight database migrations, on Postgres 16 rather than SQLite.
+
+**Still never run:**
+
+- **No CloudStack has loaded the plugin.** It compiles and its unit
   tests pass; it has never been deployed to a management server.
+- **Nothing has been provisioned.** `apply` builds a deployer that
+  needs a Kubernetes cluster, so the write half of the reconciler —
+  `deployVirtualMachine` and everything after it — is unexercised.
 - **No real CloudStack UI has loaded the section.** All 47 Playwright
   specs skip without a live server.
 - **No Terraform acceptance test has run** against a live management

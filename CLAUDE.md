@@ -75,6 +75,15 @@ as unusable and a platform full of idle cards would have refused every deploymen
 The check is now a deny-list, because an allow-list that misses a value fails
 silently everywhere while a deny-list that misses one fails loudly in one place.
 
+**What has actually run against a real CloudStack 4.23.0.0** (`make stack-up`):
+request signing, `take_snapshot` reading GPU capacity from tagged hosts, the
+capacity planner and its warnings on that observed data, `listKubernetesClusters`,
+`listGpuCards`, `listGpuDevices`, the tenant-network lookup, and all eight
+migrations on Postgres. **What has not:** the write half of the reconciler, because
+`apply` builds a deployer that needs a Kubernetes cluster and there is none — so
+`deployVirtualMachine` and everything after it is unexercised. The simulator's
+hosts are simulated: the API, the signing and the schema are real, the GPUs are not.
+
 Before claiming a command works, run it against `make stack-up`, not a fake.
 Before referencing a module, confirm the file exists.
 

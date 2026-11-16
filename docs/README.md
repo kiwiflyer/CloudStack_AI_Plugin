@@ -17,8 +17,9 @@ start depending on why you are here.
 
 - **[installation.md](installation.md)** — the operator-facing install
   and setup guide: prerequisites, the four pieces and the order they go
-  in, every configuration key and environment variable, and an honest
-  list of what has never been run.
+  in, every configuration key and environment variable, how to bring up
+  a CloudStack to test against with `make stack-up`, and an honest list
+  of what has and has not been run.
 - **[feature-spec-sheet.md](feature-spec-sheet.md)** — the
   limits-and-defaults sheet. Every threshold, TTL, supported value and
   surface count, each read from the code rather than the specification.
