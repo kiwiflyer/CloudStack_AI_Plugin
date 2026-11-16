@@ -363,3 +363,104 @@ class TestManagedStateAsCloudStackActuallyReportsIt:
         # optimistically.
         assert not self.device(managedstate="").usable
         assert not self.device().usable
+
+
+class TestDeviceStateAsCloudStackActuallyReportsIt:
+    """`state` was never read, so a broken GPU counted as capacity.
+
+    Found on a live 4.23.0.0 zone, the inverse of the `managedstate`
+    bug above and from the same cause: CloudStack reports two fields
+    about a GPU and the engine read one. Of 112 devices, all 112 came
+    back `managedstate=Managed` — and sixteen of them, every H100 in
+    the zone and the only inference-capable capacity in it, carried
+    `state=Error`. The engine counted 112 usable and 112 free.
+
+    The failure that makes it worth a deny-list of its own is a
+    platform-wide one: the capacity planner reports GPUs that
+    CloudStack will not place anything on, an operator reads a zone
+    with room in it, and every deployment onto those cards fails.
+
+    `GpuDevice.State` in 4.23.0.0 is `Allocated`, `Free`, `Error`,
+    `PartiallyAllocated` — read out of the management server's own
+    source, not the API reference, which was wrong about `managedstate`.
+    Only `Error` means "not capacity": an allocated device is capacity
+    that happens to be in use, which is what `allocated` is for.
+    """
+
+    def device(self, **raw: object) -> GpuDevice:
+        return GpuDevice.from_api(
+            {
+                "id": "d1",
+                "hostid": "h1",
+                "gpucardname": "NVIDIA H100 80GB HBM3",
+                "managedstate": "Managed",
+                **raw,
+            }
+        )
+
+    def test_a_device_in_error_is_not_capacity(self) -> None:
+        # The bug, stated plainly. CloudStack will not place anything
+        # on this device; neither should the planner promise it.
+        device = self.device(state="Error")
+
+        assert not device.usable
+        assert not device.free
+
+    def test_a_free_device_is_capacity(self) -> None:
+        device = self.device(state="Free")
+
+        assert device.usable
+        assert device.free
+
+    def test_an_allocated_device_is_capacity_in_use(self) -> None:
+        # Not the same as broken: it counts toward the total, and
+        # `allocated` is what keeps it out of the free pool.
+        device = self.device(state="Allocated", virtualmachineid="vm-1")
+
+        assert device.usable
+        assert device.allocated
+        assert not device.free
+
+    def test_cloudstack_calling_it_allocated_is_enough(self) -> None:
+        # Two fields again. If the server says allocated, it is
+        # allocated, whether or not this caller can see the VM.
+        device = self.device(state="Allocated")
+
+        assert device.allocated
+        assert not device.free
+
+    def test_partially_allocated_still_has_room(self) -> None:
+        # A vGPU parent with profiles left on it. Not an error, and
+        # not fully taken.
+        device = self.device(state="PartiallyAllocated")
+
+        assert device.usable
+
+    def test_an_unrecognised_state_counts_rather_than_vanishing(self) -> None:
+        assert self.device(state="SomethingNew").usable
+
+    def test_an_absent_state_is_not_a_fault(self) -> None:
+        """The asymmetry with `managedstate`, deliberately.
+
+        An absent `managedstate` leaves the primary question — is
+        CloudStack managing this device at all — unanswered, so the
+        device is distrusted. `state` answers a narrower one: is this
+        device currently faulted. A response that never mentions it
+        reports no fault, and treating silence as a fault would make
+        any server that trims the field a zero-capacity platform,
+        which is precisely how the `managedstate` bug failed.
+        """
+        assert self.device().usable
+        assert self.device(state="").usable
+
+    def test_both_fields_have_to_agree(self) -> None:
+        assert not self.device(managedstate="Unmanaged", state="Free").usable
+        assert not self.device(managedstate="Managed", state="Error").usable
+        assert self.device(managedstate="Managed", state="Free").usable
+
+    def test_a_host_of_faulted_cards_offers_no_capacity(self) -> None:
+        # What the live zone looked like: every H100 in Error.
+        devices = [self.device(id=f"d{i}", state="Error") for i in range(8)]
+
+        assert sum(1 for d in devices if d.free) == 0
+        assert sum(1 for d in devices if d.usable) == 0

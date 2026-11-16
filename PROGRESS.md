@@ -3798,3 +3798,74 @@ a harness script selecting `api_key` from `cloud.user` fails with
 `Unknown column` on 4.23.
 
 1,988 unit tests and 451 JUnit tests pass.
+
+## A broken GPU counted as capacity
+
+The same shape as the `managedstate` bug, inverted, and found the same
+way — by asking a real management server rather than a fake.
+
+CloudStack reports two fields about a GPU device. `GpuDevice` read
+one. `state` was not in the model at all, so it was never parsed,
+never compared, never thought about.
+
+On the live zone that reads:
+
+```
+112 devices, all managedstate=Managed
+  state=Free   96   the simulator's own basic graphics cards
+  state=Error  16   every H100 — the only inference-capable capacity
+```
+
+The engine saw 112 usable and 112 free, and `h100-8x` reported
+`gpus_total=16, gpus_free=16, gpus_unusable=0`: a zone with eight
+nodes' worth of H100s free in it, none of which CloudStack would place
+anything on.
+
+That is the bad kind of failure. It is not one deployment failing
+loudly; it is the capacity planner — the thing an operator reads to
+decide whether a zone can take work — reporting capacity that does not
+exist, everywhere, with nothing to say it is wrong.
+
+`GpuDevice.State` in 4.23.0.0 is `Allocated`, `Free`, `Error`,
+`PartiallyAllocated`, read out of the management server's own source
+rather than the API reference, which had already been wrong about the
+field beside it. Only `Error` means "not capacity"; an allocated
+device is capacity in use. `allocated` now also believes `state` on
+its own, so a device CloudStack calls allocated stays out of the free
+pool whether or not this caller can see the VM holding it.
+`PartiallyAllocated` is deliberately not in that set — a vGPU parent
+with profiles left on it still has room.
+
+Absence is read differently for the two fields, on purpose. A missing
+`managedstate` leaves the primary question — is CloudStack managing
+this device — unanswered, so the device is distrusted. A missing
+`state` reports no fault. Treating silence as a fault would make any
+server that trims the field a zero-capacity platform, which is
+precisely how the `managedstate` bug failed.
+
+Ten tests went in first; four failed, for the two reasons above. After
+the fix, the same live zone reads:
+
+```
+engine: 96 usable, 96 free, 16 faulted and excluded
+h100-8x: gpus_total=16  gpus_unusable=16  gpus_free=0
+H100s: 16 present, 0 counted as free
+```
+
+which is what CloudStack thinks too.
+
+The CLI's `plan` could not be used to show this, because `--observe`
+needs a Kubernetes cluster and the zone has none. It said so clearly,
+twice, which is the guard from the mTLS session working as intended:
+
+```
+Could not fetch a kubeconfig: CloudStack lists no Kubernetes cluster
+named 'sandbox-cks' ...
+Cannot reach Kubernetes: set KUBECONFIG, or run the engine
+in-cluster, or pass --no-observe ...
+```
+
+So the evidence here is at the snapshot layer, where the bug was. The
+planner's own warning text on this data has still not been seen.
+
+1,997 unit tests pass.

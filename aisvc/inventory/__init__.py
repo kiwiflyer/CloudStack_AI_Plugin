@@ -95,6 +95,7 @@ class GpuDevice:
     card_name: str
     bus_address: str = ""
     managed_state: str = ""
+    state: str = ""
     numa_node: str = ""
     device_type: str = ""
     parent_id: str | None = None
@@ -104,7 +105,16 @@ class GpuDevice:
 
     @property
     def allocated(self) -> bool:
-        return bool(self.virtual_machine_id)
+        """Held by a VM, by either of the two signals CloudStack gives.
+
+        A visible `virtualmachineid` is the usual one. `state` is the
+        other, and it is believed on its own: if the server says the
+        device is allocated, it is allocated, whether or not this
+        caller can see what holds it.
+        """
+        if self.virtual_machine_id:
+            return True
+        return self.state.strip().lower() in self.ALLOCATED_STATES
 
     #: States that mean CloudStack will not place anything on this
     #: device. Measured against 4.23.0.0, which reports `Managed` or
@@ -112,33 +122,65 @@ class GpuDevice:
     #: in case some release returns it.
     NOT_USABLE = frozenset({"unmanaged", "disabled"})
 
+    #: Device states that mean the same thing about the device itself.
+    #: `GpuDevice.State` in 4.23.0.0 is `Allocated`, `Free`, `Error`,
+    #: `PartiallyAllocated` — read out of the management server's own
+    #: source, because the API reference was wrong about the field
+    #: beside it. Only `Error` says "not capacity"; an allocated
+    #: device is capacity in use, which `allocated` already covers.
+    FAULTED_STATES = frozenset({"error"})
+
+    #: States in which CloudStack considers the whole device taken,
+    #: whether or not this caller can see the VM holding it.
+    #: `PartiallyAllocated` is deliberately absent: a vGPU parent with
+    #: profiles left on it still has room.
+    ALLOCATED_STATES = frozenset({"allocated"})
+
     @property
     def usable(self) -> bool:
         """Whether this device is capacity at all.
 
-        A deny-list, not an allow-list, and the asymmetry is the point.
-        This used to test `== "Enabled"` — a value 4.23.0.0 never
-        returns — so every real GPU read as unusable, every class
-        counted zero, and a platform with idle cards everywhere would
-        have refused every deployment for want of capacity, with
-        nothing in the logs naming the cause.
+        CloudStack reports two fields about a GPU and both have to
+        agree: `managedstate` (is it managed) and `state` (is it
+        faulted). Reading only one is how this went wrong twice.
 
-        An allow-list that misses a value fails exactly that way:
-        silently, everywhere, invisibly. A deny-list that misses one
-        lets a single placement fail where an operator can see it. Of
-        the two, the loud local failure is the one to prefer.
+        Both are deny-lists, not allow-lists, and the asymmetry is the
+        point. `usable` used to test `managedstate == "Enabled"` — a
+        value 4.23.0.0 never returns — so every real GPU read as
+        unusable, every class counted zero, and a platform with idle
+        cards everywhere would have refused every deployment, with
+        nothing in the logs naming the cause. An allow-list that
+        misses a value fails exactly that way: silently, everywhere,
+        invisibly. A deny-list that misses one lets a single placement
+        fail where an operator can see it. Of the two, the loud local
+        failure is the one to prefer.
 
-        A device reporting no state at all is the exception, and stays
-        unusable: that is a response to distrust rather than a value to
-        interpret.
+        Absence is read differently for each field, which the bodies
+        below explain: a missing `managedstate` is distrusted, a
+        missing `state` reports no fault.
         """
-        state = self.managed_state.strip().lower()
-        if not state:
+        if self.state.strip().lower() in self.FAULTED_STATES:
+            # The second field, and the second way to read as capacity
+            # something CloudStack will place nothing on. Found live:
+            # every H100 in the zone was `Managed` and `Error` at once,
+            # and the planner counted all of them.
+            #
+            # Absent is handled differently here than below, and the
+            # asymmetry is deliberate. A missing `managedstate` leaves
+            # the primary question unanswered, so the device is
+            # distrusted; a missing `state` reports no fault. Treating
+            # silence as a fault would make any server that trims the
+            # field a zero-capacity platform, which is exactly how the
+            # `managedstate` bug failed.
+            return False
+
+        managed = self.managed_state.strip().lower()
+        if not managed:
             # Absent is not the same as unrecognised. A response that
             # never mentioned the field is one to distrust, not one to
             # read optimistically — do not invent capacity out of it.
             return False
-        return state not in self.NOT_USABLE
+        return managed not in self.NOT_USABLE
 
     @property
     def free(self) -> bool:
@@ -156,6 +198,7 @@ class GpuDevice:
             card_name=str(raw.get("gpucardname", "")),
             bus_address=str(raw.get("busaddress", "")),
             managed_state=str(raw.get("managedstate", "")),
+            state=str(raw.get("state", "")),
             numa_node=str(raw.get("numanode", "")),
             device_type=str(raw.get("gpudevicetype", "")),
             parent_id=str(raw["parentgpudeviceid"]) if raw.get("parentgpudeviceid") else None,

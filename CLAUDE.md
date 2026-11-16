@@ -75,7 +75,7 @@ rendering must flow through `config_hash` or convergence breaks silently.
 rollout state to desync. A spec change on a `bluegreen` model creates the other colour; the
 live one keeps serving until an operator promotes.
 
-**Two things a real management server corrected, both of which a fake had agreed
+**Three things a real management server corrected, all of which a fake had agreed
 with.** Request signing encodes a space as `%20`, not `+` — CloudStack's servlet
 decodes `+` back to a space and re-encodes it as `%20` before verifying, so every
 call carrying a space in a value was rejected, and the test pinned `name=my+host`
@@ -84,6 +84,22 @@ in place. And `GpuDevice.usable` tested for `managedstate == "Enabled"`, a value
 as unusable and a platform full of idle cards would have refused every deployment.
 The check is now a deny-list, because an allow-list that misses a value fails
 silently everywhere while a deny-list that misses one fails loudly in one place.
+
+**And a third, found the same way: `GpuDevice` read one of the two fields
+CloudStack gives about a GPU.** `state` was never parsed at all. On the live
+zone all 112 devices were `managedstate=Managed` while sixteen of them — every
+H100, the only inference-capable capacity there — carried `state=Error`, so the
+engine counted 16 usable, 16 free, and the class reported a zone with room in
+it. `GpuDevice.State` is `Allocated`, `Free`, `Error`, `PartiallyAllocated`
+(read from the management server's source, since the API reference was wrong
+about the field beside it); only `Error` means "not capacity", and `Allocated`
+now marks a device taken even where this caller cannot see the VM holding it.
+Absence is read differently for the two fields on purpose: a missing
+`managedstate` leaves the primary question unanswered and is distrusted, while a
+missing `state` reports no fault — treating silence as a fault would make any
+server that trims the field a zero-capacity platform, which is exactly how the
+`managedstate` bug failed. **Whenever CloudStack reports two fields about one
+thing, read both.**
 
 **What has actually run against a real CloudStack 4.23.0.0** (`make stack-up`):
 request signing, `take_snapshot` reading GPU capacity from tagged hosts, the
