@@ -171,7 +171,10 @@ class TestChoosingWhichCluster:
         assert cluster_for_kubeconfig([("east", "shared"), ("west", "shared")]) == "shared"
 
 
-def test_the_exceptions_are_distinct() -> None:
+def test_the_exceptions_do_not_catch_each_other() -> None:
     # A kubeconfig that cannot be fetched is not a cluster that cannot
     # be built; they happen at different times with different fixes.
-    assert KubeconfigUnavailable is not ClusterUnbuildable
+    # Neither may inherit from the other, or an `except` for one would
+    # silently swallow the other.
+    assert not issubclass(KubeconfigUnavailable, ClusterUnbuildable)
+    assert not issubclass(ClusterUnbuildable, KubeconfigUnavailable)
