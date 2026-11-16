@@ -34,8 +34,13 @@ worker (`aisvc batch`) has no leader election, so run one.
 **A Kubernetes LoadBalancer Service cannot be placed on a chosen network.** The
 CloudStack cloud-controller-manager takes a service's network from the nodes' first
 NIC; `loadBalancerIP` only picks among public IPs the account already holds. That is
-why a private endpoint is a proxy VM on the tenant's tier and not a Service. `ui/` has the section, screens and strings but has
-never been loaded by a real CloudStack UI, and its Playwright specs have never run. `terraform/` builds and unit-tests (v1 and v2) but
+why a private endpoint is a proxy VM on the tenant's tier and not a Service. `ui/` **compiles inside a real CloudStack UI** — the section, its eleven views and
+its utils were copied into a 4.23.0.0 tree, registered in `router.js`, and built
+by its own webpack with no errors and no lint complaints, appearing in the served
+`app.js`. Its Playwright specs still have never run: they assert the section is
+*visible* per role, and the section gates fifteen AI commands that a CloudStack
+without the plugin does not advertise — verified against a live `listApis`, which
+returned none of them. The gate works; there is nothing behind it yet. `terraform/` builds and unit-tests (v1 and v2) but
 its acceptance tests have never run against a live management server.
 `setup` plans the self-test but cannot run it: the steps need GPU capacity, so
 section 14's first acceptance criterion is not yet met. Host maintenance drains
@@ -83,6 +88,13 @@ migrations on Postgres. **What has not:** the write half of the reconciler, beca
 `apply` builds a deployer that needs a Kubernetes cluster and there is none — so
 `deployVirtualMachine` and everything after it is unexercised. The simulator's
 hosts are simulated: the API, the signing and the schema are real, the GPUs are not.
+
+**`call_paged` stops on the server's `count`, not only on a short page.** Some
+commands ignore `page` and `pagesize` entirely — `listApis` on 4.23.0.0 returns
+all 865 every time — and 865 is never shorter than a 500-row page, so the old
+rule never fired and the call hung, accumulating the same rows. A page cap turns
+a server reporting neither signal into an error instead of a reconcile that holds
+its database connection forever.
 
 **The engine client presents its certificate through an `ssl.SSLContext`**, never
 httpx's `cert=`. That parameter is deprecated in httpx 0.28 and **silently sends

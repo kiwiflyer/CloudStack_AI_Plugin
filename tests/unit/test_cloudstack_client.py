@@ -417,3 +417,78 @@ class TestASpaceIsSignedAsPercentTwenty:
 
     def test_ordinary_values_are_unchanged(self) -> None:
         assert canonical_query({"command": "listZones"}) == "command=listzones"
+
+
+class TestPagingTerminatesOnACommandThatIgnoresIt:
+    """`call_paged` looped forever on `listApis`.
+
+    Measured against a real 4.23.0.0 server: `listApis` ignores `page`
+    and `pagesize` entirely and returns all 865 commands every time.
+    The pager stopped only when a page came back *shorter* than the
+    page size, and 865 is never shorter than 500 — so it requested
+    page after page, accumulating the same 865 rows, and never
+    returned.
+
+    Nothing in the engine pages `listApis` today, so this was latent.
+    It is still the worst failure a reconciler can have: a run that
+    holds its database connection and never finishes, with no error.
+
+    The server says `count`, which terminates whatever the paging
+    behaviour, and a page cap catches anything that reports neither.
+    """
+
+    def ignoring_pager(
+        self, total: int = 865
+    ) -> tuple[Callable[[httpx.Request], httpx.Response], list[int]]:
+        """A server that returns everything regardless of the page asked for."""
+        rows = [{"name": f"cmd{i}"} for i in range(total)]
+        seen: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(int(request.url.params.get("page", 1)))
+            return ok({"listapisresponse": {"count": total, "api": rows}})
+
+        return handler, seen
+
+    async def test_it_returns_instead_of_looping(self) -> None:
+        handler, seen = self.ignoring_pager()
+        async with client(handler) as cl:
+            got = await cl.call_paged("listApis", "api")
+
+        assert len(got) == 865
+        assert seen == [1], f"asked for pages {seen}; it should have stopped after one"
+
+    async def test_a_well_behaved_command_still_pages(self) -> None:
+        pages = {1: 500, 2: 500, 3: 20}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            page = int(request.url.params.get("page", 1))
+            rows = [{"id": f"h{page}-{i}"} for i in range(pages.get(page, 0))]
+            return ok({"listhostsresponse": {"count": 1020, "host": rows}})
+
+        async with client(handler) as cl:
+            got = await cl.call_paged("listHosts", "host", page_size=500)
+
+        assert len(got) == 1020
+
+    async def test_a_response_with_no_count_still_stops_on_a_short_page(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            page = int(request.url.params.get("page", 1))
+            rows = [{"id": str(i)} for i in range(3 if page == 1 else 0)]
+            return ok({"listzonesresponse": {"zone": rows}})
+
+        async with client(handler) as cl:
+            got = await cl.call_paged("listZones", "zone", page_size=500)
+
+        assert len(got) == 3
+
+    async def test_a_server_reporting_neither_is_capped_not_hung(self) -> None:
+        # Neither a count nor a short page: without a cap this is the
+        # original hang. An error an operator can read beats a run that
+        # never ends.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return ok({"listhostsresponse": {"host": [{"id": "h"} for _ in range(2)]}})
+
+        async with client(handler) as cl:
+            with pytest.raises(CloudStackError, match="page"):
+                await cl.call_paged("listHosts", "host", page_size=2)

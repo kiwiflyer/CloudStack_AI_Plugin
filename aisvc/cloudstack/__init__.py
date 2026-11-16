@@ -113,6 +113,12 @@ def sign(params: Mapping[str, object], secret_key: str) -> str:
     return base64.b64encode(digest).decode("ascii")
 
 
+#: How many pages to ask for before concluding the server is not
+#: paging at all. No honest listing reaches this: at the default page
+#: size it is a quarter of a million rows.
+MAX_PAGES = 500
+
+
 class CloudStackClient:
     """Async CloudStack API client.
 
@@ -248,7 +254,18 @@ class CloudStackClient:
         page_size: int = 500,
         **params: object,
     ) -> list[dict[str, Any]]:
-        """Follow `page`/`pagesize` until the server runs out of items."""
+        """Follow `page`/`pagesize` until the server runs out of items.
+
+        Three ways to stop, because one is not enough. The server's own
+        `count` is the reliable one: some commands ignore `page` and
+        `pagesize` altogether and return everything every time —
+        `listApis` on 4.23.0.0 returns all 865 commands whatever is
+        asked of it, and 865 is never shorter than a 500-row page, so
+        stopping only on a short page meant never stopping. A short
+        page still ends it where no count is reported, and a cap turns
+        a server that reports neither into an error rather than a run
+        that holds its database connection forever.
+        """
         items: list[dict[str, Any]] = []
         page = 1
         while True:
@@ -257,9 +274,19 @@ class CloudStackClient:
             if not isinstance(batch, list):
                 raise CloudStackError(f"{command}: {item_key!r} is not a list")
             items.extend(batch)
+
+            total = body.get("count")
+            if isinstance(total, int) and len(items) >= total:
+                return items
             if len(batch) < page_size:
                 return items
+
             page += 1
+            if page > MAX_PAGES:
+                raise CloudStackError(
+                    f"{command}: still returning full pages after {MAX_PAGES} of "
+                    f"them and reporting no usable count; refusing to keep asking"
+                )
 
     # -- async jobs -------------------------------------------------------
 

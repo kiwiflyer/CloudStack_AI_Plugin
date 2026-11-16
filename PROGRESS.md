@@ -3654,3 +3654,55 @@ acceptance tests remain unrun — they would also need the plugin JAR
 loaded, since they call commands only it registers.
 
 1,984 unit tests pass.
+
+## The UI section, inside a real CloudStack UI
+
+The simulator image runs CloudStack's own UI on port 5050, so the
+section could be installed the way an operator would: the config, its
+eleven views and its utils copied into `/root/ui/src`, and registered
+in `router.js` — two of the four files CLAUDE.md lists as needed in
+CloudStack's own tree.
+
+Webpack rebuilt it with **no errors, no lint complaints naming our
+files**, and `aiservices` appears seven times in the served `app.js`.
+The section compiles and ships inside a genuine CloudStack UI build,
+through its real vue-loader and eslint pipeline rather than ours.
+
+### The Playwright specs still cannot run, and now we know exactly why
+
+They sign in and assert the section is *visible* per role. The section
+gates fifteen AI commands on `permission`, and a live `listApis`
+returned **none** of them, because the plugin is not loaded. So every
+AI route is dropped before it renders.
+
+That is the documented behaviour — "CloudStack drops a route whose
+permission is missing from `listApis`, so the plugin's setting is the
+only switch" — confirmed against a real server for the first time. The
+gate works. There is nothing behind it until the plugin JAR is in the
+management server, which means rebuilding CloudStack's client module
+inside the container.
+
+101 Vitest unit tests pass, as before.
+
+## `call_paged` hung on a command that ignores paging
+
+Found while asking the live server which APIs it advertises: the call
+never returned. `listApis` ignores `page` and `pagesize` and returns
+all 865 commands every time, and the pager stopped only when a page
+came back *shorter* than the page size. 865 is never shorter than 500,
+so it asked for page after page, accumulating the same rows.
+
+Nothing in the engine pages `listApis`, so it was latent — but it is
+the worst failure a reconciler can have: a run that holds its database
+connection and never finishes, with no error to read.
+
+It stops on the server's `count` now, falls back to a short page where
+none is reported, and caps the page count so a server reporting
+neither is an error rather than a hang. The call that never returned
+now takes 1.9 seconds.
+
+All eight commands the engine actually pages were checked against the
+live server and honour paging correctly, so nothing was silently
+truncated.
+
+1,988 unit tests pass.
