@@ -14,7 +14,7 @@ Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`,
 (`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
 
 v2 is reachable through the engine API, the CLI and now CloudStack: the Java
-plugin generates all nineteen `Release.V2` commands, but registers them only when
+plugin generates all twenty `Release.V2` commands, but registers them only when
 `ai.services.v2.enabled` is on (global, default false), so a GA install does not
 advertise an API for features it does not run. The UI has the v2 screens — adapters, batches, certificates,
 private endpoints, guardrails and an evaluations tab — gated by nothing of their own:
@@ -38,10 +38,14 @@ why a private endpoint is a proxy VM on the tenant's tier and not a Service. `ui
 its utils were copied into a 4.23.0.0 tree, registered in `router.js`, and built
 by its own webpack to `Compiled successfully`, appearing seven times in the served
 `app.js`. **The compiler writes to stdout, not the supervisor log file** — a grep of
-the latter will report no errors whatever happened. Its Playwright specs still have never run: they assert the section is
-*visible* per role, and the section gates fifteen AI commands that a CloudStack
-without the plugin does not advertise — verified against a live `listApis`, which
-returned none of them. The gate works; there is nothing behind it yet. `terraform/` builds and unit-tests (v1 and v2) but
+the latter will report no errors whatever happened. Its Playwright specs still have never run: they assert the section
+is *visible* per role, and its nineteen route-level `permission` entries name
+seventeen distinct commands, twelve v1 and five v2. Both halves of that gate are
+now proven against a live server — without the plugin `listApis` advertised none
+of them, and with it loaded all twelve v1 ones are there (thirty-eight in all)
+while the five v2 routes drop, which is what the `ai.services.v2.enabled` default
+is supposed to do. What has not run is the UI against the loaded
+plugin: the two were verified in separate management servers, never the same one. `terraform/` builds and unit-tests (v1 and v2) but
 its acceptance tests have never run against a live management server.
 `setup` plans the self-test but cannot run it: the steps need GPU capacity, so
 section 14's first acceptance criterion is not yet met. Host maintenance drains
@@ -85,10 +89,38 @@ silently everywhere while a deny-list that misses one fails loudly in one place.
 request signing, `take_snapshot` reading GPU capacity from tagged hosts, the
 capacity planner and its warnings on that observed data, `listKubernetesClusters`,
 `listGpuCards`, `listGpuDevices`, the tenant-network lookup, and all eight
-migrations on Postgres. **What has not:** the write half of the reconciler, because
-`apply` builds a deployer that needs a Kubernetes cluster and there is none — so
-`deployVirtualMachine` and everything after it is unexercised. The simulator's
-hosts are simulated: the API, the signing and the schema are real, the GPUs are not.
+migrations on Postgres. **And now the Java plugin itself** — built, installed and
+loaded into the running management server. All thirty-eight v1 commands register
+(`listApis` goes from 865 to 903, exactly the thirty-eight) while the nineteen v2
+commands stay away, so the `ai.services.v2.enabled` gate holds on a real server;
+`AiServicesSchema` creates `ai_deployment` at startup; all ten `ai.services.*`
+ConfigKeys appear in `listConfigurations`, `engine.tls.client.key` among them in
+the `Secure` category, which until now had only been read out of the bytecode; and
+a signed `listAiModels` travels the whole way in — dispatch, RBAC, the manager,
+the engine client — to be refused with *"mTLS is required to call the AI Services
+engine; set ai.services.engine.tls.client.cert"*. **What has not:** the write half
+of the reconciler, because `apply` builds a deployer that needs a Kubernetes
+cluster and there is none — so `deployVirtualMachine` and everything after it is
+unexercised; and no AI command has yet reached a running engine, because nothing
+has pointed the plugin's TLS settings at one. The simulator's hosts are simulated:
+the API, the signing and the schema are real, the GPUs are not.
+
+**A plugin that fails to wire is not an optional plugin — it is a dead management
+server.** The Spring context declared the manager and never `AiDeploymentDaoImpl`,
+the one injected type CloudStack's own contexts cannot supply, so
+`DefaultModuleDefinitionSet` threw `Failed to load module [ai-services]` and Jetty
+reported `Failed startup of context /client`: no API at all, for anything. The
+first load into a real server is the only thing that could have shown this — 451
+Java unit tests passed throughout, because they construct the manager directly and
+set its fields. `SpringContextTest` now walks `AiServicesManagerImpl`'s `@Inject`
+fields and fails on any type in `org.apache.cloudstack.ai.*` without a bean. Note
+what this means for `AiServicesSchema`'s "logged, never fatal" promise: that holds
+for *table creation*, not for bean wiring, where there is no such thing as a
+non-fatal failure.
+
+**API keys moved out of `cloud.user` in 4.21+.** They live in `api_keypair`
+(a user may hold several), so a harness script that selects `api_key` from
+`cloud.user` fails with `Unknown column` on 4.23.
 
 **`call_paged` stops on the server's `count`, not only on a short page.** Some
 commands ignore `page` and `pagesize` entirely — `listApis` on 4.23.0.0 returns

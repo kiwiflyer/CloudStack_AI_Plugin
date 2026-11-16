@@ -20,6 +20,14 @@
        xsi:schemaLocation="http://www.springframework.org/schema/beans
                            http://www.springframework.org/schema/beans/spring-beans.xsd">
 
+  <!--
+    The ownership DAO. CloudStack's core context supplies its own DAOs
+    (DomainDao, HostDao, VMInstanceDao); a type this plugin defines is
+    one only this context can declare, and without it the manager's
+    @Inject goes unsatisfied and CloudStack refuses the whole module.
+  -->
+  <bean id="aiDeploymentDaoImpl" class="org.apache.cloudstack.ai.dao.AiDeploymentDaoImpl"/>
+
   <bean id="aiServicesManagerImpl" class="org.apache.cloudstack.ai.AiServicesManagerImpl">
     <property name="name" value="AiServicesManager"/>
   </bean>

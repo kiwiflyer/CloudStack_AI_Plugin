@@ -3714,3 +3714,87 @@ live server and honour paging correctly, so nothing was silently
 truncated.
 
 1,988 unit tests pass.
+
+## The plugin, loaded into a real management server
+
+Everything before this had tested the plugin's *parts*: 451 JUnit tests,
+a generator checked against the engine's command map, a command list
+compared with SPEC section 9. None of it had ever been loaded by
+CloudStack. Loading it found the one defect that only loading could.
+
+### The Spring context never declared the DAO
+
+`AiServicesManagerImpl` injects four DAOs. Three — `DomainDao`,
+`HostDao`, `VMInstanceDao` — come from CloudStack's own contexts. The
+fourth, `AiDeploymentDao`, is ours, and ours is the only context that
+can supply it. The context declared the manager and nothing else.
+
+CloudStack found the module, tried to build it, and gave up:
+
+```
+Failed to load module [ai-services]
+  Error creating bean 'aiServicesManagerImpl':
+  Unsatisfied dependency 'deploymentDao';
+  No qualifying bean of type org.apache.cloudstack.ai.dao.AiDeploymentDao
+```
+
+The important part is what happened next: Jetty reported `Failed
+startup of context /client`. Not a disabled plugin — **no management
+server API at all, for anything**. The bundled schema class is written
+so a failure is logged and never fatal, and that is still right for
+table creation; it says nothing about bean wiring, where there is no
+such thing as a non-fatal failure. An optional plugin that cannot wire
+takes the whole server down with it.
+
+Every unit test passed throughout, because they construct the manager
+directly and set its fields. `SpringContextTest` now walks the
+manager's `@Inject` fields and fails on any type under
+`org.apache.cloudstack.ai.*` that no bean declares, and checks that
+every class the XML names is on the classpath — a typo there is the
+same outage, found at startup instead of at compile time.
+
+### What the load then proved
+
+With the bean declared, the server came up and the plugin with it:
+
+- **All 38 v1 commands register.** `listApis` goes from 865 to 903 —
+  exactly the thirty-eight, no more.
+- **The v2 gate holds on a real server.** None of the twenty
+  `Release.V2` commands appears while `ai.services.v2.enabled` is
+  false, which is the whole reason that setting exists.
+- **`AiServicesSchema` creates `ai_deployment` at startup**, ten
+  columns, in CloudStack's own MariaDB. It had never run.
+- **All ten `ai.services.*` ConfigKeys appear in
+  `listConfigurations`** with the categories they were given —
+  `engine.tls.client.key` as `Secure`, which until now had only been
+  confirmed by reading `ConfigurationVO` bytecode.
+- **A signed `listAiModels` travels the whole way in** — dispatch,
+  RBAC, the manager, the engine client — and is refused with
+  *"mTLS is required to call the AI Services engine; set
+  ai.services.engine.tls.client.cert"*. The rule that the mTLS
+  requirement is never a fallback now holds against a real caller, not
+  a unit test.
+- **Both halves of the UI's API gate are now proven.** Without the
+  plugin the live server advertised none of the commands the section's
+  routes name; with it loaded, all twelve v1 ones are there and the
+  five v2 ones are not. The section's nineteen route-level
+  `permission` entries name seventeen distinct commands, and all 53 AI
+  commands the section references are known to the engine's map — the
+  Vitest guard that asserts this was independently confirmed against
+  the live `listApis`.
+
+### What is still not true
+
+No AI command has reached a running engine. The refusal above is the
+plugin declining to call one, which is the correct behaviour and not
+the same thing as a round trip: nothing has pointed
+`ai.services.engine.urls` and the TLS settings at the engine that is
+already running with mTLS on loopback. The UI and the plugin have also
+never been in the same management server — each was verified in its
+own — so the Playwright specs still have not run.
+
+API keys moved out of `cloud.user` in 4.21+ and live in `api_keypair`;
+a harness script selecting `api_key` from `cloud.user` fails with
+`Unknown column` on 4.23.
+
+1,988 unit tests and 451 JUnit tests pass.
