@@ -36,8 +36,9 @@ CloudStack cloud-controller-manager takes a service's network from the nodes' fi
 NIC; `loadBalancerIP` only picks among public IPs the account already holds. That is
 why a private endpoint is a proxy VM on the tenant's tier and not a Service. `ui/` **compiles inside a real CloudStack UI** — the section, its eleven views and
 its utils were copied into a 4.23.0.0 tree, registered in `router.js`, and built
-by its own webpack with no errors and no lint complaints, appearing in the served
-`app.js`. Its Playwright specs still have never run: they assert the section is
+by its own webpack to `Compiled successfully`, appearing seven times in the served
+`app.js`. **The compiler writes to stdout, not the supervisor log file** — a grep of
+the latter will report no errors whatever happened. Its Playwright specs still have never run: they assert the section is
 *visible* per role, and the section gates fifteen AI commands that a CloudStack
 without the plugin does not advertise — verified against a live `listApis`, which
 returned none of them. The gate works; there is nothing behind it yet. `terraform/` builds and unit-tests (v1 and v2) but

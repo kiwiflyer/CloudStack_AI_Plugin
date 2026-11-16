@@ -3663,8 +3663,16 @@ eleven views and its utils copied into `/root/ui/src`, and registered
 in `router.js` — two of the four files CLAUDE.md lists as needed in
 CloudStack's own tree.
 
-Webpack rebuilt it with **no errors, no lint complaints naming our
-files**, and `aiservices` appears seven times in the served `app.js`.
+Webpack rebuilt it and reported **`DONE Compiled successfully`**, with
+`aiservices` appearing seven times in the served `app.js`.
+
+A correction to how that was first checked: the claim of "no errors"
+came from grepping the supervisor log file, and the compiler writes to
+stdout instead — `docker logs` showed two failures before the success,
+both from incomplete edits of mine (a malformed import, then an import
+registered nowhere). The conclusion holds, because the served bundle
+is independent evidence, but the check that was cited for it was
+looking at the wrong stream.
 The section compiles and ships inside a genuine CloudStack UI build,
 through its real vue-loader and eslint pipeline rather than ours.
 
