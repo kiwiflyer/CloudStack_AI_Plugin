@@ -4635,3 +4635,85 @@ engine checks the SAN against the domain, and the message reached the
 operator because of the error passthrough added two entries ago.
 
 2,013 unit, 457 JUnit and 106 Vitest tests pass.
+
+## The Marvin tests, run
+
+Written last entry and immediately suspect, on the week's evidence:
+code that compiles, passes its tests and has never executed. It took
+four rounds to get them green, and **every failure was in the test**.
+
+### `nosetests` cannot run any Marvin test here
+
+`nose` imports `imp`, which Python 3.12 removed. So it cannot be
+imported at all, and neither can any of CloudStack's own integration
+tests, every one of which imports `nose.plugins.attrib`. The
+documented runner is unavailable on a current image.
+
+Nothing in Marvin needs it. Its plugin builds a test client and hangs
+it on the test class; `run_without_nose.py` does that and runs the
+suite under plain `unittest`. The `attr` import in the test is now
+tolerant of nose's absence, since the decorator only tags a test for
+selection.
+
+### Four rounds
+
+```
+Account.create() got an unexpected keyword argument 'accounttype'
+    Marvin's own rule is
+    cmd.accounttype = 2 if (admin and domainid) else int(admin)
+
+object of type 'NoneType' has no len()
+    apiclient.id is None unless the client has an identifier, and
+    Account.create builds a username out of it — marvinPlugin sets
+    it, and nothing else does
+
+list indices must be integers, not str
+    marvinRequest unwraps the envelope: a list of jsonLoader objects
+    with .name, not {"api": [...]}
+
+AssertionError: 15 admin-only commands were not refused for a tenant
+```
+
+The last one looked like a serious product defect — `drainAiNode`,
+`publishAiModel` and `listAiGpuCapacity` all apparently reachable by
+an ordinary user. It was not, and the reason it was worth doubting is
+that the same tenant had been refused `listAiGpuCapacity` by hand an
+hour earlier.
+
+`cloudstackTestCase.tearDown` empties `self.cleanup` after **every**
+test. The domain and both accounts were in `cls.cleanup`, so they
+were deleted once `test_01` finished, and the five tests after it ran
+against accounts that no longer existed. A call then fails for a
+reason that is not a refusal, and `refused()` answers False — so
+every admin-only command read as permitted.
+
+**A broken client makes everything look allowed.** `test_07` exists
+for precisely that failure and had been failing all along, which is
+what a guard is for. Resources now live in `cls.created` and are
+cleaned in `tearDownClass`.
+
+### Green
+
+```
+test_01_root_admin_v1     ok      test_04_root_admin_v2     ok
+test_02_domain_admin_v1   ok      test_05_domain_admin_v2   ok
+test_03_user_v1           ok      test_06_user_v2           ok
+test_07_the_check_can_see_a_refusal                         ok
+
+Ran 7 tests in 141.807s — OK
+```
+
+58 commands, three roles, both directions, against CloudStack
+4.23.0.0 with the plugin loaded and `ai.services.v2.enabled` on. The
+`@APICommand(authorized = ...)` grants added two entries ago are now
+verified command by command rather than in aggregate.
+
+One more thing measured on the way: a command that does **not exist**
+is answered with `errorCode: 401, unable to verify user credentials
+and/or request signature`, not the 432 a refusal gives, because
+CloudStack cannot verify a signature for a command it cannot find.
+The first version of `test_07` asked for `listAiNothingAtAll` and was
+told the check could not see a refusal, when what it could not see
+was a typo.
+
+2,013 unit, 457 JUnit, 106 Vitest and 7 Marvin tests pass.

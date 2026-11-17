@@ -60,6 +60,13 @@ in all) while the five v2 routes drop, which is what the `ai.services.v2.enabled
 default is supposed to do. What has not run is the UI against the loaded
 plugin: the two were verified in separate management servers, never the same one. `terraform/` builds and unit-tests (v1 and v2) but
 its acceptance tests have never run against a live management server.
+**The Marvin tests exist and pass** — `test/integration/plugins/ai-services/`,
+58 commands across three roles, allowed and denied, against a live 4.23.0.0. They
+call each command with no arguments, because access is checked before parameters
+are, so a role that may call one fails on its arguments (431) and one that may
+not fails on the name (432) and nothing is executed. **`nosetests` cannot run
+them**, or any of CloudStack's own: `nose` imports `imp`, gone in 3.12, so
+`run_without_nose.py` drives them under plain `unittest`.
 `setup` plans the self-test but cannot run it: the steps need GPU capacity, so
 section 14's first acceptance criterion is not yet met. Host maintenance drains
 automatically only where an event bus is configured — CloudStack 4.23 offers no

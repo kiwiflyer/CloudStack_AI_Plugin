@@ -44,7 +44,19 @@ import os
 from marvin.cloudstackTestCase import cloudstackTestCase
 from marvin.lib.base import Account, Domain
 from marvin.lib.common import get_domain
-from nose.plugins.attrib import attr
+
+try:
+    from nose.plugins.attrib import attr
+except ImportError:  # pragma: no cover - depends on the runner
+    # nose imports `imp`, which Python 3.12 removed, so on a modern
+    # image it cannot be imported at all — and neither can any of
+    # CloudStack's own Marvin tests, which all carry this import.
+    # The decorator only tags a test for selection, so standing in
+    # for it costs nothing and lets the suite run under a plain
+    # unittest runner.
+    def attr(*args, **kwargs):
+        return lambda test: test
+
 
 #: CloudStack's own code for "you may not call this".
 UNAVAILABLE = "does not exist or is not available"
@@ -82,21 +94,32 @@ class TestAiServicesRolePermissions(cloudstackTestCase):
         cls.apiclient = cls.testClient.getApiClient()
         cls.services = cls.testClient.getParsedTestDataConfig()
         cls.domain = get_domain(cls.apiclient)
+        # `cleanup` is the name cloudstackTestCase.tearDown empties
+        # after *every* test, so class-level resources cannot live
+        # there: the domain and both accounts were deleted after the
+        # first test, and the five that followed ran against accounts
+        # that no longer existed. A call then fails for a reason that
+        # is not a refusal, so every admin-only command read as
+        # allowed for a tenant — fifteen false alarms, with the
+        # product behaving correctly throughout.
         cls.cleanup = []
+        cls.created = []
 
         cls.child = Domain.create(cls.apiclient, services={"name": "AiServicesRoles"},
                                   parentdomainid=cls.domain.id)
-        cls.cleanup.append(cls.child)
+        cls.created.append(cls.child)
 
-        # accounttype 2 is a domain admin, 0 an ordinary user.
+        # Marvin's own rule, from lib/base.py:
+        #     cmd.accounttype = 2 if (admin and domainid) else int(admin)
+        # so `admin` with a domain is a domain admin, and without one
+        # it would be a root admin. There is no `accounttype` keyword.
         cls.domain_admin = Account.create(
-            cls.apiclient, cls.services["account"], admin=False,
-            domainid=cls.child.id, accounttype=2)
-        cls.cleanup.append(cls.domain_admin)
-        cls.user = Account.create(
-            cls.apiclient, cls.services["account"], admin=False,
+            cls.apiclient, cls.services["account"], admin=True,
             domainid=cls.child.id)
-        cls.cleanup.append(cls.user)
+        cls.created.append(cls.domain_admin)
+        cls.user = Account.create(
+            cls.apiclient, cls.services["account"], domainid=cls.child.id)
+        cls.created.append(cls.user)
 
         cls.clients = {
             "Admin": cls.apiclient,
@@ -109,7 +132,10 @@ class TestAiServicesRolePermissions(cloudstackTestCase):
 
     @classmethod
     def tearDownClass(cls):
-        super().tearDownClass()
+        try:
+            cls.cleanup_resources(cls.apiclient, reversed(cls.created))
+        finally:
+            super().tearDownClass()
 
     def refused(self, client, name):
         """Whether CloudStack refused this command by name.
@@ -130,8 +156,10 @@ class TestAiServicesRolePermissions(cloudstackTestCase):
             return UNAVAILABLE in str(answered)
 
     def registered(self):
+        # marvinRequest unwraps the envelope and hands back a list of
+        # jsonLoader objects, not {"api": [...]}.
         response = self.apiclient.connection.marvinRequest(command("listApis"))
-        return {api["name"] for api in response["api"]}
+        return {api.name for api in response}
 
     def check(self, role, release):
         """Every command in this release, for this role, both ways."""
@@ -180,14 +208,32 @@ class TestAiServicesRolePermissions(cloudstackTestCase):
         self.check("User", "v2")
 
     @attr(tags=["advanced", "smoke"], required_hardware="false")
-    def test_07_a_command_nobody_declared_is_refused(self):
-        """The check is capable of seeing a refusal.
+    def test_07_the_check_can_see_a_refusal(self):
+        """`refused` is capable of returning True.
 
-        Without this, a `refused` that always returned False would
-        make every allowed-direction assertion pass and every
-        denied-direction one fail loudly — but a bug that made it
-        always return True would pass the denied half silently.
+        Without this, a `refused` that always answered False would
+        make every allowed-direction assertion pass while the
+        denied-direction ones failed, which is noisy but survivable —
+        and one that always answered True would pass the denied half
+        in silence, which is not.
+
+        It uses a command that exists and this role may not call.
+        A command that does not exist at all is no good for the job:
+        CloudStack answers one with
+
+            errorCode: 401, errorText: unable to verify user
+            credentials and/or request signature
+
+        rather than the 432 a refusal gives, because it cannot verify
+        a signature for a command it cannot find. That was measured,
+        after a first version of this test asked for
+        `listAiNothingAtAll` and was told the check could not see a
+        refusal when what it could not see was a typo.
         """
+        admin_only = "listAiGpuCapacity"
+        if admin_only not in self.registered():
+            self.skipTest("the plugin is not loaded")
+
         self.assertTrue(
-            self.refused(self.clients["User"], "listAiNothingAtAll"),
-            "a command that does not exist was not refused")
+            self.refused(self.clients["User"], admin_only),
+            f"{admin_only} is admin-only and a tenant was not refused")
