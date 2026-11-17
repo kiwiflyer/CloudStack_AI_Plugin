@@ -358,22 +358,19 @@ field resolves: either CloudStack defines `label.<field>`, recorded for 4.23.0.0
 in `ui/tests/fixtures/cloudstack-label-fields.json`, or the field carries a
 `customTitle` pointing at one of ours.
 
-**Eleven actions across six screens cannot be reached.** CloudStack's
-`ListView.vue` renders the link into a record's detail view on one condition —
-`['name', 'provider'].includes(column.key)` — so a screen whose columns include
-no `name` has no route to its own detail page, and every `dataView: true` action
-on it is unreachable however correctly it is declared: `aiusage`
-(`updateAiBudget`), `aibatch` (`getAiBatchResults`, `cancelAiBatch`),
-`aicertificate` (`replaceAiCertificate`, `deleteAiCertificate`),
-`aiprivateendpoint` (`deleteAiPrivateEndpoint`), `aihuggingface`
-(`checkAiHfModel`, `mirrorAiModel`, `approveAiModel`) and `aifleet`
-(`drainAiNode`). Found by a Playwright spec that clicked a certificate row and
-then waited three minutes for a button that cannot appear. The mechanism for
-fixing it is the same `{ field, customTitle }` form used for labels, with the
-field set to `name` and a custom render supplying the natural identifier —
-`{ field: 'name', customTitle: 'ai.customdomain', name: r => r.customdomain }` —
-which gives the column the key CloudStack links on while keeping our wording.
-**·not built**
+**A CloudStack list links one column and one only.** `ListView.vue` renders the
+way into a record's detail view where
+`['name', 'provider'].includes(column.key)`, so a screen whose columns include
+no `name` has no route to its own detail page and every `dataView: true` action
+on it is unreachable however correctly declared — eleven of ours were, across
+six screens, until each was given a first column keyed `name`:
+`{ field: 'name', customTitle: 'ai.customdomain', name: r => r.customdomain }`.
+That works because `AutogenView` writes a column's custom render back onto the
+record (`items[idx][key] = func(items[idx])`), so the column carries the key
+CloudStack links on, our wording, and the right text. **Its action buttons are
+icon-only** as well — `<button><span role="img" aria-label="reload">` — with the
+words in a hover tooltip, so `getByRole('button', { name: /replace/i })` matches
+nothing; `tests/e2e/table.js` locates them by icon.
 
 **UI.** Standard CloudStack list/detail/action patterns so the section inherits search, pagination,
 async job notifications and role-based action visibility. Everything in the UI must also work

@@ -260,3 +260,69 @@ describe('the components the section names', () => {
     }
   })
 })
+
+describe('a screen with a row action can be opened', () => {
+  beforeEach(() => asRole('Admin'))
+
+  // CloudStack's ListView.vue renders the link into a record's detail
+  // view on one condition:
+  //
+  //   <template v-if="['name', 'provider'].includes(column.key)">
+  //
+  // So a screen whose columns include no `name` has no route to its
+  // own detail page, and every `dataView: true` action on it is
+  // unreachable however correctly it is declared. Six screens and
+  // eleven actions were in that position, found by a Playwright spec
+  // that clicked a certificate row and then waited three minutes for
+  // a button that cannot appear.
+  //
+  // A record that has no natural `name` gets one: AutogenView writes
+  // a column's custom render back onto the record
+  // (`items[idx][key] = func(items[idx])`), so
+  // `{ field: 'name', customTitle: 'ai.customdomain', name: r => r.customdomain }`
+  // gives the column the key CloudStack links on, the title we chose,
+  // and the right text.
+  function columnKeys (screen) {
+    const columns = typeof screen.columns === 'function' ? screen.columns() : screen.columns
+    return (columns ?? []).map((c) => (typeof c === 'string' ? c : c.field ?? Object.keys(c)[0]))
+  }
+
+  function rowActions (screen) {
+    return (screen.actions ?? []).filter((a) => a.dataView)
+  }
+
+  it('found screens with row actions', () => {
+    const withActions = screens().filter((s) => rowActions(s).length > 0)
+    expect(withActions.length).toBeGreaterThan(5)
+  })
+
+  it('every screen with a row action has a name column', () => {
+    const unreachable = []
+    for (const screen of screens()) {
+      const actions = rowActions(screen)
+      if (actions.length === 0) continue
+      const keys = columnKeys(screen)
+      if (!keys.includes('name') && !keys.includes('provider')) {
+        unreachable.push(
+          `${screen.name}: no name column, so ${actions.map((a) => a.api).join(', ')} ` +
+          'cannot be reached'
+        )
+      }
+    }
+
+    expect(unreachable).toEqual([])
+  })
+
+  it('a name column that is synthesised supplies its own text', () => {
+    // Without the render function the link is there and empty.
+    for (const screen of screens()) {
+      const columns = typeof screen.columns === 'function' ? screen.columns() : screen.columns
+      for (const column of columns ?? []) {
+        if (typeof column === 'object' && column.field === 'name') {
+          expect(typeof column.name, `${screen.name} names a column but renders no text`)
+            .toBe('function')
+        }
+      }
+    }
+  })
+})

@@ -229,7 +229,10 @@ export default {
       resourceType: 'AiUsage',
       columns: () => {
         const fields = [
-          { field: 'model', customTitle: 'ai.model' },
+          // Keyed `name` so CloudStack links the row: ListView
+          // renders the way into a detail view only on a column
+          // called `name`, and `updateAiBudget` lives there.
+          { field: 'name', customTitle: 'ai.model', name: (record) => record.model },
           { field: 'inputtokens', customTitle: 'ai.inputtokens' },
           { field: 'outputtokens', customTitle: 'ai.outputtokens' },
           { field: 'gpuhours', customTitle: 'ai.gpuhours' },
@@ -337,7 +340,8 @@ export default {
       resourceType: 'AiBatch',
       columns: () => {
         const fields = [
-          'id', { field: 'model', customTitle: 'ai.model' }, 'status',
+          { field: 'name', customTitle: 'ai.batch', name: (record) => record.id },
+          { field: 'model', customTitle: 'ai.model' }, 'status',
           { field: 'requestcount', customTitle: 'ai.requestcount' }, 'created'
         ]
         if (isAdminOrDomainAdmin()) fields.push('account')
@@ -386,7 +390,11 @@ export default {
       // that should not be on one.
       columns: () => {
         const fields = [
-          { field: 'customdomain', customTitle: 'ai.customdomain' },
+          {
+            field: 'name',
+            customTitle: 'ai.customdomain',
+            name: (record) => record.customdomain
+          },
           { field: 'expires', customTitle: 'ai.expires' }, 'fingerprint'
         ]
         if (isAdminOrDomainAdmin()) fields.push('account')
@@ -439,7 +447,11 @@ export default {
         // net-1 as ai.acme.example". It is the one column a buyer
         // checking that an endpoint really is private will read.
         const fields = [
-          { field: 'deployment', customTitle: 'ai.deployment' },
+          {
+            field: 'name',
+            customTitle: 'ai.deployment',
+            name: (record) => record.deployment
+          },
           { field: 'exposure', customTitle: 'ai.exposure' },
           { field: 'customdomain', customTitle: 'ai.customdomain' },
           { field: 'tls', customTitle: 'ai.tls' }
@@ -559,7 +571,8 @@ export default {
       show: isAdminOrDomainAdmin,
       component: view('HuggingFaceBrowser'),
       columns: () => [
-        { field: 'repo', customTitle: 'ai.repo' }, { field: 'task', customTitle: 'ai.task' },
+        { field: 'name', customTitle: 'ai.repo', name: (record) => record.repo },
+        { field: 'task', customTitle: 'ai.task' },
         { field: 'license', customTitle: 'ai.license' },
         { field: 'downloads', customTitle: 'ai.downloads' },
         { field: 'compatible', customTitle: 'ai.compatible' }
@@ -683,7 +696,8 @@ export default {
       show: isAdmin,
       component: view('FleetHealth'),
       columns: () => [
-        'host', 'template', 'driver', 'state', { field: 'drift', customTitle: 'ai.drift' }
+        { field: 'name', customTitle: 'ai.host', name: (record) => record.host },
+        'template', 'driver', 'state', { field: 'drift', customTitle: 'ai.drift' }
       ],
       details: () => [
         'host', 'template', 'driver', 'state', { field: 'drift', customTitle: 'ai.drift' },

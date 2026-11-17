@@ -16,7 +16,7 @@ import { expect, test } from '@playwright/test'
 
 import { signIn } from './sign-in.js'
 import { sessionFor } from './sessions.js'
-import { header } from './table.js'
+import { action, header, rowLink } from './table.js'
 
 // The v2 screens (SPEC.md section 8).
 //
@@ -119,8 +119,11 @@ test.describe('with ai.services.v2.enabled on', () => {
 
   test('replacing a certificate warns about the interruption', async ({ page }) => {
     await page.goto('/client/#/aicertificate')
-    await page.getByRole('row').nth(1).click()
-    await page.getByRole('button', { name: /replace certificate/i }).click()
+    await rowLink(page, /./).first().click()
+    // `reload-outlined` is what the section gives this action; the
+    // button carries the icon and nothing a locator can read as its
+    // name.
+    await action(page, 'reload').first().click()
 
     await expect(page.getByText(/interrupts traffic/i)).toBeVisible()
   })

@@ -22,6 +22,7 @@ than in a Marvin run.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -837,9 +838,7 @@ class TestAParameterCarryingABlobSaysSo:
                 java = self.generated(command.name)
                 declaration = java.split(f'name = "{param.name}"')[1].split(";")[0]
                 if "length" not in declaration:
-                    capped.append(
-                        f"{command.name}.{param.name} carries a PEM but is capped at 255"
-                    )
+                    capped.append(f"{command.name}.{param.name} carries a PEM but is capped at 255")
 
         assert not capped, "\n".join(capped)
 
@@ -847,3 +846,53 @@ class TestAParameterCarryingABlobSaysSo:
         for name in ("uploadAiCertificate", "replaceAiCertificate"):
             java = self.generated(name)
             assert "length = 65535" in java, f"{name} caps its PEM at 255"
+
+
+class TestTheMarvinExpectationsMatchTheMap:
+    """Marvin cannot import `aisvc`, so it carries a copy.
+
+    `test/integration/plugins/ai-services/role_permissions.json` is
+    generated from `COMMANDS` and read by the Marvin tests, which run
+    under CloudStack's own Python inside a management server. This is
+    the guard that keeps the copy honest — the same arrangement as the
+    Java generator's command table.
+    """
+
+    def expectations(self) -> dict[str, list[str]]:
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "test/integration/plugins/ai-services/role_permissions.json"
+        )
+        return json.loads(path.read_text())["roles"]
+
+    def test_it_exists_and_is_generated(self) -> None:
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "test/integration/plugins/ai-services/role_permissions.json"
+        )
+        assert "Do not edit by hand" in path.read_text()
+
+    def test_every_role_and_release_is_covered(self) -> None:
+        expected = {
+            f"{release.value}.{role.value}"
+            for release in (Release.V1, Release.V2)
+            for role in (Role.ADMIN, Role.DOMAIN_ADMIN, Role.USER)
+        }
+
+        assert set(self.expectations()) == expected
+
+    def test_each_list_matches_the_command_map(self) -> None:
+        wrong = []
+        for release in (Release.V1, Release.V2):
+            for role in (Role.ADMIN, Role.DOMAIN_ADMIN, Role.USER):
+                key = f"{release.value}.{role.value}"
+                here = sorted(c.name for c in COMMANDS if c.release is release and role in c.roles)
+                there = self.expectations()[key]
+                if here != there:
+                    missing = sorted(set(here) - set(there))
+                    extra = sorted(set(there) - set(here))
+                    wrong.append(f"{key}: missing {missing}, stale {extra}")
+
+        assert not wrong, (
+            "\n".join(wrong) + "\n\nRegenerate role_permissions.json from aisvc/api/commands.py."
+        )

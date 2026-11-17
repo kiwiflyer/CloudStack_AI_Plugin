@@ -30,3 +30,28 @@
 export function header (page, text) {
   return page.locator('thead').getByText(text)
 }
+
+/**
+ * A row's link into its detail view, by the text in the first column.
+ *
+ * Clicking the row does nothing: CloudStack puts the link on the
+ * first column's content, and only when that column is keyed `name`.
+ */
+export function rowLink (page, text) {
+  return page.locator('tbody').getByRole('link', { name: text })
+}
+
+/**
+ * An action button, by the icon it carries.
+ *
+ * CloudStack's action buttons are icon-only — `<button><span
+ * role="img" aria-label="reload">` — and the words a person reads
+ * ("Replace certificate") are in a tooltip rendered on hover. So
+ * `getByRole('button', { name: /replace certificate/i })` matches
+ * nothing: the accessible name is "reload". The icon is what the DOM
+ * actually offers, and it is the same string the section config
+ * names in `icon:`.
+ */
+export function action (page, icon) {
+  return page.locator(`.ant-btn:has(.anticon-${icon})`)
+}

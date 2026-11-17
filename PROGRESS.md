@@ -4532,3 +4532,106 @@ The other two failures want a mirrored model in the registry to click
 on, and nothing has been mirrored.
 
 103 Vitest tests pass.
+
+## The eleven unreachable actions, and the first Marvin tests
+
+### A CloudStack list links one column
+
+`ListView.vue` renders the way into a record's detail view on one
+condition:
+
+```js
+<template v-if="['name', 'provider'].includes(column.key)">
+```
+
+Six screens had no `name` column, so eleven `dataView: true` actions
+could not be reached however correctly they were declared. Each now
+leads with one:
+
+```js
+{ field: 'name', customTitle: 'ai.customdomain',
+  name: (record) => record.customdomain }
+```
+
+which works because `AutogenView` writes a column's custom render
+back onto the record (`items[idx][key] = func(items[idx])`). The
+column carries the key CloudStack links on, the title we chose, and
+the right text, and the other 30 field names CloudStack already
+defines stay bare so they keep its translations.
+
+Live, a certificate row now links to
+`#/aicertificate/9d205434-…` reading `ai.example.com`, the detail
+view opens, and the two actions that were stranded — `reload` for
+`replaceAiCertificate` and `delete` for `deleteAiCertificate` — are
+on it.
+
+`section.spec.js` now fails if a screen has a row action and no
+`name` column, and again if a synthesised `name` column has no render
+function, which would give the link no text.
+
+**CloudStack's build lints the section.** The first rebuild failed on
+`object-curly-newline` in two literals this change introduced — which
+is worth knowing, because this repo's own `npm run lint` is broken
+(it calls eslint, and no `eslint.config.*` exists), and `make test-ui`
+does not call it either. The production build is the only linting the
+section currently gets.
+
+**And its action buttons are icon-only.** `<button><span role="img"
+aria-label="reload">`, with "Replace certificate" in a hover tooltip,
+so `getByRole('button', { name: /replace certificate/i })` matches
+nothing — the third locator of that family to be wrong, after column
+headers and the sign-in fields. `tests/e2e/table.js` now locates an
+action by its icon and a row by its link.
+
+v2 UI specs: **11 of 13**, in 3.8 minutes. The two that remain want a
+mirrored model in the registry to click, and nothing has been
+mirrored.
+
+### Marvin, at last
+
+`test/integration/plugins/ai-services/` did not exist. SPEC section
+12 asks for a test per native command per default role, allowed and
+denied, and there was nothing there to ask it of.
+
+The design turns on something measured rather than assumed: **access
+is checked before parameters are**. Calling a command with no
+arguments at all gives
+
+```
+denied   432  The API [listAiGpuCapacity] does not exist or is not
+              available for the account aisvc-tenant
+allowed  431  Unable to execute API command runaimodelevaluation due
+              to missing parameter model
+```
+
+so a command a role may call fails on its arguments and one it may
+not fails on its name — and **nothing is executed**. No deployment is
+created, no node drained, no certificate replaced in the course of
+finding out which is which. All four cases above were confirmed
+against the live server before the tests were written.
+
+Marvin has no class for a command a plugin added after its bindings
+were generated, so `command()` builds a stand-in: `__sanitizeCmd`
+takes the name from `cmd.__class__.__name__` and the payload from the
+instance's attributes, which is all it needs.
+
+The expectations are generated into `role_permissions.json` —
+38/24/23 commands for v1 and 20/18/18 for v2 — because Marvin runs
+under CloudStack's own Python where `aisvc` cannot be imported.
+`tests/unit/test_commands.py` fails if that copy drifts, the same
+arrangement as the Java generator's command table. There is also a
+test that the check can see a refusal at all, so a bug that always
+answered "denied" cannot pass the denied half silently.
+
+**They have not been run.** They need a Marvin-configured CloudStack,
+and the compose harness is driven over the HTTP API instead.
+
+### Along the way
+
+A tenant uploaded a certificate through the plugin — a v2 write by a
+non-admin, end to end. The first attempt was refused with *this
+certificate covers ai.example.com, not tenant.example.com*: the
+engine checks the SAN against the domain, and the message reached the
+operator because of the error passthrough added two entries ago.
+
+2,013 unit, 457 JUnit and 106 Vitest tests pass.
