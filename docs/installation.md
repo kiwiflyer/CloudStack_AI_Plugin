@@ -580,30 +580,68 @@ talks to CloudStack correctly. It proves nothing about a GPU.
 
 Stated plainly so you know what you are walking into.
 
-**Verified against a real CloudStack 4.23.0.0:**
+**Verified against a real CloudStack 4.23.0.0**, with the plugin loaded
+into the management server and the engine answering it over mTLS:
+
+*The engine against CloudStack*
 
 - Request signing, including values containing spaces — which is how a
   signing bug was found, since every offering a simulator ships has one
   in its name.
 - `take_snapshot` reading real GPU capacity from tagged hosts, and the
-  capacity planner producing the right plan and warnings from it.
+  capacity planner producing the right plan and warnings from it. A
+  second bug surfaced here: sixteen GPUs CloudStack reported as
+  `state=Error` were counted as free, because only `managedstate` was
+  being read.
 - `listKubernetesClusters`, `listGpuCards`, `listGpuDevices`, and the
   tenant-network lookup.
 - All eight database migrations, on Postgres 16 rather than SQLite.
 
+*The plugin inside the management server*
+
+- **It loads.** All 38 v1 commands register — `listApis` goes from 865
+  to 903, exactly the thirty-eight — and with `ai.services.v2.enabled`
+  on, to 923 with all twenty v2 commands. The gate works both ways.
+- `AiServicesSchema` creates `ai_deployment` at startup, and all ten
+  `ai.services.*` settings appear in `listConfigurations`.
+- **mTLS end to end.** The engine refuses a caller with no certificate
+  — the handshake fails, not a 401 — and answers one with it.
+- Commands return real data: `listAiModels`, `listAiEndpoints`,
+  `listAiSetupChecks` and the v2 lists.
+- **v2 writes work**, which they could not before: a guardrail profile,
+  a batch, an evaluation, and a real 1,038-character certificate
+  uploaded by an admin and by a tenant.
+- **The async bridge runs.** `createAiBatch` returns a job id,
+  `queryAsyncJobResult` polls it through CloudStack's own job states,
+  and a failure arrives carrying the engine's reason.
+- **Caller context is enforced.** One `listAiModels` returns two models
+  to root admin, none to an account in `/ROOT` and two to one in
+  `/Customers/Acme`, because the models are published to `/Customers`.
+- **Failover, in all four branches**: the first replica serves, a dead
+  one is skipped, a replica that *answered* is never retried, and with
+  none reachable the error names the count and the cause.
+
+*The tests*
+
+- **Marvin: 7 tests, 58 commands, three roles, allowed and denied** —
+  SPEC.md section 12's requirement, passing. Note that `nosetests`
+  cannot run them, or any CloudStack Marvin test, on Python 3.12;
+  `test/integration/plugins/ai-services/run_without_nose.py` does.
+- **Playwright role specs: 22 of 22**, against the production UI build
+  served by Jetty at `/client`. The v2 group is 11 of 13.
+
 **Still never run:**
 
-- **No CloudStack has loaded the plugin.** It compiles and its unit
-  tests pass; it has never been deployed to a management server.
 - **Nothing has been provisioned.** `apply` builds a deployer that
   needs a Kubernetes cluster, so the write half of the reconciler —
   `deployVirtualMachine` and everything after it — is unexercised.
-- **No real CloudStack UI has loaded the section.** All 47 Playwright
-  specs skip without a live server.
 - **No Terraform acceptance test has run** against a live management
   server, v1 or v2.
 - **No proxy VM has booted.** The provisioner plans, creates and
   destroys; nothing has run it.
+- **Nothing has been mirrored from Hugging Face**, so the registry is
+  empty — which is why the two remaining v2 UI specs, both of which
+  want a model to click on, do not pass.
 - **The self-test cannot run.** `setup` plans it, but its steps need GPU
   capacity, so SPEC.md section 14's first acceptance criterion is unmet.
 - **LiteLLM is not yet a real dependency**, and there is no rollout
@@ -614,6 +652,8 @@ Stated plainly so you know what you are walking into.
 - **Host maintenance drains automatically only where an event bus is
   configured.** CloudStack 4.23 offers no synchronous pre-maintenance
   hook, and no bus is enabled by default.
+- **The simulator's GPUs are simulated.** The API, the signing and the
+  schema are real; the cards are not.
 
 ## Things that will bite you
 

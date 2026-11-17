@@ -3,11 +3,16 @@
 Every number here is read from the code, not from the specification.
 Where the two disagree the code wins and the row says so.
 
-**Status:** all nine milestones implemented. The engine's
-CloudStack-facing half is verified against a real Apache CloudStack
-4.23.0.0; the write half, the plugin, the UI and the gateway are not.
-[PROGRESS.md](../PROGRESS.md) keeps the unvarnished list, and the gaps
-are marked **·not built** in the tables below.
+**Status:** all nine milestones implemented. Verified against a real
+Apache CloudStack 4.23.0.0: the engine's CloudStack-facing half, the
+plugin loaded into the management server, its commands and settings,
+mTLS between the two, the async job bridge, caller-context filtering,
+engine failover, the Marvin tests for every command and role, and the
+UI section built and served at `/client`. **Not** verified: the write
+half of the reconciler, which needs a Kubernetes cluster; anything
+that depends on mirroring a model; the gateway; and a GPU that is not
+simulated. [PROGRESS.md](../PROGRESS.md) keeps the unvarnished list,
+and the gaps are marked **·not built** in the tables below.
 
 ---
 

@@ -10,14 +10,22 @@ The tenant sees a familiar API. The operator sees GPUs, quotas, budgets
 and usage records in the same console they already run their cloud from.
 
 > **Status: not production software.** Every milestone is implemented
-> and the test suites are green. The engine's CloudStack side now runs
-> against a real Apache CloudStack 4.23.0.0 — `make stack-up` brings one
-> up — and that is how two bugs were found that every fake had agreed
-> with. But **no plugin has been loaded into a management server, no GPU
-> node has booted, and no model has served a token.**
-> [docs/installation.md](docs/installation.md) ends with an honest list
-> of what has and has not run, and [PROGRESS.md](PROGRESS.md) keeps the
-> long version.
+> and the test suites are green. More to the point, it now runs against
+> a real Apache CloudStack 4.23.0.0 — `make stack-up` brings one up.
+> **The plugin loads into the management server**, registers its
+> commands, talks to the engine over mTLS, and answers with real data;
+> the UI section is built and served at `/client`; the Marvin tests pass
+> for all 58 commands across three roles, allowed and denied; and
+> failover between engine replicas behaves as specified. That is also
+> how roughly a dozen bugs were found that no fake had objected to —
+> code that compiled, passed its tests, and had never executed.
+>
+> But **no GPU node has booted and no model has served a token.** The
+> write half of the reconciler needs a Kubernetes cluster, nothing has
+> been mirrored from Hugging Face, and the simulator's GPUs are
+> simulated. [docs/installation.md](docs/installation.md) ends with an
+> honest list of what has and has not run, and
+> [PROGRESS.md](PROGRESS.md) keeps the long version.
 
 ## How it fits together
 

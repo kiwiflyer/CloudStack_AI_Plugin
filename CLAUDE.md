@@ -600,6 +600,17 @@ Support, admin and user alike, all end in `*  DENY` and never reach the
 fallback. **`ResourceAdmin` is never emitted**: the engine models three roles,
 and inventing a grant for a fourth is worse than leaving it to an operator.
 
+**Failover is proven, in all four of its branches.** Two engine replicas in
+`ai.services.engine.urls`, driven against the live plugin: with both up the first
+serves and the second is untouched; kill the first and the second answers with
+nothing visible to the caller; and **a replica that answered is never retried** —
+a POST the engine refused with a 400 reached one replica only, which is the rule
+that matters, because repeating a state-changing call elsewhere could apply it
+twice. With neither reachable the error names the count and the last failure.
+That last message used to end in `: null`, because the `IOException` behind a
+refused connection can carry no message; `HttpEngineTransport.describe` falls
+back to the exception's class name.
+
 **In the Java plugin:** build the caller context from `CallContext`, never from request
 parameters — the engine filters every response by what the plugin asserts. Never weaken the
 mTLS requirement to a fallback. Failover retries only *unreachable* replicas; a replica that

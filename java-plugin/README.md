@@ -6,6 +6,23 @@ Building and deploying this is one part of standing the product up; see
 The native CloudStack API plugin (SPEC.md section 9), targeting
 **CloudStack 4.23.0.0** ([ADR-0003](../docs/adr/0003-cloudstack-release.md)).
 
+It has been loaded into a real 4.23.0.0 management server: all 38 v1
+commands register (`listApis` 865 → 903), twenty more with
+`ai.services.v2.enabled` on, the `ai_deployment` table is created at
+startup, the ten `ai.services.*` settings appear in
+`listConfigurations`, and commands answer with data from the engine
+over mTLS. The per-role Marvin tests in
+[`test/integration/plugins/ai-services/`](../test/integration/plugins/ai-services/)
+cover all 58 commands, allowed and denied, and pass.
+
+**Loading it is how the defects were found.** A Spring context that
+did not declare a bean it injected took the whole `/client` webapp
+down, not just the plugin; seven write commands sent request bodies
+missing exactly the parameters whose names needed no translation; a
+PEM parameter was capped at `@Parameter`'s default 255 characters;
+and both the sync and async paths threw away the engine's explanation
+of a failure. Every one compiled and passed its unit tests.
+
 ## Building
 
 CloudStack publishes **no Maven artifacts** — not to Maven Central, not to the ASF

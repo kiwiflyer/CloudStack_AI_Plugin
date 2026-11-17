@@ -81,10 +81,27 @@ public class HttpEngineTransport implements EngineTransport {
         } catch (IOException problem) {
             // Status 0: unreachable, so EngineClient tries the next replica.
             throw new EngineException(
-                    "could not reach engine at " + url + ": " + problem.getMessage(), problem);
+                    "could not reach engine at " + url + ": " + describe(problem), problem);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new EngineException("interrupted calling engine at " + url, interrupted);
         }
+    }
+
+    /**
+     * What to tell an operator about a failure that may say nothing.
+     *
+     * The IOException behind a refused connection can carry no
+     * message, and an operator who killed both replicas was told
+     * "could not reach engine at https://…/v1/models: null". The
+     * class name is not much, but it is a fact about what happened,
+     * and the cause is attached to the exception either way.
+     */
+    static String describe(Exception problem) {
+        String said = problem.getMessage();
+        if (said == null || said.trim().isEmpty()) {
+            return problem.getClass().getSimpleName();
+        }
+        return said;
     }
 }

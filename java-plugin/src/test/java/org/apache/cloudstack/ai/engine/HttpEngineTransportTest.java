@@ -15,6 +15,7 @@
 package org.apache.cloudstack.ai.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -187,5 +188,31 @@ class HttpEngineTransportTest {
     @Test
     void theTransportIsConstructibleFromConfiguredTimeouts() {
         assertNotNull(new HttpEngineTransport(HttpClient.newHttpClient(), Duration.ofSeconds(1)));
+    }
+
+    @Test
+    void anUnreachableEngineSaysSomethingWhenTheCauseWillNot() {
+        // Measured by killing both replicas: an operator was told
+        //
+        //   no AI Services engine replica answered (tried 2): could
+        //   not reach engine at https://…/v1/models: null
+        //
+        // because the IOException behind a refused connection can
+        // carry no message at all, and "null" is what that renders
+        // as. The class name is not much, but it is a fact about
+        // what happened.
+        IOException silent = new IOException();
+
+        String described = HttpEngineTransport.describe(silent);
+
+        assertFalse(described.contains("null"), described);
+        assertTrue(described.contains("IOException"), described);
+    }
+
+    @Test
+    void aCauseThatSpeaksForItselfIsLeftAlone() {
+        IOException refused = new IOException("Connection refused");
+
+        assertEquals("Connection refused", HttpEngineTransport.describe(refused));
     }
 }

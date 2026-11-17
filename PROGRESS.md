@@ -4717,3 +4717,65 @@ told the check could not see a refusal, when what it could not see
 was a typo.
 
 2,013 unit, 457 JUnit, 106 Vitest and 7 Marvin tests pass.
+
+## Failover, in all four of its branches
+
+Two engine replicas in `ai.services.engine.urls`, driven through the
+plugin against the live management server. Each replica's own access
+log says which one served what, so nothing here is inferred.
+
+```
+both up        listAiModels -> 2 models    A served 1, B served 0
+A killed       listAiModels -> 2 models    A served 0, B served 1
+A answers 400  uploadAiCertificate         A served 1, B served 0
+neither up     no replica answered (tried 2): ...
+```
+
+The third line is the one that matters. `EngineClient.send` retries
+only an *unreachable* replica — a POST the engine refused with a 400
+reached one replica and stopped there, because repeating a
+state-changing call against another could apply it twice. That rule
+was written down and unit-tested; this is the first time it has been
+true of a running system.
+
+### The message when nothing answers
+
+```
+no AI Services engine replica answered (tried 2): could not reach
+engine at https://host.docker.internal:8444/v1/models: null
+```
+
+`null`, because the `IOException` behind a refused connection can
+carry no message at all. `HttpEngineTransport.describe` now falls back
+to the exception's class name, and an operator gets
+`: ConnectException` instead — not much, but a fact about what
+happened rather than a word that looks like a bug in the plugin.
+
+459 JUnit tests pass.
+
+## The documentation, brought up to date
+
+Everything above had left the written record behind. `README.md` said
+no plugin had been loaded into a management server; `docs/installation.md`
+listed the plugin, the UI and the Marvin tests among things that had
+never run; `docs/feature-spec-sheet.md` said the plugin and UI were
+unverified. All of that was true when written and is not now.
+
+What they say instead is what was measured: the plugin loads and
+registers, mTLS works both ways, commands answer with real data, v2
+writes work, the async bridge runs, caller context is enforced,
+failover behaves in four branches, the Marvin tests pass for 58
+commands across three roles, and the UI section is built and served at
+`/client` with its role specs green.
+
+And what is still not true, which is the half worth keeping honest:
+nothing has been provisioned, because the write half of the reconciler
+needs a Kubernetes cluster; no Terraform acceptance test has run; no
+proxy VM has booted; nothing has been mirrored from Hugging Face, so
+the registry is empty and the two remaining v2 UI specs have nothing to
+click; the self-test needs GPU capacity; LiteLLM is not a dependency;
+and the simulator's GPUs are simulated — the API, the signing and the
+schema are real, the cards are not.
+
+`java-plugin/README.md` now records that loading the plugin is how its
+defects were found, and `docs/README.md` indexes the Marvin tests.

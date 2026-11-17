@@ -30,6 +30,10 @@ start depending on why you are here.
   [SPEC.md](../SPEC.md).
 - **[third-party-licenses.md](third-party-licenses.md)** — the
   dependency licence policy and what the automated scan cannot see.
+- **[../test/integration/plugins/ai-services/](../test/integration/plugins/ai-services/)**
+  — the Marvin tests: every command, every default role, allowed and
+  denied, with a runner for the Python 3.12 images where `nosetests`
+  cannot import.
 - **[adr/](adr/)** — the decisions, and why. Read one before
   relitigating it.
 
