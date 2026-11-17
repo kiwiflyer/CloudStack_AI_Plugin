@@ -79,9 +79,22 @@ func canonicalQuery(values url.Values) string {
 
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		parts = append(parts, url.QueryEscape(key)+"="+url.QueryEscape(values.Get(key)))
+		parts = append(parts, escapeForSignature(key)+"="+escapeForSignature(values.Get(key)))
 	}
 	return strings.ToLower(strings.Join(parts, "&"))
+}
+
+// escapeForSignature encodes a value the way CloudStack will before
+// it verifies a signature.
+//
+// url.QueryEscape writes a space as +, and CloudStack's servlet
+// decodes + back to a space and re-encodes it as %20 — so every call
+// carrying a space in any value was answered with "unable to verify
+// user credentials and/or request signature". The engine learned this
+// from an offering name; the provider learned it from a PEM, because
+// "-----BEGIN PRIVATE KEY-----" contains two.
+func escapeForSignature(value string) string {
+	return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
 }
 
 func signature(values url.Values, secret string) string {

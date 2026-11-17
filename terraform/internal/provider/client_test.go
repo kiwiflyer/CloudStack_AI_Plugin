@@ -282,3 +282,39 @@ func TestCreatedIDIsEmptyWhenThereIsNone(t *testing.T) {
 		t.Fatalf("createdID = %q, want empty", got)
 	}
 }
+
+// A space is %20 in a CloudStack signature, never +.
+//
+// CLAUDE.md records this for the engine, where it was found by an
+// offering whose name contains a space. The provider had it too and
+// nothing had caught it: url.QueryEscape encodes a space as +, while
+// CloudStack's servlet decodes + back to a space and re-encodes it as
+// %20 before verifying. Every call carrying a space in any value was
+// answered with
+//
+//	unable to verify user credentials and/or request signature
+//
+// — found by uploading a certificate, because "-----BEGIN PRIVATE
+// KEY-----" contains two of them.
+func TestCanonicalQueryEncodesASpaceAsPercentTwenty(t *testing.T) {
+	values := url.Values{}
+	values.Set("name", "my certificate")
+
+	got := canonicalQuery(values)
+
+	if strings.Contains(got, "+") {
+		t.Fatalf("canonicalQuery = %q, which CloudStack will not verify", got)
+	}
+	if !strings.Contains(got, "%20") {
+		t.Fatalf("canonicalQuery = %q, want the space as %%20", got)
+	}
+}
+
+func TestCanonicalQuerySignsAPemWithoutMangingIt(t *testing.T) {
+	values := url.Values{}
+	values.Set("privatekey", "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----")
+
+	if got := canonicalQuery(values); strings.Contains(got, "+") {
+		t.Fatalf("canonicalQuery = %q, which CloudStack will not verify", got)
+	}
+}

@@ -115,9 +115,11 @@ func resourceAiAdapter() *schema.Resource {
 			"served_model_name": {Type: schema.TypeString, Computed: true,
 				Description: "What a request actually names. The adapter's own " +
 					"name addresses nothing."},
-			"size_bytes": {Type: schema.TypeInt, Computed: true},
-			"account":    {Type: schema.TypeString, Computed: true},
-			"shared":     {Type: schema.TypeBool, Computed: true},
+			"size_bytes": {Type: schema.TypeInt, Required: true, ForceNew: true,
+				Description: "Checked against the engine's adapter size limit; " +
+					"declared here until artefacts are fetched and measured."},
+			"account": {Type: schema.TypeString, Computed: true},
+			"shared":  {Type: schema.TypeBool, Computed: true},
 		},
 	}
 }
@@ -127,6 +129,7 @@ func createAiAdapter(_ context.Context, d *schema.ResourceData, meta any) diag.D
 		"name":      d.Get("name").(string),
 		"basemodel": d.Get("base_model").(string),
 		"rank":      strconv.Itoa(d.Get("rank").(int)),
+		"sizebytes": strconv.Itoa(d.Get("size_bytes").(int)),
 		"uri":       d.Get("uri").(string),
 	})
 	if err != nil {

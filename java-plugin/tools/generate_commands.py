@@ -816,6 +816,12 @@ COMMANDS: tuple[Command, ...] = (
             p("basemodel", "baseModel", "STRING", "the base it serves on",
               required=True, wire="base_model"),
             p("rank", "rank", "INTEGER", "its LoRA rank", required=True),
+            # Required because the engine checks it against
+            # MAX_ADAPTER_BYTES. Defaulting it would turn that limit
+            # off; the caller declares it until artefacts are fetched
+            # and it can be measured instead.
+            p("sizebytes", "sizeBytes", "INTEGER", "size of the adapter in bytes",
+              required=True, wire="size_bytes"),
             p("uri", "uri", "STRING", "where its artefacts are"),
         ),
     ),

@@ -256,7 +256,7 @@ func resourceAiBudget() *schema.Resource {
 			// Required by the command, because a CloudStack account
 			// name is unique only within its domain. Without it every
 			// apply failed on "missing parameter domain".
-			"domain": {Type: schema.TypeString, Required: true, ForceNew: true},
+			"domain":   {Type: schema.TypeString, Required: true, ForceNew: true},
 			"monthly":  {Type: schema.TypeFloat, Required: true},
 			"currency": {Type: schema.TypeString, Optional: true, Default: "USD"},
 			"on_exceed": {Type: schema.TypeString, Optional: true, Default: "alert",

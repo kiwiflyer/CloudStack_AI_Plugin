@@ -49,6 +49,10 @@ public class UploadAiAdapterCmd extends AiServicesAsyncCmd {
             description = "its LoRA rank")
     private Integer rank;
 
+    @Parameter(name = "sizebytes", type = CommandType.INTEGER, required = true,
+            description = "size of the adapter in bytes")
+    private Integer sizeBytes;
+
     @Parameter(name = "uri", type = CommandType.STRING,
             description = "where its artefacts are")
     private String uri;
@@ -70,6 +74,9 @@ public class UploadAiAdapterCmd extends AiServicesAsyncCmd {
         }
         if (rank != null) {
             body.addProperty("rank", rank);
+        }
+        if (sizeBytes != null) {
+            body.addProperty("size_bytes", sizeBytes);
         }
         if (uri != null) {
             body.addProperty("uri", uri);

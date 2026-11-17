@@ -15,10 +15,17 @@
 package provider
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -42,6 +49,66 @@ func testAccPreCheck(t *testing.T) {
 	for _, name := range []string{"CLOUDSTACK_API_URL", "CLOUDSTACK_API_KEY", "CLOUDSTACK_SECRET_KEY"} {
 		if os.Getenv(name) == "" {
 			t.Fatalf("%s must be set for acceptance tests", name)
+		}
+	}
+}
+
+// selfSigned returns a PEM certificate and key for one domain.
+//
+// The engine checks a certificate's subject alternative names against
+// the custom domain it is uploaded for, and refuses a mismatch — so
+// this test cannot use a placeholder, and asking an operator to put
+// real key material in the environment to run it is worse. Generating
+// a throwaway pair here keeps the test self-contained and commits no
+// secret.
+func selfSigned(t *testing.T, domain string) (string, string) {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating a key: %v", err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: domain},
+		DNSNames:     []string{domain},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("signing a certificate: %v", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: mustMarshalKey(t, key),
+	})
+	return string(certPEM), string(keyPEM)
+}
+
+func mustMarshalKey(t *testing.T, key *rsa.PrivateKey) []byte {
+	t.Helper()
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshalling a key: %v", err)
+	}
+	return der
+}
+
+// needEnv skips a test that cannot run without something only a live
+// zone can provide — a deployment to attach to, a model to read.
+// Without this the test ran anyway, sent an empty value, and failed
+// with the engine complaining about a missing parameter, which reads
+// like a defect in the provider rather than an unconfigured run.
+func needEnv(t *testing.T, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if os.Getenv(name) == "" {
+			t.Skipf("set %s to run this against a live zone", name)
 		}
 	}
 }
@@ -163,19 +230,24 @@ func skipUnlessV2(t *testing.T) {
 
 func TestAccAiAdapter(t *testing.T) {
 	skipUnlessV2(t)
+	// The engine looks for weights where the uri points — "no adapter
+	// weights found; expected a .safetensors file" — so this needs a
+	// real artefact, not a placeholder.
+	needEnv(t, "CLOUDSTACK_AI_TEST_ADAPTER_URI")
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviders(),
 		Steps: []resource.TestStep{
 			{
-				Config: `
+				Config: fmt.Sprintf(`
 resource "cloudstack_ai_adapter" "test" {
   name       = "terraform-acceptance"
   base_model = "llama-3.3-70b-instruct"
   rank       = 16
-  uri        = "s3://adapters/terraform-acceptance/"
-}`,
+  uri        = %q
+  size_bytes = 1048576
+}`, os.Getenv("CLOUDSTACK_AI_TEST_ADAPTER_URI")),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttrSet("cloudstack_ai_adapter.test", "id"),
 					// The name a request addresses, which is the
@@ -198,6 +270,8 @@ resource "cloudstack_ai_adapter" "test" {
 func TestAccAiCertificate(t *testing.T) {
 	skipUnlessV2(t)
 
+	certPEM, keyPEM := selfSigned(t, "terraform.acceptance.invalid")
+
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviders(),
@@ -212,7 +286,7 @@ resource "cloudstack_ai_certificate" "test" {
   private_key   = <<-EOT
 %s
   EOT
-}`, os.Getenv("CLOUDSTACK_AI_TEST_CERT"), os.Getenv("CLOUDSTACK_AI_TEST_KEY")),
+}`, certPEM, keyPEM),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttrSet("cloudstack_ai_certificate.test", "fingerprint"),
 					resource.TestCheckResourceAttrSet("cloudstack_ai_certificate.test", "expires"),
@@ -232,6 +306,7 @@ resource "cloudstack_ai_certificate" "test" {
 
 func TestAccAiPrivateEndpoint(t *testing.T) {
 	skipUnlessV2(t)
+	needEnv(t, "CLOUDSTACK_AI_TEST_DEPLOYMENT", "CLOUDSTACK_AI_TEST_NETWORK")
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
@@ -295,6 +370,7 @@ resource "cloudstack_ai_guardrail_profile" "test" {
 
 func TestAccAiEvaluationsDataSource(t *testing.T) {
 	skipUnlessV2(t)
+	needEnv(t, "CLOUDSTACK_AI_TEST_MODEL")
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },

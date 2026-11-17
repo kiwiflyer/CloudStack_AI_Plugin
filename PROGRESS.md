@@ -4880,3 +4880,68 @@ correctly, and the test offers a placeholder.
 
 2,018 unit, 462 JUnit and 106 Vitest tests pass; Terraform's own unit
 tests pass; 4 of 8 acceptance tests pass.
+
+## The last four, and a space in a private key
+
+Of the four acceptance tests still failing, only one was a defect in
+the product.
+
+**`uploadAiAdapter` never sent a size.** `AdapterBody` requires
+`size_bytes`, and the engine checks it against `MAX_ADAPTER_BYTES` —
+so defaulting it would have turned that limit off rather than fixed
+anything. The command now takes `sizebytes` and the provider declares
+it, until artefacts are fetched and it can be measured instead.
+
+**Two were tests that failed instead of skipping.**
+`createAiPrivateEndpoint` and the evaluations data source read their
+inputs from environment variables nobody had set, sent empty strings,
+and were answered with "missing parameter" — which reads as a defect
+in the provider rather than an unconfigured run. `needEnv` now skips
+them with a sentence saying what to set. The evaluations one passes
+once `CLOUDSTACK_AI_TEST_MODEL` is given.
+
+**And the certificate test now makes its own certificate.** The
+engine checks a certificate's subject alternative names against the
+domain it is uploaded for and refuses a mismatch, so a placeholder
+cannot work; asking an operator to put real key material in the
+environment to run a test is worse. It generates a throwaway pair with
+`crypto/x509`, commits no secret, and needs no setup.
+
+### A space is %20, and the provider did not know
+
+Making the certificate test real turned up the fourth failure:
+
+```
+uploadAiCertificate: unable to verify user credentials and/or
+request signature
+```
+
+`canonicalQuery` used `url.QueryEscape`, which writes a space as `+`.
+CloudStack's servlet decodes `+` back to a space and re-encodes it as
+`%20` before verifying, so **every call carrying a space in any value
+failed to authenticate** — a key named "my key", a model with a space
+in it, anything. It surfaced on a certificate only because
+`-----BEGIN PRIVATE KEY-----` contains two.
+
+This is the same bug the engine had, recorded in CLAUDE.md since the
+day a simulator offering's name revealed it, and the provider had it
+all along. Nothing caught it because the unit tests sign against a
+fake that does not verify.
+
+### Green
+
+```
+TestAccAiApiKey                 PASS
+TestAccAiBudget                 PASS
+TestAccAiModelsDataSource       PASS
+TestAccAiCertificate            PASS
+TestAccAiGuardrailProfile       PASS
+TestAccAiEvaluationsDataSource  PASS
+TestAccAiAdapter                SKIP  needs a real .safetensors
+TestAccAiPrivateEndpoint        SKIP  needs a deployment to attach to
+```
+
+Six of eight against a live management server, and the two skips say
+what they want. The suite had never run at all.
+
+2,018 unit, 462 JUnit and 106 Vitest tests pass.
