@@ -863,7 +863,9 @@ class TestTheMarvinExpectationsMatchTheMap:
             Path(__file__).resolve().parents[2]
             / "test/integration/plugins/ai-services/role_permissions.json"
         )
-        return json.loads(path.read_text())["roles"]
+        generated: dict[str, Any] = json.loads(path.read_text())
+        roles: dict[str, list[str]] = generated["roles"]
+        return roles
 
     def test_it_exists_and_is_generated(self) -> None:
         path = (
