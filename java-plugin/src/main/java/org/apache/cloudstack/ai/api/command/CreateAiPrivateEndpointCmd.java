@@ -70,6 +70,9 @@ public class CreateAiPrivateEndpointCmd extends AiServicesAsyncCmd {
 @Override
     protected String engineBody() {
         JsonObject body = new JsonObject();
+        if (deployment != null) {
+            body.addProperty("deployment", deployment);
+        }
         if (networkId != null) {
             Network resolvedNetwork = _entityMgr.findById(Network.class, networkId);
             if (resolvedNetwork == null) {

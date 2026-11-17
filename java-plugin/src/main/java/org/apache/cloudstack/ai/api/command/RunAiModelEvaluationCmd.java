@@ -24,6 +24,8 @@ import org.apache.cloudstack.ai.engine.EngineJob;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
 
+import com.google.gson.JsonObject;
+
 /** Records a pre-publish evaluation. (SPEC.md section 9). */
 @APICommand(name = RunAiModelEvaluationCmd.APINAME,
         description = "Records a pre-publish evaluation.",
@@ -47,6 +49,15 @@ public class RunAiModelEvaluationCmd extends AiServicesAsyncCmd {
     protected String enginePath() {
         String path = "/v1/models/" + modelName + "/evaluations";
         return path;
+    }
+
+@Override
+    protected String engineBody() {
+        JsonObject body = new JsonObject();
+        if (revision != null) {
+            body.addProperty("revision", revision);
+        }
+        return body.toString();
     }
 
     @Override

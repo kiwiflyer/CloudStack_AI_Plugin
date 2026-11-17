@@ -39,11 +39,11 @@ public class ReplaceAiCertificateCmd extends AiServicesSyncCmd {
             description = "the certificate to replace")
     private String certificateId;
 
-    @Parameter(name = "certificate", type = CommandType.STRING, required = true,
+    @Parameter(name = "certificate", type = CommandType.STRING, required = true, length = 65535,
             description = "the PEM certificate")
     private String certificate;
 
-    @Parameter(name = "privatekey", type = CommandType.STRING, required = true,
+    @Parameter(name = "privatekey", type = CommandType.STRING, required = true, length = 65535,
             description = "the PEM private key")
     private String privateKey;
 
@@ -61,6 +61,9 @@ public class ReplaceAiCertificateCmd extends AiServicesSyncCmd {
 @Override
     protected String engineBody() {
         JsonObject body = new JsonObject();
+        if (certificate != null) {
+            body.addProperty("certificate", certificate);
+        }
         if (privateKey != null) {
             body.addProperty("private_key", privateKey);
         }

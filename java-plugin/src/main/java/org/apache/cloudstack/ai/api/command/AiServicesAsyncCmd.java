@@ -77,7 +77,8 @@ public abstract class AiServicesAsyncCmd extends BaseAsyncCmd {
             if (!accepted.isAccepted()) {
                 throw new ServerApiException(ApiErrorCode.INTERNAL_ERROR,
                         "the AI Services engine did not accept " + getEventType()
-                                + ": HTTP " + accepted.getStatusCode());
+                                + ": HTTP " + accepted.getStatusCode()
+                                + accepted.explain());
             }
 
             EngineJob started = EngineJob.parse(accepted.getBody());

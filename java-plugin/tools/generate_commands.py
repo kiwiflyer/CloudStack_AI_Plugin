@@ -17,6 +17,7 @@ Generated files carry a header saying so. Edit this script, not them.
 
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -419,7 +420,23 @@ class Param:
     #: through, for a body the engine can match against CloudStack's own
     #: UUIDs. Without it an `entity` param would send a bare number.
     resolve: str | None = None
-    wire: str | None = None  # body field; None means it is a path/query param
+    #: The engine's JSON field name, where it differs from the Java
+    #: one. Leave it unset and the body carries the snake_case of the
+    #: Java name, which is what the engine's models use.
+    #:
+    #: It used to mean "this parameter belongs in the body at all",
+    #: and was therefore set only where the two names differed —
+    #: `baseModel` to `base_model`, `customDomain` to `custom_domain`.
+    #: Every parameter whose name already matched was left without
+    #: one and silently never sent, so seven v2 write commands posted
+    #: a body missing exactly the fields that needed no translation.
+    #: Whether a parameter is in the body is decided by the path and
+    #: the query list, not here.
+    wire: str | None = None
+    #: `@Parameter`'s own `length()`, which defaults to 255 — a cap no
+    #: PEM, JSONL or other blob can meet. CloudStack's
+    #: `UploadCustomCertificateCmd` sets 65535 for the same reason.
+    length: int | None = None
 
 
 @dataclass(frozen=True)
@@ -443,8 +460,8 @@ class Command:
 
 
 def p(name, java, type_, doc, required=False, entity=None, wire=None,
-      resolve=None) -> Param:
-    return Param(name, java, type_, doc, required, entity, resolve, wire)
+      resolve=None, length=None) -> Param:
+    return Param(name, java, type_, doc, required, entity, resolve, wire, length)
 
 
 COMMANDS: tuple[Command, ...] = (
@@ -847,9 +864,9 @@ COMMANDS: tuple[Command, ...] = (
             p("customdomain", "customDomain", "STRING", "the domain it covers",
               required=True, wire="custom_domain"),
             p("certificate", "certificate", "STRING", "the PEM certificate",
-              required=True),
+              required=True, length=65535),
             p("privatekey", "privateKey", "STRING", "the PEM private key",
-              required=True, wire="private_key"),
+              required=True, wire="private_key", length=65535),
         ),
     ),
     Command(
@@ -865,9 +882,9 @@ COMMANDS: tuple[Command, ...] = (
             p("id", "certificateId", "STRING", "the certificate to replace",
               required=True),
             p("certificate", "certificate", "STRING", "the PEM certificate",
-              required=True),
+              required=True, length=65535),
             p("privatekey", "privateKey", "STRING", "the PEM private key",
-              required=True, wire="private_key"),
+              required=True, wire="private_key", length=65535),
         ),
     ),
     Command(
@@ -936,13 +953,16 @@ def render_params(params: tuple[Param, ...]) -> str:
             if param.entity else ""
         )
         required = ", required = true" if param.required else ""
+        # @Parameter caps a STRING at 255 unless told otherwise, which
+        # no PEM or other blob can meet.
+        length = f", length = {param.length}" if param.length else ""
         java_type = {
             "STRING": "String", "INTEGER": "Integer", "LONG": "Long",
             "BOOLEAN": "Boolean", "UUID": "Long",
         }[param.type]
         out.append(
             f'    @Parameter(name = "{param.name}", type = CommandType.{param.type}{entity}'
-            f"{required},\n"
+            f"{required}{length},\n"
             f'            description = "{param.doc}")\n'
             f"    private {java_type} {param.java};"
         )
@@ -983,7 +1003,7 @@ def _body_lines(param: Param) -> str:
     if not param.resolve:
         return (
             f"        if ({param.java} != null) {{\n"
-            f'            body.addProperty("{param.wire}", {param.java});\n'
+            f'            body.addProperty("{wire_name(param)}", {param.java});\n'
             f"        }}"
         )
 
@@ -996,14 +1016,24 @@ def _body_lines(param: Param) -> str:
         f"                throw new InvalidParameterValueException(\n"
         f'                        "Unable to find a {cls.lower()} with the given id");\n'
         f"            }}\n"
-        f'            body.addProperty("{param.wire}", {local}.getUuid());\n'
+        f'            body.addProperty("{wire_name(param)}", {local}.getUuid());\n'
         f"        }}"
     )
 
 
+def snake(name: str) -> str:
+    """The engine's spelling of a Java field name."""
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+def wire_name(param: Param) -> str:
+    """The JSON field this parameter travels as."""
+    return param.wire or snake(param.java)
+
+
 def render_body(command: Command) -> str:
-    body_params = [param for param in command.params if param.wire and
-                   "{" + param.java + "}" not in command.path and
+    body_params = [param for param in command.params
+                   if "{" + param.java + "}" not in command.path and
                    param.java not in command.query]
     if not body_params:
         return ""

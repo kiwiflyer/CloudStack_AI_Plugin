@@ -14,6 +14,9 @@
 // under the License.
 package org.apache.cloudstack.ai.engine;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 /** What an engine replica answered. */
 public class EngineResponse {
 
@@ -40,5 +43,42 @@ public class EngineResponse {
     /** True for an async command's 202, which carries a job id to poll. */
     public boolean isAccepted() {
         return statusCode == 202;
+    }
+
+    /**
+     * The engine's own account of a failure, ready to append, or "".
+     *
+     * <p>The engine answers in RFC 9457 problem JSON so that its
+     * caller can say why something failed, and this plugin is its
+     * only caller. Both the sync and the async path reported a bare
+     * status until a live round trip showed what that costs: a
+     * capacity call said "returned 503 for /v1/capacity" while the
+     * body said "capacity has not been observed yet", and a refused
+     * batch said "HTTP 400" while the body named the field.
+     *
+     * <p>It is appended to the status rather than replacing it,
+     * because the status is what gets grepped for, and a body that is
+     * not problem JSON yields nothing: a proxy or load balancer may
+     * have answered, and a parse failure must not displace the real
+     * one.
+     */
+    public String explain() {
+        if (body.trim().isEmpty()) {
+            return "";
+        }
+        try {
+            JsonObject problem = JsonParser.parseString(body).getAsJsonObject();
+            for (String field : new String[] {"detail", "title"}) {
+                if (problem.has(field) && problem.get(field).isJsonPrimitive()) {
+                    String said = problem.get(field).getAsString().trim();
+                    if (!said.isEmpty()) {
+                        return ": " + said;
+                    }
+                }
+            }
+        } catch (RuntimeException notProblemJson) {
+            return "";
+        }
+        return "";
     }
 }

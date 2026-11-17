@@ -55,6 +55,15 @@ public class UpdateAiGuardrailProfileCmd extends AiServicesSyncCmd {
     }
 
 
+@Override
+    protected String engineBody() {
+        JsonObject body = new JsonObject();
+        if (target != null) {
+            body.addProperty("target", target);
+        }
+        return body.toString();
+    }
+
     @Override
     protected void onSuccess(JsonObject body) {
         AiGuardrailProfileResponse response = AiGuardrailProfileResponse.from(body);

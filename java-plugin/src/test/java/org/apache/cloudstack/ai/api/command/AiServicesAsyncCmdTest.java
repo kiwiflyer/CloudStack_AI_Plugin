@@ -119,6 +119,39 @@ class AiServicesAsyncCmdTest {
     }
 
     @Test
+    void aRefusedCommandSaysWhyTheEngineRefused() throws Exception {
+        // The sync path learned this from a live round trip; the async
+        // path had the same defect from the same cause. A batch the
+        // engine refused reported only
+        //
+        //   the AI Services engine did not accept AI.BATCH.CREATE: HTTP 400
+        //
+        // while the body said which field was wrong. The engine speaks
+        // RFC 9457 so its caller can explain itself, and both paths
+        // now ask EngineResponse the same question.
+        TestCmd command = commandOver(Collections.singletonList(
+                new EngineResponse(400,
+                        "{\"title\":\"bad request\",\"detail\":\"model is not deployed\"}")));
+
+        ServerApiException failure =
+                assertThrows(ServerApiException.class, command::execute);
+
+        assertTrue(failure.getDescription().contains("model is not deployed"),
+                "lost the engine's detail: " + failure.getDescription());
+    }
+
+    @Test
+    void aRefusalKeepsItsStatusBesideTheDetail() throws Exception {
+        TestCmd command = commandOver(Collections.singletonList(
+                new EngineResponse(400, "{\"detail\":\"model is not deployed\"}")));
+
+        ServerApiException failure =
+                assertThrows(ServerApiException.class, command::execute);
+
+        assertTrue(failure.getDescription().contains("400"), failure.getDescription());
+    }
+
+    @Test
     void aRefusedCommandSurfacesItsStatus() throws Exception {
         TestCmd command = commandOver(Collections.singletonList(
                 new EngineResponse(403, "{}")));

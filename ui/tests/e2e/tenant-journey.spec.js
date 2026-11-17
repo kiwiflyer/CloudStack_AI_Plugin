@@ -15,6 +15,7 @@
 import { expect, test } from '@playwright/test'
 
 import { credentials, signIn } from './sign-in.js'
+import { header } from './table.js'
 
 // Milestone 6 is "tenant first", so the journey that has to work is a
 // tenant's: find a model, deploy it, get a key, try it.
@@ -33,14 +34,14 @@ test.describe('a tenant going from catalog to a working endpoint', () => {
   test('the catalog lists approved models with their price tier', async ({ page }) => {
     await page.goto('/client/#/aimodelcatalog')
 
-    await expect(page.getByRole('columnheader', { name: /price/i })).toBeVisible()
-    await expect(page.getByRole('columnheader', { name: /license/i })).toBeVisible()
+    await expect(header(page, /price/i)).toBeVisible()
+    await expect(header(page, /license/i)).toBeVisible()
   })
 
   test('an endpoint shows its base URL', async ({ page }) => {
     await page.goto('/client/#/aiendpoint')
 
-    await expect(page.getByRole('columnheader', { name: /base.*url/i })).toBeVisible()
+    await expect(header(page, /base.*url/i)).toBeVisible()
   })
 
   test('creating a key shows the secret once, with a warning', async ({ page }) => {
@@ -66,6 +67,6 @@ test.describe('a tenant going from catalog to a working endpoint', () => {
   test('effective parameters name the level each value came from', async ({ page }) => {
     await page.goto('/client/#/aieffectiveparameters')
 
-    await expect(page.getByRole('columnheader', { name: /set at/i })).toBeVisible()
+    await expect(header(page, /set at/i)).toBeVisible()
   })
 })

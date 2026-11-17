@@ -54,6 +54,9 @@ public class CreateAiBatchCmd extends AiServicesAsyncCmd {
 @Override
     protected String engineBody() {
         JsonObject body = new JsonObject();
+        if (model != null) {
+            body.addProperty("model", model);
+        }
         if (inputUri != null) {
             body.addProperty("input_uri", inputUri);
         }

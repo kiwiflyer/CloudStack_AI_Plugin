@@ -63,6 +63,24 @@ public class CreateAiGuardrailProfileCmd extends AiServicesSyncCmd {
     }
 
 
+@Override
+    protected String engineBody() {
+        JsonObject body = new JsonObject();
+        if (name != null) {
+            body.addProperty("name", name);
+        }
+        if (scope != null) {
+            body.addProperty("scope", scope);
+        }
+        if (target != null) {
+            body.addProperty("target", target);
+        }
+        if (preset != null) {
+            body.addProperty("preset", preset);
+        }
+        return body.toString();
+    }
+
     @Override
     protected void onSuccess(JsonObject body) {
         AiGuardrailProfileResponse response = AiGuardrailProfileResponse.from(body);

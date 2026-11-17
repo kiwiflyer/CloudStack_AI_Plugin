@@ -15,6 +15,7 @@
 import { expect, test } from '@playwright/test'
 
 import { signIn } from './sign-in.js'
+import { header } from './table.js'
 
 // The v2 screens (SPEC.md section 8).
 //
@@ -37,8 +38,9 @@ const TENANT_SCREENS = [
   'Adapters', 'Batch jobs', 'Certificates', 'Private endpoints', 'Guardrail profiles'
 ]
 
-async function signIn (page, user, password) {
-  await signIn(page, { user, password, domain: process.env.CLOUDSTACK_ADMIN_DOMAIN })
+/** The local wrapper the tests below call, by role credentials. */
+async function signInAs (page, user, password) {
+  await signIn(page, { user, password, domain: process.env.CLOUDSTACK_USER_DOMAIN })
 }
 
 test.describe('with ai.services.v2.enabled off', () => {
@@ -46,7 +48,7 @@ test.describe('with ai.services.v2.enabled off', () => {
   test.skip(v2Enabled, 'v2 is on in this zone; the absent-screen group does not apply')
 
   test.beforeEach(async ({ page }) => {
-    await signIn(page, process.env.CLOUDSTACK_USER_USER, process.env.CLOUDSTACK_USER_PASSWORD)
+    await signInAs(page, process.env.CLOUDSTACK_USER_USER, process.env.CLOUDSTACK_USER_PASSWORD)
   })
 
   for (const screen of TENANT_SCREENS) {
@@ -64,7 +66,7 @@ test.describe('with ai.services.v2.enabled off', () => {
 
   test('a v2 route reached by URL does not render a broken screen', async ({ page }) => {
     await page.goto('/client/#/aiadapter')
-    await expect(page.getByRole('columnheader', { name: /base model/i })).toHaveCount(0)
+    await expect(header(page, /base model/i)).toHaveCount(0)
   })
 })
 
@@ -73,7 +75,7 @@ test.describe('with ai.services.v2.enabled on', () => {
   test.skip(!v2Enabled, 'set CLOUDSTACK_AI_V2=1 once the setting is on')
 
   test.beforeEach(async ({ page }) => {
-    await signIn(page, process.env.CLOUDSTACK_USER_USER, process.env.CLOUDSTACK_USER_PASSWORD)
+    await signInAs(page, process.env.CLOUDSTACK_USER_USER, process.env.CLOUDSTACK_USER_PASSWORD)
   })
 
   for (const screen of TENANT_SCREENS) {
@@ -88,13 +90,13 @@ test.describe('with ai.services.v2.enabled on', () => {
     // a tenant reading only that column cannot call it.
     await page.goto('/client/#/aiadapter')
 
-    await expect(page.getByRole('columnheader', { name: /served model/i })).toBeVisible()
+    await expect(header(page, /served model/i)).toBeVisible()
   })
 
   test('a private endpoint says in words how it is reachable', async ({ page }) => {
     await page.goto('/client/#/aiprivateendpoint')
 
-    await expect(page.getByRole('columnheader', { name: /exposure/i })).toBeVisible()
+    await expect(header(page, /exposure/i)).toBeVisible()
   })
 
   test('certificates never show key material', async ({ page }) => {
@@ -120,7 +122,7 @@ test.describe('with ai.services.v2.enabled on', () => {
     // engine with a message saying what they may do instead.
     await page.goto('/client/#/aiguardrail')
 
-    await expect(page.getByRole('columnheader', { name: /scope/i })).toBeVisible()
+    await expect(header(page, /scope/i)).toBeVisible()
   })
 
   test('tightening their own account is offered', async ({ page }) => {
@@ -136,7 +138,11 @@ test.describe('evaluations, for a root admin', () => {
 
   test.beforeEach(async ({ page }) => {
     test.skip(!process.env.CLOUDSTACK_ADMIN_USER, 'set CLOUDSTACK_ADMIN_USER')
-    await signIn(page, process.env.CLOUDSTACK_ADMIN_USER, process.env.CLOUDSTACK_ADMIN_PASSWORD)
+    await signIn(page, {
+      user: process.env.CLOUDSTACK_ADMIN_USER,
+      password: process.env.CLOUDSTACK_ADMIN_PASSWORD,
+      domain: process.env.CLOUDSTACK_ADMIN_DOMAIN
+    })
   })
 
   test('a model in the registry has an evaluations tab', async ({ page }) => {
@@ -151,6 +157,6 @@ test.describe('evaluations, for a root admin', () => {
     await page.getByRole('row').nth(1).click()
     await page.getByRole('tab', { name: /evaluations/i }).click()
 
-    await expect(page.getByRole('columnheader', { name: /gate/i })).toBeVisible()
+    await expect(header(page, /gate/i)).toBeVisible()
   })
 })

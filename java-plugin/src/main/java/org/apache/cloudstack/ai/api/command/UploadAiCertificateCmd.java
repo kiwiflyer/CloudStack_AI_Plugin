@@ -39,11 +39,11 @@ public class UploadAiCertificateCmd extends AiServicesSyncCmd {
             description = "the domain it covers")
     private String customDomain;
 
-    @Parameter(name = "certificate", type = CommandType.STRING, required = true,
+    @Parameter(name = "certificate", type = CommandType.STRING, required = true, length = 65535,
             description = "the PEM certificate")
     private String certificate;
 
-    @Parameter(name = "privatekey", type = CommandType.STRING, required = true,
+    @Parameter(name = "privatekey", type = CommandType.STRING, required = true, length = 65535,
             description = "the PEM private key")
     private String privateKey;
 
@@ -63,6 +63,9 @@ public class UploadAiCertificateCmd extends AiServicesSyncCmd {
         JsonObject body = new JsonObject();
         if (customDomain != null) {
             body.addProperty("custom_domain", customDomain);
+        }
+        if (certificate != null) {
+            body.addProperty("certificate", certificate);
         }
         if (privateKey != null) {
             body.addProperty("private_key", privateKey);

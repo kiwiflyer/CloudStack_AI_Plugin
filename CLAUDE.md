@@ -111,7 +111,10 @@ capacity planner and its warnings on that observed data, `listKubernetesClusters
 migrations on Postgres. **And now the Java plugin itself** — built, installed,
 loaded into the running management server, and talking to the engine over
 mTLS: `listAiModels`, `listAiEndpoints` and `listAiSetupChecks` all answer
-200 through a signed CloudStack API call. **And for tenants** — the
+200 through a signed CloudStack API call. **With `ai.services.v2.enabled` on**, `listApis`
+goes to 923 and all twenty v2 commands register, and a real certificate,
+guardrail profile, batch and evaluation have been created through them. **And for
+tenants** — the
 same `listAiModels` returns two models to root admin, two to an account in
 `/Customers/Acme`, and none to one in `/ROOT`, because the spec publishes to
 `/Customers` and the engine filters on the domain the plugin asserts from
@@ -519,6 +522,24 @@ into which this repo's 74 keys must be merged**, and — upstream — the table 
 real UI tree and compiled without it, so every label rendered as its own key —
 `label.ai.model.catalog` as a page title — and a build that says `Compiled successfully`
 says nothing about that. Everything else is self-contained.
+
+**The v2 commands had never been called, and three things were wrong with how
+they are generated.** All three are the same shape: a default nobody checked.
+**A parameter travels in the body only if it has a `wire=` name**, and `wire=`
+had been set only where the engine's field name *differed* from the Java one
+(`baseModel` to `base_model`), on the assumption that it defaults to the field
+name. It defaults to `None`, meaning "not a body field" — so the parameters that
+needed no translation were exactly the ones never sent, across seven write
+commands. `createAiGuardrailProfile` posted an empty body and got a 422;
+`updateAiGuardrailProfile` got a clean 200 and changed nothing, which is worse.
+`wire` now defaults to the snake_case of the Java name and the five deliberate
+renames keep their explicit value. **`@Parameter`'s `length()` defaults to 255**,
+which no PEM can meet, so `uploadAiCertificate` could never accept a
+certificate — CloudStack's own `UploadCustomCertificateCmd` sets `length = 65535`
+and ours now does too. **And `AiServicesAsyncCmd` discarded the engine's
+explanation** exactly as the sync path had: a refused batch said "HTTP 400" while
+the body said "the batch input file has no requests". `EngineResponse.explain()`
+is now the one implementation both paths use.
 
 **Three warts the first end-to-end round trip exposed, two still open.**
 `AiServicesSyncCmd` used to report only the status — "the engine returned 503 for

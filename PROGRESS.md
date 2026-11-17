@@ -4302,3 +4302,116 @@ now 180s, above the sign-in's own 120s, so a slow sign-in reports as a
 slow sign-in.
 
 22 of 22 Playwright specs pass, twice. 103 Vitest tests pass.
+
+## The v2 commands, called for the first time
+
+`ai.services.v2.enabled` had only ever been tested in its off
+position. Turning it on: `listApis` goes from 903 to 923, all twenty
+`Release.V2` commands register, and the five v2 screens appear in the
+UI. The gate works in both directions.
+
+Then the commands were actually called, and three things were wrong
+with how every command is generated. All three are the same shape — a
+default nobody had checked, because nothing had ever exercised it.
+
+### A parameter travels only if it has a `wire=` name
+
+`render_body` built the request body from parameters carrying a
+`wire=`, and `wire=` had been set only where the engine's field name
+*differed* from the Java one: `baseModel` to `base_model`,
+`customDomain` to `custom_domain`. The assumption was that it defaults
+to the field name. It defaults to `None`, which meant "not a body
+field".
+
+So the parameters that needed no translation were precisely the ones
+never sent. Seven write commands were affected:
+
+```
+createAiGuardrailProfile  name, scope, target, preset   all dropped
+updateAiGuardrailProfile  target                        dropped
+runAiModelEvaluation      revision                      dropped
+uploadAiAdapter           name, rank, uri               dropped
+createAiBatch             model                         dropped
+uploadAiCertificate       certificate                   dropped
+replaceAiCertificate      certificate                   dropped
+```
+
+Five of them failed loudly — the engine requires a field they never
+sent, so a live server answered
+
+```
+the AI Services engine returned 422 for /v1/profiles/guardrail:
+the request body or query is not valid
+```
+
+`updateAiGuardrailProfile` did not. `GuardrailPatch` is all-optional,
+so a PATCH with an empty body is a clean 200 that changes nothing,
+and an operator is told their guardrail was updated when it was not.
+
+`wire` now defaults to the snake_case of the Java name. All 34 of the
+39 explicit values a default would reproduce are left in place and
+the 5 genuine renames — `models` to `allowed_models`, `cidrList` to
+`cidrs`, `expires` to `expires_at`, `domainPath` to `domain`, `zoneId`
+to `zone` — still override it.
+
+The guard is written against the generated Java rather than the
+table, because the table now defaults the name and a check there
+would pass whatever the generator did with it.
+
+### A PEM does not fit in 255 characters
+
+`@Parameter`'s `length()` defaults to 255. A certificate is about a
+thousand, so `uploadAiCertificate` could never accept one:
+
+```
+Value greater than max allowed length 255 for param: certificate
+```
+
+CloudStack's own `UploadCustomCertificateCmd` declares
+`length = 65535` for exactly this reason. Nothing in the generator
+emitted a length at all, so four PEM parameters across two commands
+were capped at a limit no real input can meet. A real 1,038-character
+certificate now uploads and comes back with its fingerprint, expiry
+and serial.
+
+### The async path threw the engine's reason away
+
+The same defect the sync path had, from the same cause. A refused
+batch reported
+
+```
+the AI Services engine did not accept AI.BATCH.CREATE: HTTP 400
+```
+
+while the body said *the batch input file has no requests*.
+`EngineResponse.explain()` is now the one implementation both paths
+use, and the live message carries the reason.
+
+### What the async bridge proved on the way
+
+`createAiBatch` returned a job id, `queryAsyncJobResult` polled it
+through CloudStack's own job states, and the failure arrived as
+`jobstatus=2` with the engine's reason in `jobresult`. The
+`BaseAsyncCmd` bridge had never run.
+
+### The v2 UI specs
+
+9 of 13 pass. Three locator defects of the same kind the role specs
+had — `getByRole('columnheader')` matches nothing, because Ant puts
+the header text in a span inside the `th` and the accessibility tree
+exposes that span as `generic`. Raising the assertion timeout to 30s
+only made them fail more slowly, which is how the real cause was
+found; the timeout is back at 10s and eight assertions across two
+specs now match the header row's text instead.
+
+The four that still fail are not product defects. Three are timeouts
+rather than assertions — a 9.5-minute run against a webpack dev
+server that compiles each route on first visit, and sign-in exceeding
+120s twice. The fourth wants a model in the registry to click, and
+the registry is empty because nothing has been mirrored.
+
+The honest fix for the first three is a production build, which is
+also what ships; `npm run build` dies in `thread-loader` with EPIPE,
+a worker crash, and that has not been chased down.
+
+2,010 unit tests and 457 JUnit tests pass.

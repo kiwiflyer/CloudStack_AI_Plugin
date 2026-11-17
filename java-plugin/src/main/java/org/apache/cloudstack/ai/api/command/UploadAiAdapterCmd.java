@@ -62,8 +62,17 @@ public class UploadAiAdapterCmd extends AiServicesAsyncCmd {
 @Override
     protected String engineBody() {
         JsonObject body = new JsonObject();
+        if (name != null) {
+            body.addProperty("name", name);
+        }
         if (baseModel != null) {
             body.addProperty("base_model", baseModel);
+        }
+        if (rank != null) {
+            body.addProperty("rank", rank);
+        }
+        if (uri != null) {
+            body.addProperty("uri", uri);
         }
         return body.toString();
     }

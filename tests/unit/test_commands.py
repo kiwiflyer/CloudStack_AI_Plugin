@@ -694,3 +694,156 @@ class TestEveryCommandDeclaresWhoMayCallIt:
 
         assert "RoleType.User" not in text
         assert "RoleType.Admin" in text
+
+
+class TestAWriteCommandSendsWhatItWasGiven:
+    """Three commands took parameters and posted an empty body.
+
+    `createAiGuardrailProfile` declared name, scope, target and preset
+    as `@Parameter`s, registered them, documented them — and sent none
+    of them, because the generator builds a body only from parameters
+    carrying a `wire=` name and none of those had one. A live 4.23.0.0
+    answered:
+
+        the AI Services engine returned 422 for /v1/profiles/guardrail:
+        the request body or query is not valid
+
+    Two of the three fail that loudly, because the engine requires a
+    field they never send. `updateAiGuardrailProfile` does not:
+    `GuardrailPatch` is all-optional, so a PATCH with an empty body is
+    a clean 200 that changes nothing, and the operator is told their
+    guardrail was updated when it was not.
+
+    A parameter that is neither in the path nor in the query string
+    has nowhere to travel except the body. If none of them has a
+    `wire=`, the command cannot do its job.
+    """
+
+    def generator(self) -> Any:
+        import importlib.util
+        import sys as _sys
+
+        root = Path(__file__).resolve().parents[2]
+        path = root / "java-plugin" / "tools" / "generate_commands.py"
+        spec = importlib.util.spec_from_file_location("aisvc_java_generator_body", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        _sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def body_params(self, command: Any) -> list[Any]:
+        """Parameters with nowhere to go but the body."""
+        return [
+            param
+            for param in command.params
+            if "{" + param.java + "}" not in command.path and param.java not in command.query
+        ]
+
+    def test_the_generator_was_loaded(self) -> None:
+        assert len(self.generator().COMMANDS) > 50
+
+    def generated(self, name: str) -> str:
+        root = Path(__file__).resolve().parents[2] / "java-plugin" / "src" / "main"
+        cls = name[0].upper() + name[1:] + "Cmd.java"
+        return (root / "java/org/apache/cloudstack/ai/api/command" / cls).read_text()
+
+    def test_every_write_command_sends_its_parameters(self) -> None:
+        """Asserted on the generated Java, not on the table.
+
+        The table now defaults a parameter's wire name, so a check
+        there would pass whatever the generator did with it. This
+        reads what the plugin will actually compile.
+        """
+        generator = self.generator()
+        silent = []
+        for command in generator.COMMANDS:
+            if command.method not in ("POST", "PATCH", "PUT"):
+                continue
+            params = self.body_params(command)
+            if not params:
+                continue
+            java = self.generated(command.name)
+            if "engineBody" not in java:
+                silent.append(
+                    f"{command.method} {command.name}: builds no body, so "
+                    f"{[p.java for p in params]} are never sent"
+                )
+                continue
+            for param in params:
+                field = generator.wire_name(param)
+                if f'body.addProperty("{field}"' not in java:
+                    silent.append(f"{command.name}: {param.java} is not put in the body")
+
+        assert not silent, "\n".join(silent)
+
+    def test_a_renamed_field_travels_under_the_engines_name(self) -> None:
+        # The five deliberate renames, which the snake_case default
+        # must not quietly undo.
+        assert 'body.addProperty("base_model"' in self.generated("uploadAiAdapter")
+        assert 'body.addProperty("custom_domain"' in self.generated("uploadAiCertificate")
+        assert 'body.addProperty("allowed_models"' in self.generated("createAiApiKey")
+
+    def test_a_name_needing_no_translation_still_travels(self) -> None:
+        # The exact class of parameter that was dropped.
+        java = self.generated("createAiGuardrailProfile")
+        for field in ("name", "scope", "target", "preset"):
+            assert f'body.addProperty("{field}"' in java, field
+
+    def test_a_get_needs_no_body(self) -> None:
+        gets = [c for c in self.generator().COMMANDS if c.method == "GET"]
+        assert gets, "no GET commands found, so this guard proves nothing"
+
+
+class TestAParameterCarryingABlobSaysSo:
+    """`uploadAiCertificate` could never accept a certificate.
+
+    `@Parameter`'s `length()` defaults to 255 and a PEM certificate is
+    well over a thousand characters, so a live 4.23.0.0 refused the
+    only thing the command exists to take:
+
+        Value greater than max allowed length 255 for param: certificate
+
+    CloudStack's own `UploadCustomCertificateCmd` declares
+    `length = 65535` for exactly this reason. Nothing in the generator
+    emitted one, so every PEM parameter was capped at 255 — a limit
+    no real input can meet, on four parameters across two commands.
+    """
+
+    def generated(self, name: str) -> str:
+        root = Path(__file__).resolve().parents[2] / "java-plugin" / "src" / "main"
+        cls = name[0].upper() + name[1:] + "Cmd.java"
+        return (root / "java/org/apache/cloudstack/ai/api/command" / cls).read_text()
+
+    def generator(self) -> Any:
+        import importlib.util
+        import sys as _sys
+
+        root = Path(__file__).resolve().parents[2]
+        path = root / "java-plugin" / "tools" / "generate_commands.py"
+        spec = importlib.util.spec_from_file_location("aisvc_java_generator_len", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        _sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def test_every_pem_parameter_raises_the_limit(self) -> None:
+        capped = []
+        for command in self.generator().COMMANDS:
+            for param in command.params:
+                if "PEM" not in param.doc:
+                    continue
+                java = self.generated(command.name)
+                declaration = java.split(f'name = "{param.name}"')[1].split(";")[0]
+                if "length" not in declaration:
+                    capped.append(
+                        f"{command.name}.{param.name} carries a PEM but is capped at 255"
+                    )
+
+        assert not capped, "\n".join(capped)
+
+    def test_the_certificate_commands_in_particular(self) -> None:
+        for name in ("uploadAiCertificate", "replaceAiCertificate"):
+            java = self.generated(name)
+            assert "length = 65535" in java, f"{name} caps its PEM at 255"
