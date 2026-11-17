@@ -773,7 +773,10 @@ class TestAWriteCommandSendsWhatItWasGiven:
                 continue
             for param in params:
                 field = generator.wire_name(param)
-                if f'body.addProperty("{field}"' not in java:
+                # A list parameter is built as a JsonArray and added
+                # with `body.add`, not `addProperty`.
+                sent = f'body.addProperty("{field}"' in java or f'body.add("{field}"' in java
+                if not sent:
                     silent.append(f"{command.name}: {param.java} is not put in the body")
 
         assert not silent, "\n".join(silent)
@@ -783,7 +786,8 @@ class TestAWriteCommandSendsWhatItWasGiven:
         # must not quietly undo.
         assert 'body.addProperty("base_model"' in self.generated("uploadAiAdapter")
         assert 'body.addProperty("custom_domain"' in self.generated("uploadAiCertificate")
-        assert 'body.addProperty("allowed_models"' in self.generated("createAiApiKey")
+        # A list travels as an array, under the same renamed field.
+        assert 'body.add("allowed_models"' in self.generated("createAiApiKey")
 
     def test_a_name_needing_no_translation_still_travels(self) -> None:
         # The exact class of parameter that was dropped.
@@ -898,3 +902,80 @@ class TestTheMarvinExpectationsMatchTheMap:
         assert not wrong, (
             "\n".join(wrong) + "\n\nRegenerate role_permissions.json from aisvc/api/commands.py."
         )
+
+
+class TestTheTerraformProviderSendsRealParameters:
+    """CloudStack ignores a parameter it does not know, in silence.
+
+    `cloudstack_ai_api_key` sent `allowedmodels`, `cidrs`, `expiresat`
+    and `ratelimitrpm`. The command takes `models`, `cidrlist` and
+    `expires`, and has no rate-limit parameter at all — so every one
+    of them was dropped on the floor and the key was created with a
+    name and nothing else.
+
+    That is not a wiring bug but a security one: an operator writing
+
+        resource "cloudstack_ai_api_key" "x" {
+          allowed_models = ["llama-3.3-70b-instruct"]
+          cidrs          = ["10.0.0.0/8"]
+          expires_at     = "2026-01-01T00:00:00Z"
+        }
+
+    got an unrestricted key that never expires, and nothing said so.
+    Found by the first acceptance-test run against a live management
+    server; the unit tests pass against a fake that accepts whatever
+    it is sent.
+    """
+
+    def provider_calls(self) -> list[tuple[str, set[str]]]:
+        """Each `Call("name", …)` in the provider, with its parameters."""
+        root = Path(__file__).resolve().parents[2] / "terraform/internal/provider"
+        found = []
+        for path in sorted(root.glob("*.go")):
+            if path.name.endswith("_test.go"):
+                continue
+            source = path.read_text()
+            for match in re.finditer(
+                r'Call\(\s*"(\w+)",\s*map\[string\]string\{([^}]*)\}', source, re.S
+            ):
+                found.append((match.group(1), set(re.findall(r'"(\w+)":', match.group(2)))))
+            for match in re.finditer(
+                r"params\s*:=\s*map\[string\]string\{(.*?)\n\t\}(.*?)"
+                r'Call\(\s*"(\w+)",\s*params',
+                source,
+                re.S,
+            ):
+                keys = set(re.findall(r'"(\w+)":', match.group(1)))
+                keys |= set(re.findall(r'params\["(\w+)"\]\s*=', match.group(2)))
+                found.append((match.group(3), keys))
+        return found
+
+    def command_parameters(self) -> dict[str, set[str]]:
+        import importlib.util
+        import sys as _sys
+
+        root = Path(__file__).resolve().parents[2]
+        path = root / "java-plugin" / "tools" / "generate_commands.py"
+        spec = importlib.util.spec_from_file_location("aisvc_java_generator_tf", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        _sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return {c.name: {p.name for p in c.params} for c in module.COMMANDS}
+
+    def test_the_provider_was_read(self) -> None:
+        assert len(self.provider_calls()) >= 8
+
+    def test_every_parameter_the_provider_sends_exists(self) -> None:
+        known = self.command_parameters()
+        ignored = []
+        for command, sent in self.provider_calls():
+            if command not in known:
+                continue
+            for name in sorted(sent - known[command]):
+                ignored.append(
+                    f"{command}: sends {name!r}, which the command does not take "
+                    f"(it takes {sorted(known[command])}) — CloudStack drops it silently"
+                )
+
+        assert not ignored, "\n".join(ignored)

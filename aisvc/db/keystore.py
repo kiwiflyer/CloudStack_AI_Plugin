@@ -273,7 +273,15 @@ class UsageStore:
         """
         record = self.budget_for(account, domain)
         if record is None:
-            record = BudgetRecord(id=str(uuid.uuid4()), account=account, domain=domain.rstrip("/"))
+            # `or "/"`: rstrip would turn the root domain's only
+            # character into nothing, and a caller who asked for "/"
+            # was told the budget belonged to "". Lookups match both
+            # spellings through _domain_variants either way.
+            record = BudgetRecord(
+                id=str(uuid.uuid4()),
+                account=account,
+                domain=domain.rstrip("/") or "/",
+            )
             self.session.add(record)
         record.monthly = budget.monthly
         record.currency = budget.currency

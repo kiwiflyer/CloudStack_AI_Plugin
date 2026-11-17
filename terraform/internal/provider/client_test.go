@@ -248,3 +248,37 @@ func TestTheRequestIsStillSignedOverEveryParameter(t *testing.T) {
 		t.Errorf("signature = %q, not computed over the sent parameters", got)
 	}
 }
+
+// A created object's id lives one level below the envelope.
+//
+// CloudStack answers a create with
+// {"createaiapikeyresponse": {"aiapikey": {"id": …}}}, so unwrap()
+// lands on {"aiapikey": …} and "id" is not there. Five resources read
+// it at that level, set an empty id, and Terraform reported
+//
+//	Provider produced inconsistent result after apply … Root object
+//	was present, but now absent.
+//
+// immediately after creating the object — found by the first
+// acceptance run against a live management server.
+func TestCreatedIDReadsThroughTheObjectName(t *testing.T) {
+	body := []byte(`{"createaiapikeyresponse":{"aiapikey":{"id":"2f21ef0e50f477f2","name":"k"}}}`)
+
+	if got := createdID(body); got != "2f21ef0e50f477f2" {
+		t.Fatalf("createdID = %q, want the nested id", got)
+	}
+}
+
+func TestCreatedIDStillReadsAFlatResponse(t *testing.T) {
+	body := []byte(`{"createaithingresponse":{"id":"flat-id"}}`)
+
+	if got := createdID(body); got != "flat-id" {
+		t.Fatalf("createdID = %q, want flat-id", got)
+	}
+}
+
+func TestCreatedIDIsEmptyWhenThereIsNone(t *testing.T) {
+	if got := createdID([]byte(`{"createaithingresponse":{"warning":"none"}}`)); got != "" {
+		t.Fatalf("createdID = %q, want empty", got)
+	}
+}

@@ -20,6 +20,7 @@ package org.apache.cloudstack.ai.api.response;
 import org.apache.cloudstack.api.BaseResponse;
 
 import com.cloud.serializer.Param;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.annotations.SerializedName;
 
@@ -91,9 +92,21 @@ public class AiGpuCapacityResponse extends BaseResponse {
     }
 
     private static String readString(JsonObject body, String field) {
-        return body.has(field) && !body.get(field).isJsonNull()
-                ? body.get(field).getAsString()
-                : null;
+        if (!body.has(field) || body.get(field).isJsonNull()) {
+            return null;
+        }
+        JsonElement value = body.get(field);
+        if (!value.isJsonArray()) {
+            return value.getAsString();
+        }
+        StringBuilder joined = new StringBuilder();
+        for (JsonElement part : value.getAsJsonArray()) {
+            if (joined.length() > 0) {
+                joined.append(",");
+            }
+            joined.append(part.getAsString());
+        }
+        return joined.toString();
     }
 
     private static Integer readInteger(JsonObject body, String field) {

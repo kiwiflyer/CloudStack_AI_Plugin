@@ -143,6 +143,21 @@ func setFrom(d *schema.ResourceData, item map[string]any, mapping map[string]str
 }
 
 // idOf reads the identifier out of a created object.
+// itemWithID picks the one record a resource is about.
+//
+// Several list commands take no filters, so asking the server for one
+// id returns everything; taking the first item then reads state for
+// one object out of another. Matching here is the only thing that
+// cannot be wrong about which record it found.
+func itemWithID(body []byte, key string, id string) (map[string]any, bool) {
+	for _, item := range allItems(body, key) {
+		if idOf(item) == id {
+			return item, true
+		}
+	}
+	return nil, false
+}
+
 func idOf(item map[string]any) string {
 	if id, ok := item["id"].(string); ok {
 		return id

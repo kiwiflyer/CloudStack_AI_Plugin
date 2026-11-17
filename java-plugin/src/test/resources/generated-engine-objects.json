@@ -10,12 +10,12 @@
     "sizebytes": 1234
   },
   "AiApiKeyResponse": {
-    "allowed_models": "sample",
-    "expires_at": "sample",
+    "allowedmodels": "sample",
+    "apikey": "sample",
+    "expires": "sample",
     "id": "sample",
-    "last_used": "sample",
-    "name": "sample",
-    "secret": "sample"
+    "lastused": "sample",
+    "name": "sample"
   },
   "AiBatchResponse": {
     "account": "sample",

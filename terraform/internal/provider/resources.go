@@ -93,11 +93,14 @@ func createAiDeployment(_ context.Context, d *schema.ResourceData, meta any) dia
 }
 
 func readAiDeployment(_ context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
-	body, err := clientFrom(meta).Call("listAiModelDeployments", map[string]string{"id": d.Id()})
+	// listAiModelDeployments takes no filters, so asking for one id
+	// returned every deployment and `firstItem` took whichever came
+	// back first — state for one deployment, read from another.
+	body, err := clientFrom(meta).Call("listAiModelDeployments", nil)
 	if err != nil {
 		return diag.FromErr(err)
 	}
-	item, ok := firstItem(body, "aideployment")
+	item, ok := itemWithID(body, "aideployment", d.Id())
 	if !ok {
 		// Gone outside Terraform. Clearing the id lets the next apply
 		// recreate it instead of failing every plan from here on.
@@ -165,11 +168,16 @@ func resourceAiApiKey() *schema.Resource {
 }
 
 func createAiApiKey(_ context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
+	// These are the command's own parameter names, and CloudStack
+	// drops any it does not know without a word: an earlier version
+	// sent allowedmodels, cidrs and expiresat, so every key was
+	// created unrestricted and never expiring while the plan said
+	// otherwise.
 	params := map[string]string{
-		"name":          d.Get("name").(string),
-		"allowedmodels": csv(d, "allowed_models"),
-		"cidrs":         csv(d, "cidrs"),
-		"expiresat":     d.Get("expires_at").(string),
+		"name":     d.Get("name").(string),
+		"models":   csv(d, "allowed_models"),
+		"cidrlist": csv(d, "cidrs"),
+		"expires":  d.Get("expires_at").(string),
 	}
 	if limit := d.Get("rate_limit_rpm").(int); limit > 0 {
 		params["ratelimitrpm"] = strconv.Itoa(limit)
@@ -179,11 +187,17 @@ func createAiApiKey(_ context.Context, d *schema.ResourceData, meta any) diag.Di
 	if err != nil {
 		return diag.FromErr(err)
 	}
-	fields := unwrap(body)
-	d.SetId(rawString(fields["id"]))
+	// Both of these live under the object's own name, not at the
+	// envelope's top level.
+	d.SetId(createdID(body))
+	minted := unwrapObject(body, "aiapikey")
 	// The only moment this value exists. It is not re-read later.
-	if err := d.Set("api_key", rawString(fields["apikey"])); err != nil {
-		return diag.FromErr(err)
+	if minted != nil {
+		if key, ok := minted["apikey"].(string); ok {
+			if err := d.Set("api_key", key); err != nil {
+				return diag.FromErr(err)
+			}
+		}
 	}
 	return readAiApiKey(nil, d, meta)
 }
@@ -200,9 +214,19 @@ func readAiApiKey(_ context.Context, d *schema.ResourceData, meta any) diag.Diag
 		// Deliberately does not touch api_key: the secret is not in
 		// this response and never will be, and writing the empty
 		// string would destroy what state already holds.
-		return diag.FromErr(setFrom(d, item, map[string]string{
+		if err := setFrom(d, item, map[string]string{
 			"name": "name", "last_used": "lastused",
-		}))
+		}); err != nil {
+			return diag.FromErr(err)
+		}
+		// CloudStack carries the list as one comma-separated value,
+		// and without reading it back an imported key loses the
+		// restriction it was created with.
+		models := []string{}
+		if joined, ok := item["allowedmodels"].(string); ok && joined != "" {
+			models = strings.Split(joined, ",")
+		}
+		return diag.FromErr(d.Set("allowed_models", models))
 	}
 	d.SetId("")
 	return nil
@@ -228,7 +252,11 @@ func resourceAiBudget() *schema.Resource {
 		DeleteContext: deleteAiBudget,
 		Importer:      importByID,
 		Schema: map[string]*schema.Schema{
-			"account":  {Type: schema.TypeString, Required: true, ForceNew: true},
+			"account": {Type: schema.TypeString, Required: true, ForceNew: true},
+			// Required by the command, because a CloudStack account
+			// name is unique only within its domain. Without it every
+			// apply failed on "missing parameter domain".
+			"domain": {Type: schema.TypeString, Required: true, ForceNew: true},
 			"monthly":  {Type: schema.TypeFloat, Required: true},
 			"currency": {Type: schema.TypeString, Optional: true, Default: "USD"},
 			"on_exceed": {Type: schema.TypeString, Optional: true, Default: "alert",
@@ -242,6 +270,7 @@ func resourceAiBudget() *schema.Resource {
 func budgetParams(d *schema.ResourceData) map[string]string {
 	return map[string]string{
 		"account":  d.Get("account").(string),
+		"domain":   d.Get("domain").(string),
 		"monthly":  strconv.FormatFloat(d.Get("monthly").(float64), 'f', -1, 64),
 		"currency": d.Get("currency").(string),
 		"onexceed": d.Get("on_exceed").(string),
@@ -253,8 +282,7 @@ func createAiBudget(_ context.Context, d *schema.ResourceData, meta any) diag.Di
 	if err != nil {
 		return diag.FromErr(err)
 	}
-	fields := unwrap(body)
-	id := rawString(fields["id"])
+	id := createdID(body)
 	if id == "" {
 		// A budget is identified by its account.
 		id = d.Get("account").(string)
@@ -273,7 +301,8 @@ func readAiBudget(_ context.Context, d *schema.ResourceData, meta any) diag.Diag
 			continue
 		}
 		if err := setFrom(d, item, map[string]string{
-			"account": "account", "currency": "currency", "on_exceed": "onexceed",
+			"account": "account", "domain": "domain",
+			"currency": "currency", "on_exceed": "onexceed",
 		}); err != nil {
 			return diag.FromErr(err)
 		}
@@ -346,7 +375,7 @@ func profileResource(kind string, extra map[string]*schema.Schema) *schema.Resou
 			if err != nil {
 				return diag.FromErr(err)
 			}
-			d.SetId(rawString(unwrap(body)["id"]))
+			d.SetId(createdID(body))
 			return nil
 		},
 		ReadContext: func(_ context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {

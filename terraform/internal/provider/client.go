@@ -216,6 +216,32 @@ func unwrap(body []byte) map[string]json.RawMessage {
 	return nil
 }
 
+// createdID reads a new object's identifier out of a create response.
+//
+// CloudStack nests a created object under its own name —
+// {"createaiapikeyresponse": {"aiapikey": {"id": …}}} — so unwrap()
+// lands on {"aiapikey": …} and "id" is one level further down. Five
+// resources read it at the wrong level, set an empty id, and
+// Terraform reported the object as absent in the same apply that
+// created it. Both shapes are accepted, because a response that does
+// carry a bare id is not wrong, only different.
+func createdID(body []byte) string {
+	fields := unwrap(body)
+	if id := rawString(fields["id"]); id != "" {
+		return id
+	}
+	for _, raw := range fields {
+		var nested map[string]any
+		if err := json.Unmarshal(raw, &nested); err != nil {
+			continue
+		}
+		if id, ok := nested["id"].(string); ok && id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
 func errorTextIn(body []byte) string {
 	fields := unwrap(body)
 	if fields == nil {

@@ -22,6 +22,7 @@ import org.apache.cloudstack.ai.api.response.AiApiKeyResponse;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 /** Creates a scoped API key. The secret is shown once. (SPEC.md section 9). */
@@ -51,6 +52,10 @@ public class CreateAiApiKeyCmd extends AiServicesSyncCmd {
             description = "when the key should expire")
     private String expires;
 
+    @Parameter(name = "ratelimitrpm", type = CommandType.INTEGER,
+            description = "requests per minute this key may make")
+    private Integer rateLimitRpm;
+
     @Override
     protected String enginePath() {
         String path = "/v1/keys";
@@ -69,13 +74,30 @@ public class CreateAiApiKeyCmd extends AiServicesSyncCmd {
             body.addProperty("name", name);
         }
         if (models != null) {
-            body.addProperty("allowed_models", models);
+            JsonArray valuesModels = new JsonArray();
+            for (String part : models.split(",")) {
+                String trimmed = part.trim();
+                if (!trimmed.isEmpty()) {
+                    valuesModels.add(trimmed);
+                }
+            }
+            body.add("allowed_models", valuesModels);
         }
         if (cidrList != null) {
-            body.addProperty("cidrs", cidrList);
+            JsonArray valuesCidrList = new JsonArray();
+            for (String part : cidrList.split(",")) {
+                String trimmed = part.trim();
+                if (!trimmed.isEmpty()) {
+                    valuesCidrList.add(trimmed);
+                }
+            }
+            body.add("cidrs", valuesCidrList);
         }
         if (expires != null) {
             body.addProperty("expires_at", expires);
+        }
+        if (rateLimitRpm != null) {
+            body.addProperty("rate_limit_rpm", rateLimitRpm);
         }
         return body.toString();
     }

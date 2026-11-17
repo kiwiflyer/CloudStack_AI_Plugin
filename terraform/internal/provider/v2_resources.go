@@ -282,7 +282,7 @@ func createAiCertificate(_ context.Context, d *schema.ResourceData, meta any) di
 	if err != nil {
 		return v2Error(err)
 	}
-	d.SetId(rawString(unwrap(body)["id"]))
+	d.SetId(createdID(body))
 	return readAiCertificate(nil, d, meta)
 }
 
@@ -451,7 +451,7 @@ func createAiGuardrailProfile(_ context.Context, d *schema.ResourceData, meta an
 	if err != nil {
 		return v2Error(err)
 	}
-	d.SetId(rawString(unwrap(body)["id"]))
+	d.SetId(createdID(body))
 	return readAiGuardrailProfile(nil, d, meta)
 }
 

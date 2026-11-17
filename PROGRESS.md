@@ -4779,3 +4779,104 @@ schema are real, the cards are not.
 
 `java-plugin/README.md` now records that loading the plugin is how its
 defects were found, and `docs/README.md` indexes the Marvin tests.
+
+## Terraform acceptance, run for the first time
+
+The last suite that had never run. It needed a `terraform` binary —
+the SDK's own `hc-install` had been failing with `openpgp: key
+expired` — so 1.9.8 was fetched from `releases.hashicorp.com` and
+checked against the published SHA256 before use.
+
+Eight tests. The first run: **1 passed, 2 failed, 5 skipped**. Seven
+defects later, **4 pass**, and the four that remain are understood.
+
+### What the provider was sending
+
+`createAiApiKey` takes `models`, `cidrlist` and `expires`. The
+provider sent `allowedmodels`, `cidrs`, `expiresat` — and
+`ratelimitrpm`, which the command did not have at all. **CloudStack
+ignores a parameter it does not know, in silence**, so
+
+```hcl
+resource "cloudstack_ai_api_key" "x" {
+  allowed_models = ["llama-3.3-70b-instruct"]
+  cidrs          = ["10.0.0.0/8"]
+  expires_at     = "2026-01-01T00:00:00Z"
+}
+```
+
+created an unrestricted key that never expired, and said nothing. That
+is a security defect rather than a wiring one: the restrictions an
+operator asked for were dropped on the floor.
+
+`tests/unit/test_commands.py` now compares every parameter the
+provider sends against the command that receives it.
+
+### The secret was never returned
+
+The engine returns a new key's secret as `apikey`, with a warning
+saying it cannot be retrieved again. `AiApiKeyResponse` read `secret`.
+So the one moment the secret existed, it was dropped — on
+CloudMonkey, Terraform and the UI alike. A live `createAiApiKey`
+answered `{"id": …, "name": …}` and nothing else: **you could create
+keys and never learn any of them.**
+
+All three now say `apikey`, which is what CloudStack's own key APIs
+call it.
+
+### Three more in the same seam
+
+**A list sent as a string.** `allowed_models` and `cidrs` are
+`list[str]` in the engine and were sent as JSON strings, so a key with
+either set got a 422. The generator now builds a `JsonArray` for a
+parameter marked `is_list`, splitting CloudStack's comma-separated
+value.
+
+**An array read as a string.** Coming back the other way,
+`listAiApiKeys` returns `allowedmodels` as an array, and
+`getAsString()` on an array throws *Array must have size 1, but has
+size 0* — a listed key came back as an error rather than a row. The
+generated `readString` now joins an array with commas.
+
+**A created object's id is nested.** CloudStack answers a create with
+`{"createaiapikeyresponse": {"aiapikey": {"id": …}}}`, so `unwrap()`
+lands on `{"aiapikey": …}` and `"id"` is one level further down. Five
+resources read it at the wrong level, set an empty id, and Terraform
+reported *Root object was present, but now absent* in the same apply
+that created the object. `createdID` accepts both shapes.
+
+### And two of the project's own
+
+**`cloudstack_ai_budget` had no `domain`.** The command requires one,
+because an account name is unique only within its domain — which this
+repo's own notes say in as many words. The resource had no such
+attribute, so every apply failed on `missing parameter domain`.
+
+**The root domain lost its name.** `set_budget` stored
+`domain.rstrip("/")`, which turns `/` into `""`. An operator who set a
+budget for the root domain was told it belonged to `""`, so Terraform
+planned to destroy and recreate it on every run. Lookups match both
+spellings through `_domain_variants`, which is why nothing had
+noticed.
+
+### Where it stands
+
+```
+TestAccAiApiKey             PASS
+TestAccAiBudget             PASS
+TestAccAiModelsDataSource   PASS
+TestAccAiGuardrailProfile   PASS
+TestAccAiAdapter            FAIL  AdapterBody requires size_bytes; the
+                                  command never sends one
+TestAccAiPrivateEndpoint    FAIL  missing parameter deployment
+TestAccAiEvaluationsDataSource FAIL  missing parameter model
+TestAccAiCertificate        FAIL  the config's PEM is not a certificate
+```
+
+The first three are the same defect as the budget's missing domain: a
+parameter the engine requires that nothing sends. The fourth is a
+fixture — the engine checks a certificate's SAN against the domain,
+correctly, and the test offers a placeholder.
+
+2,018 unit, 462 JUnit and 106 Vitest tests pass; Terraform's own unit
+tests pass; 4 of 8 acceptance tests pass.

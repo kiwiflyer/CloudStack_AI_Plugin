@@ -59,7 +59,10 @@ advertised none of them; with it loaded all twelve v1 ones are there (thirty-eig
 in all) while the five v2 routes drop, which is what the `ai.services.v2.enabled`
 default is supposed to do. What has not run is the UI against the loaded
 plugin: the two were verified in separate management servers, never the same one. `terraform/` builds and unit-tests (v1 and v2) but
-its acceptance tests have never run against a live management server.
+**4 of its 8 acceptance tests now pass** against a live management
+server; the four that fail each omit a parameter the engine requires, bar the
+certificate one, whose fixture is a placeholder PEM. Running them needs a
+`terraform` binary, which the SDK's own installer could not fetch.
 **The Marvin tests exist and pass** — `test/integration/plugins/ai-services/`,
 58 commands across three roles, allowed and denied, against a live 4.23.0.0. They
 call each command with no arguments, because access is checked before parameters
@@ -514,6 +517,26 @@ protects nothing.
 the `text` parts of a vision content list, `prompt`, `input`, `query` and rerank
 `documents`. Text the scan does not reach is a locked guardrail silently not
 applying, which is the thing a domain admin was sold.
+
+**CloudStack ignores a parameter it does not know, in silence.** The Terraform
+provider sent `allowedmodels`, `cidrs`, `expiresat` and `ratelimitrpm` to
+`createAiApiKey`, which takes `models`, `cidrlist` and `expires` and had no rate
+limit at all — so every key was created unrestricted and never expiring while
+the plan said otherwise. `tests/unit/test_commands.py` now compares every
+parameter the provider sends against the command that receives it. **The same
+family, caught the same way:** a new key's secret is `apikey` on the engine and
+was read as `secret`, so it was dropped at the one moment it existed;
+`allowed_models` and `cidrs` are `list[str]` and were sent as JSON strings (422
+out) and read back from arrays with `getAsString()` (*Array must have size 1*
+in); and a created object's id sits under its own name, so five resources read
+`unwrap(body)["id"]`, set an empty id, and Terraform reported *Root object was
+present, but now absent* in the apply that created it.
+
+**`/` is a domain path, not an empty one.** `set_budget` stored
+`domain.rstrip("/")`, which leaves the root domain as `""`. Lookups match both
+spellings through `_domain_variants`, so nothing noticed until an operator was
+told their root-domain budget belonged to `""` and Terraform planned to replace
+it on every run.
 
 **The Terraform client POSTs**, never GETs. `uploadAiCertificate` carries an
 unencrypted PEM key, and CloudStack's query-string log scrubber covers

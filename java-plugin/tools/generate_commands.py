@@ -210,12 +210,21 @@ RESPONSES: tuple[Response, ...] = (
         (
             f("id", "id", "String", "the key's identifier"),
             f("name", "name", "String", "the operator's name for this key"),
-            f("secret", "secret", "String",
-              "the key itself, returned only when it is created"),
-            f("allowedModels", "allowed_models", "String",
+            # `apikey` on all three sides: the engine returns it under
+            # that name and CloudStack's own key APIs use it. This read
+            # the engine's body for `secret`, which it never sends, so
+            # the one moment a key's secret existed it was dropped —
+            # on CloudMonkey, Terraform and the UI alike.
+            f("apiKey", "apikey", "String",
+              "the key itself, returned only when it is created", "apikey"),
+            # `listAiApiKeys` sends these already lowercase-concatenated
+            # while `createAiApiKey` sends snake_case, so reading the
+            # snake_case names left every listed key with nothing but
+            # an id and a name.
+            f("allowedModels", "allowedmodels", "String",
               "models this key may use", "allowedmodels"),
-            f("expires", "expires_at", "String", "when the key expires"),
-            f("lastUsed", "last_used", "String", "when the key was last used", "lastused"),
+            f("expires", "expires", "String", "when the key expires"),
+            f("lastUsed", "lastused", "String", "when the key was last used", "lastused"),
         ),
     ),
     Response(
@@ -359,11 +368,41 @@ def render_response(response: Response) -> str:
         f"        return {fl.java};\n    }}"
         for fl in response.fields
     )
+    def reader_for(t: str, reader: str) -> str:
+        if t != "String":
+            return (
+                f"    private static {t} read{t}(JsonObject body, String field) {{\n"
+                f"        return body.has(field) && !body.get(field).isJsonNull()\n"
+                f"                ? body.get(field).{reader}()\n"
+                f"                : null;\n    }}"
+            )
+        # The engine sends some string-ish fields as arrays — a key's
+        # allowed models and CIDRs — and CloudStack carries them as
+        # one comma-separated value. `getAsString()` on an array
+        # throws "Array must have size 1, but has size 0", which is
+        # how a listed key came back as an error rather than a row.
+        return (
+            "    private static String readString(JsonObject body, String field) {\n"
+            "        if (!body.has(field) || body.get(field).isJsonNull()) {\n"
+            "            return null;\n"
+            "        }\n"
+            "        JsonElement value = body.get(field);\n"
+            "        if (!value.isJsonArray()) {\n"
+            "            return value.getAsString();\n"
+            "        }\n"
+            "        StringBuilder joined = new StringBuilder();\n"
+            "        for (JsonElement part : value.getAsJsonArray()) {\n"
+            "            if (joined.length() > 0) {\n"
+            '                joined.append(",");\n'
+            "            }\n"
+            "            joined.append(part.getAsString());\n"
+            "        }\n"
+            "        return joined.toString();\n"
+            "    }"
+        )
+
     readers = "\n\n".join(
-        f"    private static {t} read{t}(JsonObject body, String field) {{\n"
-        f"        return body.has(field) && !body.get(field).isJsonNull()\n"
-        f"                ? body.get(field).{reader}()\n"
-        f"                : null;\n    }}"
+        reader_for(t, reader)
         for t, reader in JAVA_READERS.items()
         if any(fl.type == t for fl in response.fields)
     )
@@ -373,6 +412,7 @@ def render_response(response: Response) -> str:
 import org.apache.cloudstack.api.BaseResponse;
 
 import com.cloud.serializer.Param;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.annotations.SerializedName;
 
@@ -437,6 +477,11 @@ class Param:
     #: PEM, JSONL or other blob can meet. CloudStack's
     #: `UploadCustomCertificateCmd` sets 65535 for the same reason.
     length: int | None = None
+    #: True where the engine's model declares `list[str]`. CloudStack
+    #: takes the value as a comma-separated string either way; without
+    #: this the body carried a string into a field typed as a list and
+    #: the engine answered 422.
+    is_list: bool = False
 
 
 @dataclass(frozen=True)
@@ -460,8 +505,8 @@ class Command:
 
 
 def p(name, java, type_, doc, required=False, entity=None, wire=None,
-      resolve=None, length=None) -> Param:
-    return Param(name, java, type_, doc, required, entity, resolve, wire, length)
+      resolve=None, length=None, is_list=False) -> Param:
+    return Param(name, java, type_, doc, required, entity, resolve, wire, length, is_list)
 
 
 COMMANDS: tuple[Command, ...] = (
@@ -557,11 +602,14 @@ COMMANDS: tuple[Command, ...] = (
         params=(
             p("name", "name", "STRING", "a name for the key", required=True, wire="name"),
             p("models", "models", "STRING",
-              "models this key may use; all if unset", wire="allowed_models"),
+              "models this key may use; all if unset", wire="allowed_models",
+              is_list=True),
             p("cidrlist", "cidrList", "STRING",
-              "CIDRs the key may be used from", wire="cidrs"),
+              "CIDRs the key may be used from", wire="cidrs", is_list=True),
             p("expires", "expires", "STRING", "when the key should expire",
               wire="expires_at"),
+            p("ratelimitrpm", "rateLimitRpm", "INTEGER",
+              "requests per minute this key may make", wire="rate_limit_rpm"),
         ),
     ),
     Command(
@@ -1000,6 +1048,25 @@ def _body_lines(param: Param) -> str:
     calls. Sending the number would record an id matching nothing, so
     it is translated back here.
     """
+    if param.is_list:
+        # CloudStack hands a list parameter over as a comma-separated
+        # string; the engine's model wants an array.
+        return (
+            f"        if ({param.java} != null) {{\n"
+            f"            JsonArray values{param.java[0].upper()}{param.java[1:]} ="
+            f" new JsonArray();\n"
+            f'            for (String part : {param.java}.split(",")) {{\n'
+            f"                String trimmed = part.trim();\n"
+            f"                if (!trimmed.isEmpty()) {{\n"
+            f"                    values{param.java[0].upper()}{param.java[1:]}"
+            f".add(trimmed);\n"
+            f"                }}\n"
+            f"            }}\n"
+            f'            body.add("{wire_name(param)}",'
+            f" values{param.java[0].upper()}{param.java[1:]});\n"
+            f"        }}"
+        )
+
     if not param.resolve:
         return (
             f"        if ({param.java} != null) {{\n"
@@ -1066,6 +1133,8 @@ def render_command(command: Command) -> str:
     has_body = bool(render_body(command))
     if has_body:
         imports.append("com.google.gson.JsonObject")
+        if any(param.is_list for param in command.params):
+            imports.append("com.google.gson.JsonArray")
 
     # An entityType or a resolution names a class the file must import.
     # Emitting the reference without the import is how setting `entity`

@@ -652,3 +652,34 @@ class TestABudgetBelongsToAnAccountInADomain:
 
         assert state is not None
         assert state.spent == pytest.approx(0.60)
+
+
+class TestTheRootDomainKeepsItsName:
+    """`/` is a domain path, not an empty one.
+
+    `set_budget` stored `domain.rstrip("/")`, which turns every
+    trailing slash into nothing — including the root domain's only
+    character. An operator who set a budget for `/` was told the
+    budget's domain was `""`, so Terraform saw the value it had asked
+    for replaced by an empty one and planned to destroy and recreate
+    the budget on every run.
+
+    Lookups are unaffected either way: `_domain_variants` matches both
+    spellings, which is why this went unnoticed.
+    """
+
+    def test_a_root_budget_reports_the_root_domain(self, usage: UsageStore) -> None:
+        record = usage.set_budget("admin", "/", Budget(monthly=42.0))
+
+        assert record.domain == "/"
+
+    def test_a_trailing_slash_is_still_trimmed(self, usage: UsageStore) -> None:
+        record = usage.set_budget("acme", "/Customers/Acme/", Budget(monthly=10.0))
+
+        assert record.domain == "/Customers/Acme"
+
+    def test_it_is_still_found_by_either_spelling(self, usage: UsageStore) -> None:
+        usage.set_budget("admin", "/", Budget(monthly=42.0))
+
+        assert usage.budget_for("admin", "/") is not None
+        assert usage.budget_for("admin", "") is not None

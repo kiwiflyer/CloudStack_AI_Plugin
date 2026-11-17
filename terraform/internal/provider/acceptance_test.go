@@ -96,6 +96,7 @@ func TestAccAiBudget(t *testing.T) {
 				Config: fmt.Sprintf(`
 resource "cloudstack_ai_budget" "test" {
   account   = %q
+  domain    = "/"
   monthly   = 100
   currency  = "USD"
   on_exceed = "alert"
@@ -107,6 +108,7 @@ resource "cloudstack_ai_budget" "test" {
 				Config: fmt.Sprintf(`
 resource "cloudstack_ai_budget" "test" {
   account   = %q
+  domain    = "/"
   monthly   = 250
   currency  = "USD"
   on_exceed = "block"

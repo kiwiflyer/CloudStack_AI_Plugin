@@ -20,6 +20,7 @@ package org.apache.cloudstack.ai.api.response;
 import org.apache.cloudstack.api.BaseResponse;
 
 import com.cloud.serializer.Param;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.annotations.SerializedName;
 
@@ -37,9 +38,9 @@ public class AiApiKeyResponse extends BaseResponse {
     @Param(description = "the operator's name for this key")
     private String name;
 
-    @SerializedName("secret")
+    @SerializedName("apikey")
     @Param(description = "the key itself, returned only when it is created")
-    private String secret;
+    private String apiKey;
 
     @SerializedName("allowedmodels")
     @Param(description = "models this key may use")
@@ -62,10 +63,10 @@ public class AiApiKeyResponse extends BaseResponse {
         }
         mapped.id = readString(body, "id");
         mapped.name = readString(body, "name");
-        mapped.secret = readString(body, "secret");
-        mapped.allowedModels = readString(body, "allowed_models");
-        mapped.expires = readString(body, "expires_at");
-        mapped.lastUsed = readString(body, "last_used");
+        mapped.apiKey = readString(body, "apikey");
+        mapped.allowedModels = readString(body, "allowedmodels");
+        mapped.expires = readString(body, "expires");
+        mapped.lastUsed = readString(body, "lastused");
         return mapped;
     }
 
@@ -77,8 +78,8 @@ public class AiApiKeyResponse extends BaseResponse {
         return name;
     }
 
-    public String getSecret() {
-        return secret;
+    public String getApiKey() {
+        return apiKey;
     }
 
     public String getAllowedModels() {
@@ -94,8 +95,20 @@ public class AiApiKeyResponse extends BaseResponse {
     }
 
     private static String readString(JsonObject body, String field) {
-        return body.has(field) && !body.get(field).isJsonNull()
-                ? body.get(field).getAsString()
-                : null;
+        if (!body.has(field) || body.get(field).isJsonNull()) {
+            return null;
+        }
+        JsonElement value = body.get(field);
+        if (!value.isJsonArray()) {
+            return value.getAsString();
+        }
+        StringBuilder joined = new StringBuilder();
+        for (JsonElement part : value.getAsJsonArray()) {
+            if (joined.length() > 0) {
+                joined.append(",");
+            }
+            joined.append(part.getAsString());
+        }
+        return joined.toString();
     }
 }
