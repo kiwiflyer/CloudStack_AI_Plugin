@@ -216,7 +216,7 @@ class Executor:
                 # Executing a plan this process did not make. Resolving
                 # again is the only option, and the detail is printed
                 # so a difference is at least visible.
-                resolved = await builder.resolve(zone="", cluster=action.name)
+                resolved = await builder.resolve(zone=action.zone, cluster=action.name)
             built = await builder.create(resolved, dry_run=dry_run)
             return [built] if built else []
 

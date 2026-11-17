@@ -80,6 +80,11 @@ class Action:
     count: int = 1
     detail: str = ""
     reason: str = ""
+    #: The name CloudStack knows the zone by, where the action needs
+    #: one to be carried out. Without it the executor could not
+    #: resolve a cluster it had not planned itself, and passed an
+    #: empty zone that CloudStack answers with "has no zone named ''".
+    zone: str = ""
     #: Keys of actions that must succeed before this one may run.
     depends_on: tuple[str, ...] = ()
 
@@ -172,6 +177,7 @@ def plan_clusters(spec: PlatformSpec, state: ActualState) -> tuple[list[Action],
                 kind=ActionKind.CREATE,
                 resource_type="kubernetes-cluster",
                 name=planned.cluster,
+                zone=planned.zone,
                 detail=planned.detail,
                 reason=f"zone {zone.name} asks for a cluster and CloudStack has none",
             )

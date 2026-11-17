@@ -303,6 +303,23 @@ class TestCreatingAKubernetesCluster:
         assert builder.created == [("aisvc-east-1", "1.30.1", "Small Instance")]
         assert record.status is RunStatus.SUCCEEDED
 
+    async def test_resolving_again_still_names_a_zone(self, log: RunLog) -> None:
+        """The fallback for a plan this process did not make.
+
+        It passed `zone=""`, which CloudStack answers with "has no
+        zone named ''" — so a cluster could never be created from a
+        plan made elsewhere. The action carries the zone now, which
+        is the only thing that could have told it.
+        """
+        builder = FakeClusterBuilder()
+        executor = Executor(None, log, clusters=builder)
+        executor.cluster_plans = {}  # nothing resolved in this process
+
+        await executor.execute(_cluster_plan(), zone="zone-east-1")
+
+        assert builder.resolved, "the fallback never resolved anything"
+        assert builder.resolved[0]["zone"] == "East-1", builder.resolved[0]
+
     async def test_a_dry_run_creates_nothing(self, log: RunLog) -> None:
         builder = FakeClusterBuilder()
         await Executor(None, log, clusters=builder).execute(
@@ -340,6 +357,7 @@ def _cluster_plan() -> Plan:
                 kind=ActionKind.CREATE,
                 resource_type="kubernetes-cluster",
                 name="aisvc-east-1",
+                zone=planned.zone,
                 detail=planned.detail,
             )
         ],
@@ -352,8 +370,10 @@ class FakeClusterBuilder:
 
     def __init__(self) -> None:
         self.created: list[tuple[str, str, str]] = []
+        self.resolved: list[dict[str, object]] = []
 
     async def resolve(self, **kwargs: object):  # type: ignore[no-untyped-def]
+        self.resolved.append(dict(kwargs))
         from aisvc.cloudstack.clusters import ClusterPlanned
 
         return ClusterPlanned(

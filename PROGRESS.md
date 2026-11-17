@@ -4945,3 +4945,59 @@ Six of eight against a live management server, and the two skips say
 what they want. The suite had never run at all.
 
 2,018 unit, 462 JUnit and 106 Vitest tests pass.
+
+## The CKS piece, against a live CloudStack
+
+`cloud.kubernetes.service.enabled` is on in the harness, so the
+cluster code could be driven against a real management server for the
+first time. Every read path behaves:
+
+```
+KubernetesClusters.listed()   0 clusters
+read_clusters                 state=None, error='' — absence, not failure
+fetch_kubeconfig              "CloudStack lists no Kubernetes cluster named
+                              'sandbox-cks', so there is no kubeconfig to
+                              fetch. Check the zone's cluster name, or set
+                              KUBECONFIG."
+check_clusters                [fail] with a remedy naming cks_cluster and
+                              createKubernetesCluster
+```
+
+`ClusterBuilder.resolve` is the interesting one. Asked for zone
+`sandbox` it answered **"CloudStack has no zone named 'sandbox'"** —
+correctly, because that is the spec's own label and CloudStack knows
+the zone as `Sandbox-simulator`. The spec carries both, and
+`take_snapshot` already matches on `zone.cloudstack_zone`. Asked for
+the name CloudStack knows, it gets past the zone and stops at the
+real limit:
+
+> no enabled Kubernetes version in this zone, so CloudStack cannot
+> build a cluster. Register one with `addKubernetesSupportedVersion` —
+> it needs an ISO URL, a checksum and the node minimums — or point the
+> zone at a cluster that already exists.
+
+Which is as far as this harness goes: registering a version wants an
+ISO, and installing CKS content is the CloudStack administrator's
+job.
+
+### What that turned up
+
+The CLI resolves with `zone=zone.cloudstack_zone`. The reconciler's
+executor did not — it fell back to
+
+```python
+resolved = await builder.resolve(zone="", cluster=action.name)
+```
+
+whenever it was handed a plan some other process had made. An empty
+zone can only ever produce *CloudStack has no zone named ''*, so that
+path could never create a cluster. The comment above it says
+"Resolving again is the only option", which was true; it just had
+nothing to resolve with, because `Action` carried no zone.
+
+Unreachable from the CLI, which always supplies the resolved plans —
+and therefore exactly the kind of thing that waits for the first
+caller who does not. `Action` carries the zone now, taken from
+`planned.zone`, which is already the name CloudStack knows.
+
+2,019 unit tests pass.
