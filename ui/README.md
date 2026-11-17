@@ -60,13 +60,56 @@ tests are:
 CLOUDSTACK_UI_URL=http://localhost:8080 \
 CLOUDSTACK_ADMIN_USER=admin CLOUDSTACK_ADMIN_PASSWORD=password \
 CLOUDSTACK_USER_USER=tenant CLOUDSTACK_USER_PASSWORD=password \
+CLOUDSTACK_USER_DOMAIN=Customers/Acme \
   npm run test:e2e
 ```
 
+An account outside ROOT needs its domain: CloudStack's login form has a
+third field, and without it the sign-in simply never completes.
+`CLOUDSTACK_AI_V2=1` additionally runs the v2 group, which is skipped
+while the setting is off.
+
 They check each default role sees what it should and not what it should
-not, and that a tenant reaching an admin screen by URL is refused by the
-plugin rather than only hidden by the menu. **They have not been run
-yet** — no CloudStack has served this section.
+not, and that a tenant reaching an admin screen by URL cannot get to it.
+**The role specs pass, 22 of 22**, against a management server with the
+plugin loaded. The v2 group is 9 of 13; the rest are sign-in timeouts
+and one screen that wants a mirrored model to click.
+
+### Pointing them at a real CloudStack
+
+The section has to be *in* a CloudStack UI tree, and that tree has to be
+built and served at `/client`, which is where these specs look:
+
+```
+cp -r src/config/section/aiservices.js  <cloudstack>/ui/src/config/section/
+cp -r src/views/aiservices  <cloudstack>/ui/src/views/
+cp -r src/utils/*.js  <cloudstack>/ui/src/utils/
+# and merge this repo's keys into CloudStack's own locale
+python3 -c "import json,sys; a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2])); \
+a.update(b); json.dump(dict(sorted(a.items())), open(sys.argv[1],'w'), indent=2)" \
+  <cloudstack>/ui/public/locales/en.json public/locales/en.json
+cd <cloudstack>/ui && npm run build
+cp -a dist/. <cloudstack>/client/target/classes/META-INF/webapp/
+```
+
+**`npm run serve` is not a substitute.** The dev server hosts the app at
+`/` and forwards every `/client` path to the management server, so
+`/client/` returns CloudStack's "you're in developer mode" placeholder
+while the specs, correctly, use `/client/#/…`.
+
+**If the build dies in `thread-loader` with `EPIPE`**, it is a worker
+crash, not your code. Measured in the compose harness, where an amd64
+image runs emulated on an arm64 Mac: with the management server and the
+dev server both up, under 2 GB of the container's 8 GB was free, and
+parallel workers under emulation did not survive it. Stopping both
+services first and setting `parallel: false` in CloudStack's
+`vue.config.js` builds cleanly in one pass. A native amd64 host with
+memory to spare should not need either.
+
+**A production build is not faster to test against.** It was tried for
+that reason and the run took 10 minutes rather than 2.4, because Jetty
+serves each chunk separately under emulation. Build for fidelity — it is
+the artifact that ships — not for speed.
 
 ## Two toolchain notes
 

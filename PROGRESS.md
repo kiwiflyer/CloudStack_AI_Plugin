@@ -4415,3 +4415,51 @@ also what ships; `npm run build` dies in `thread-loader` with EPIPE,
 a worker crash, and that has not been chased down.
 
 2,010 unit tests and 457 JUnit tests pass.
+
+## The production UI build, and a wrong reason for wanting it
+
+`npm run build` had been dying in `thread-loader` with `EPIPE`, and the
+v2 specs were failing on timeouts, so the build was fixed in order to
+fix the timeouts. The build is fixed. The timeouts are not, and the
+reasoning was wrong.
+
+### Why it crashed
+
+The compose harness runs an **amd64 image emulated on an arm64 Mac**.
+With the management server and the webpack dev server both up, 1.9 GB
+of the container's 7.9 GB was free, and parallel webpack workers under
+emulation did not survive that. Stopping both services first took it
+to 4.3 GB, and `parallel: false` in CloudStack's `vue.config.js` built
+it in one pass: 47 MB of `dist`, no errors.
+
+Copied over `client/target/classes/META-INF/webapp` — keeping
+`WEB-INF` — Jetty serves it at `/client`, which is where a real
+deployment puts the UI and where the specs look. `publicPath: './'`
+makes that work without touching a thing. The nginx and socat
+sidecars that had been standing in are no longer needed.
+
+The built artifact carries all 114 `label.ai.*` keys, and the
+Certificates screen shows the certificate uploaded earlier through
+`uploadAiCertificate` — custom domain, expiry, fingerprint, account.
+
+### What it did not fix
+
+The role specs against the built UI: **18 of 22, in 10 minutes**,
+against 22 of 22 in 2.4 minutes behind the dev server. All four
+failures are `waitForURL` timing out after 120s waiting for the
+dashboard — sign-in, not rendering.
+
+So the dev server was never the bottleneck. Serving the built UI makes
+each page load fetch many separate chunks from Jetty under emulation,
+which is slower, not faster. The real cost is that every test signs in
+from scratch: 22 tests, 22 sign-ins, each one a round trip through an
+emulated management server.
+
+Worth doing anyway — it is the artifact that ships, it had never been
+built, and `ui/README.md` now documents the whole procedure including
+why `npm run serve` is not a substitute. But the honest next step for
+the timeouts is Playwright's `storageState`: sign in once per role and
+reuse the session, which is a change to the specs and not to the
+build.
+
+103 Vitest tests pass.
