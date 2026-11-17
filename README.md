@@ -16,9 +16,7 @@ and usage records in the same console they already run their cloud from.
 > commands, talks to the engine over mTLS, and answers with real data;
 > the UI section is built and served at `/client`; the Marvin tests pass
 > for all 58 commands across three roles, allowed and denied; and
-> failover between engine replicas behaves as specified. That is also
-> how roughly a dozen bugs were found that no fake had objected to —
-> code that compiled, passed its tests, and had never executed.
+> failover between engine replicas behaves as specified.
 >
 > But **no GPU node has booted and no model has served a token.** The
 > write half of the reconciler needs a Kubernetes cluster, nothing has
