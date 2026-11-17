@@ -20,6 +20,9 @@ import { defineConfig } from '@playwright/test'
 // unconditionally and these only when CLOUDSTACK_UI_URL is set.
 export default defineConfig({
   testDir: './tests/e2e',
+  // Signs in once per role and saves the session, so the specs replay
+  // it instead of each one logging in again.
+  globalSetup: './tests/e2e/global-setup.js',
   // 60s was not enough for sign-in. These run against a real
   // management server, and behind a webpack dev server the first
   // navigation of a run waits for chunks to compile — one test per

@@ -4463,3 +4463,72 @@ reuse the session, which is a change to the specs and not to the
 build.
 
 103 Vitest tests pass.
+
+## Signing in once instead of twenty-two times
+
+The timeouts were never the dev server and never the build. Every test
+signed in for itself, so a 22-test run made 22 round trips through a
+management server that, in this harness, is emulated. Four of them
+would time out waiting 120 seconds for the dashboard, and which four
+moved between runs.
+
+`global-setup.js` now signs in once per role and saves the session;
+the specs replay it with `test.use({ storageState })`. Measured on the
+same production build, same server:
+
+```
+per-test sign-in    18 of 22   10.0 minutes
+replayed session    22 of 22    3.0 minutes
+```
+
+and the v2 group from 9 of 13 in 9.5 minutes to 10 of 13 in 6.8. Two
+of its tests now finish in about two seconds each.
+
+The fallback is deliberate. A role whose sign-in fails leaves no
+session file, `sessionFor` returns undefined, and that role's tests
+sign in for themselves exactly as before. That path was exercised
+without being asked for: on the first run `admin` timed out in the
+global setup against a cold JVM while the other two roles, seconds
+later, were fine — and all 22 tests still passed. The setup now
+retries once for that reason.
+
+### What the clicks then found
+
+With sign-in out of the way the remaining failures were real, and one
+is a defect worth more than the test.
+
+`ListView.vue` renders the link into a record's detail view on one
+condition:
+
+```js
+<template v-if="['name', 'provider'].includes(column.key)">
+```
+
+A screen whose columns include no `name` therefore has **no route to
+its own detail page**, and every `dataView: true` action on it is
+unreachable however correctly it is declared. Six of our screens are
+in that position, and eleven actions with them:
+
+```
+aiusage             updateAiBudget
+aibatch             getAiBatchResults, cancelAiBatch
+aicertificate       replaceAiCertificate, deleteAiCertificate
+aiprivateendpoint   deleteAiPrivateEndpoint
+aihuggingface       checkAiHfModel, mirrorAiModel, approveAiModel
+aifleet             drainAiNode
+```
+
+The spec that found it clicked a certificate row and waited three
+minutes for a "Replace certificate" button that cannot appear. The
+row has exactly one link in it — the account — because the first
+column is `customdomain`, and CloudStack links `name`.
+
+Not fixed here. The mechanism is the `{ field, customTitle }` form
+already used for labels, with the field set to `name` and a custom
+render supplying the natural identifier, so the column carries the
+key CloudStack links on while keeping our wording.
+
+The other two failures want a mirrored model in the registry to click
+on, and nothing has been mirrored.
+
+103 Vitest tests pass.

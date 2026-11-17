@@ -15,6 +15,7 @@
 import { expect, test } from '@playwright/test'
 
 import { credentials, signIn } from './sign-in.js'
+import { sessionFor } from './sessions.js'
 
 // SPEC.md section 9 and CLAUDE.md: every screen is checked per default
 // role, allowed and denied. Role-based visibility is config in
@@ -50,9 +51,16 @@ test.describe('the AI Services section, per role', () => {
 
   for (const [role, expected] of Object.entries(ROLES)) {
     test.describe(role, () => {
+      // The session global-setup.js saved, replayed. Falls back to
+      // signing in when there is none, so a role whose setup failed
+      // still runs rather than erroring on a missing file.
+      test.use({ storageState: sessionFor(role) })
+
       test.beforeEach(async ({ page }) => {
         test.skip(!expected.user, `set CLOUDSTACK_${role.toUpperCase()}_USER`)
-        await signIn(page, expected)
+        if (!sessionFor(role)) {
+          await signIn(page, expected)
+        }
       })
 
       test('the section is reachable', async ({ page }) => {
@@ -86,9 +94,13 @@ test.describe('the AI Services section, per role', () => {
 test.describe('a tenant cannot reach an admin screen by its URL', () => {
   test.skip(!configured, 'set CLOUDSTACK_UI_URL to run these')
 
+  test.use({ storageState: sessionFor('user') })
+
   test('the setup wizard refuses a tenant', async ({ page }) => {
     test.skip(!ROLES.user.user, 'set CLOUDSTACK_USER_USER')
-    await signIn(page, ROLES.user)
+    if (!sessionFor('user')) {
+      await signIn(page, ROLES.user)
+    }
 
     // Hiding a link is presentation; this is about what a tenant gets
     // when they type the URL anyway.

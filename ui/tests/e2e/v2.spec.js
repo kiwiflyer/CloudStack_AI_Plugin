@@ -15,6 +15,7 @@
 import { expect, test } from '@playwright/test'
 
 import { signIn } from './sign-in.js'
+import { sessionFor } from './sessions.js'
 import { header } from './table.js'
 
 // The v2 screens (SPEC.md section 8).
@@ -47,8 +48,12 @@ test.describe('with ai.services.v2.enabled off', () => {
   test.skip(!configured, 'set CLOUDSTACK_UI_URL and CLOUDSTACK_USER_USER')
   test.skip(v2Enabled, 'v2 is on in this zone; the absent-screen group does not apply')
 
+  test.use({ storageState: sessionFor('user') })
+
   test.beforeEach(async ({ page }) => {
-    await signInAs(page, process.env.CLOUDSTACK_USER_USER, process.env.CLOUDSTACK_USER_PASSWORD)
+    if (!sessionFor('user')) {
+      await signInAs(page, process.env.CLOUDSTACK_USER_USER, process.env.CLOUDSTACK_USER_PASSWORD)
+    }
   })
 
   for (const screen of TENANT_SCREENS) {
@@ -74,8 +79,12 @@ test.describe('with ai.services.v2.enabled on', () => {
   test.skip(!configured, 'set CLOUDSTACK_UI_URL and CLOUDSTACK_USER_USER')
   test.skip(!v2Enabled, 'set CLOUDSTACK_AI_V2=1 once the setting is on')
 
+  test.use({ storageState: sessionFor('user') })
+
   test.beforeEach(async ({ page }) => {
-    await signInAs(page, process.env.CLOUDSTACK_USER_USER, process.env.CLOUDSTACK_USER_PASSWORD)
+    if (!sessionFor('user')) {
+      await signInAs(page, process.env.CLOUDSTACK_USER_USER, process.env.CLOUDSTACK_USER_PASSWORD)
+    }
   })
 
   for (const screen of TENANT_SCREENS) {
@@ -136,13 +145,17 @@ test.describe('evaluations, for a root admin', () => {
   test.skip(!configured, 'set CLOUDSTACK_UI_URL')
   test.skip(!v2Enabled, 'set CLOUDSTACK_AI_V2=1 once the setting is on')
 
+  test.use({ storageState: sessionFor('admin') })
+
   test.beforeEach(async ({ page }) => {
     test.skip(!process.env.CLOUDSTACK_ADMIN_USER, 'set CLOUDSTACK_ADMIN_USER')
-    await signIn(page, {
-      user: process.env.CLOUDSTACK_ADMIN_USER,
-      password: process.env.CLOUDSTACK_ADMIN_PASSWORD,
-      domain: process.env.CLOUDSTACK_ADMIN_DOMAIN
-    })
+    if (!sessionFor('admin')) {
+      await signIn(page, {
+        user: process.env.CLOUDSTACK_ADMIN_USER,
+        password: process.env.CLOUDSTACK_ADMIN_PASSWORD,
+        domain: process.env.CLOUDSTACK_ADMIN_DOMAIN
+      })
+    }
   })
 
   test('a model in the registry has an evaluations tab', async ({ page }) => {

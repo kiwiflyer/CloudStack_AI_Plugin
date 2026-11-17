@@ -15,6 +15,7 @@
 import { expect, test } from '@playwright/test'
 
 import { credentials, signIn } from './sign-in.js'
+import { sessionFor } from './sessions.js'
 import { header } from './table.js'
 
 // Milestone 6 is "tenant first", so the journey that has to work is a
@@ -25,10 +26,14 @@ const configured = Boolean(
 )
 
 test.describe('a tenant going from catalog to a working endpoint', () => {
+  test.use({ storageState: sessionFor('user') })
+
   test.skip(!configured, 'set CLOUDSTACK_UI_URL and CLOUDSTACK_USER_USER')
 
   test.beforeEach(async ({ page }) => {
-    await signIn(page, credentials('user'))
+    if (!sessionFor('user')) {
+      await signIn(page, credentials('user'))
+    }
   })
 
   test('the catalog lists approved models with their price tier', async ({ page }) => {

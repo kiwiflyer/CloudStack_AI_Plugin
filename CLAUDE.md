@@ -358,6 +358,23 @@ field resolves: either CloudStack defines `label.<field>`, recorded for 4.23.0.0
 in `ui/tests/fixtures/cloudstack-label-fields.json`, or the field carries a
 `customTitle` pointing at one of ours.
 
+**Eleven actions across six screens cannot be reached.** CloudStack's
+`ListView.vue` renders the link into a record's detail view on one condition —
+`['name', 'provider'].includes(column.key)` — so a screen whose columns include
+no `name` has no route to its own detail page, and every `dataView: true` action
+on it is unreachable however correctly it is declared: `aiusage`
+(`updateAiBudget`), `aibatch` (`getAiBatchResults`, `cancelAiBatch`),
+`aicertificate` (`replaceAiCertificate`, `deleteAiCertificate`),
+`aiprivateendpoint` (`deleteAiPrivateEndpoint`), `aihuggingface`
+(`checkAiHfModel`, `mirrorAiModel`, `approveAiModel`) and `aifleet`
+(`drainAiNode`). Found by a Playwright spec that clicked a certificate row and
+then waited three minutes for a button that cannot appear. The mechanism for
+fixing it is the same `{ field, customTitle }` form used for labels, with the
+field set to `name` and a custom render supplying the natural identifier —
+`{ field: 'name', customTitle: 'ai.customdomain', name: r => r.customdomain }` —
+which gives the column the key CloudStack links on while keeping our wording.
+**·not built**
+
 **UI.** Standard CloudStack list/detail/action patterns so the section inherits search, pagination,
 async job notifications and role-based action visibility. Everything in the UI must also work
 through CloudMonkey and Terraform.
