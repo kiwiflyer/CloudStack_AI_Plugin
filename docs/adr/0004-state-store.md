@@ -124,6 +124,12 @@ Nothing in the code should start branching on dialect speculatively.
 
 ## Action items
 
+*Reviewed 2026-11-18: still accurate. Postgres remains the default, the advisory
+lock still branches on dialect, and MariaDB still has not been run against a real
+server — all eight migrations have been exercised on Postgres 16 in the harness
+and compiled offline for MySQL, which catches a type MySQL cannot render but not
+a constraint it refuses at runtime.*
+
 1. [ ] Say in `docs/installation.md` why Postgres is separate, so an operator reading
    the prerequisite list gets the reason with the requirement.
 2. [x] MariaDB support: dialect branch on the lock, PyMySQL behind the `mariadb`

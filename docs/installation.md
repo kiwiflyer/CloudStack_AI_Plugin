@@ -653,7 +653,19 @@ into the management server and the engine answering it over mTLS:
   configured.** CloudStack 4.23 offers no synchronous pre-maintenance
   hook, and no bus is enabled by default.
 - **The simulator's GPUs are simulated.** The API, the signing and the
-  schema are real; the cards are not.
+  schema are real; the cards are not. Its hypervisor does boot VMs,
+  though — a CKS cluster's control node and worker both reached
+  `Running` — so `deployVirtualMachine` is exercised even where nothing
+  runs inside the guest.
+- **Thirteen commands point at engine routes that do not exist.** The
+  three deployment commands (`deployAiModel`, `updateAiModelDeployment`,
+  `deleteAiModelDeployment`), all nine serving- and generation-profile
+  commands, and `approveAiModel`. Deployments are created by the
+  reconciler rather than through the API today, and section 6's profiles
+  have no storage model at all. CloudStack will accept these calls and
+  the engine will answer 404. They are listed as `NOT_YET_SERVED` in
+  `tests/contract/test_engine_api_contract.py`, which fails if the list
+  grows or if one of them quietly starts working.
 
 ## Things that will bite you
 
@@ -672,6 +684,17 @@ into the management server and the engine answering it over mTLS:
 - **`createAiBudget` is granted to every role but served admin-only.**
   A tenant calling it gets a 403 from the engine. The UI already hides
   the action; CloudMonkey and Terraform do not.
+- **A failed command is not recorded as a `Failed` event.** CloudStack
+  closes an action event as `Completed` whether it succeeded or not and
+  carries the outcome in `level` — `INFO` or `ERROR`. Anything reading
+  these rows, including an alert or a report, has to read the level and
+  not the state.
+- **`ai.services.engine.*` changes need a management-server restart.**
+  The keys are declared dynamic, but the plugin caches its engine client
+  in a field, so a new URL or certificate path does not take effect
+  until the server restarts.
+- **`ai.services.enabled` gates nothing.** `isEnabledInZone` has no
+  callers.
 
 ## Where to look next
 

@@ -629,6 +629,19 @@ class TestMakingTlsMaterial:
         assert "openssl" in str(raised.value).lower()
 
 
+def env_state() -> tuple[bool, str]:
+    """Whether the repository's .env exists, and its contents.
+
+    Nothing in a unit test may change it. It holds a developer's real
+    database URL, CloudStack keys and TLS paths, it is git-ignored so
+    an accidental write cannot be noticed in a diff, and `install.py`
+    resolves it from its own location rather than the working
+    directory, so running the installer anywhere rewrites this one.
+    """
+    path = install_path().parent / ".env"
+    return (path.is_file(), path.read_text(encoding="utf-8") if path.is_file() else "")
+
+
 class TestTheScriptRunsAsAScript:
     """Importing `install` is not the same as running it.
 
@@ -673,6 +686,25 @@ class TestTheScriptRunsAsAScript:
         assert "\nclass " not in after
 
     def test_making_certs_does_not_crash_on_a_missing_name(self, tmp_path: Path) -> None:
-        done = self.run("--make-certs", "localhost", "--certs-dir", str(tmp_path / "tls"), "--yes")
+        # --dry-run, because `--make-certs` falls through into the rest
+        # of the installer: without it this test created a virtualenv,
+        # ran migrations and **overwrote the repository's own .env**
+        # with paths under the pytest temp directory. `install.py`
+        # takes its root from `__file__`, not the working directory,
+        # so no cwd can protect it. That really happened — it pointed
+        # a running engine at certificates a live management server
+        # did not trust, and the handshake failed.
+        before = env_state()
+
+        done = self.run(
+            "--make-certs",
+            "localhost",
+            "--certs-dir",
+            str(tmp_path / "tls"),
+            "--yes",
+            "--dry-run",
+        )
 
         assert "NameError" not in done.stderr, done.stderr
+        assert (tmp_path / "tls" / "ca.pem").is_file(), "the certificates are still made"
+        assert env_state() == before, "install.py rewrote the repository's .env"

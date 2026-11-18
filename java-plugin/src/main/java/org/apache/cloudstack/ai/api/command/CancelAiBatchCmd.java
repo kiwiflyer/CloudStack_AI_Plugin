@@ -20,9 +20,10 @@ package org.apache.cloudstack.ai.api.command;
 import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiBatchResponse;
-import org.apache.cloudstack.ai.engine.EngineJob;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
+
+import com.google.gson.JsonObject;
 
 /** Cancels a batch job. (SPEC.md section 9). */
 @APICommand(name = CancelAiBatchCmd.APINAME,
@@ -31,7 +32,7 @@ import org.apache.cloudstack.api.Parameter;
         requestHasSensitiveInfo = false,
         responseHasSensitiveInfo = false,
         authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
-public class CancelAiBatchCmd extends AiServicesAsyncCmd {
+public class CancelAiBatchCmd extends AiServicesSyncCmd {
 
     public static final String APINAME = "cancelAiBatch";
 
@@ -44,10 +45,15 @@ public class CancelAiBatchCmd extends AiServicesAsyncCmd {
         String path = "/v1/batches/" + batchId + "/cancel";
         return path;
     }
+    @Override
+    protected String engineMethod() {
+        return "POST";
+    }
+
 
     @Override
-    protected void onSuccess(EngineJob job) {
-        AiBatchResponse response = AiBatchResponse.from(job.getResult());
+    protected void onSuccess(JsonObject body) {
+        AiBatchResponse response = AiBatchResponse.from(body);
         response.setResponseName(getCommandName());
         setResponseObject(response);
     }

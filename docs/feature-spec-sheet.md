@@ -153,17 +153,39 @@ and the gaps are marked **·not built** in the tables below.
 Counts and limits are real and read from the code. What they cannot
 tell you is how much of it has been exercised against something real.
 
-**Verified against Apache CloudStack 4.23.0.0** (`make stack-up`):
-request signing, `take_snapshot` reading GPU capacity from tagged
-hosts, the capacity planner and its warnings on that observed data,
-`listKubernetesClusters`, `listGpuCards`, `listGpuDevices` and the
-tenant-network lookup — plus all eight database migrations on
-Postgres 16.
+**Verified against Apache CloudStack 4.23.0.0** (`make stack-up`), as of
+2026-11-18:
 
-**Not verified against anything:** the write half of the reconciler
-(`apply` needs a Kubernetes cluster and there is none), the plugin JAR
-in a management server, the UI section, Terraform acceptance, the
-gateway, and any GPU that is not simulated.
+- Request signing; `take_snapshot` reading GPU capacity from tagged hosts;
+  the capacity planner and its warnings on that observed data;
+  `listKubernetesClusters`, `listGpuCards`, `listGpuDevices`, the
+  tenant-network lookup; all eight migrations on Postgres 16.
+- **The Java plugin**, built and loaded into a running management server:
+  all thirty-eight v1 commands register (`listApis` 865 → 903) and the
+  twenty v2 ones stay away until `ai.services.v2.enabled` is on, which
+  takes it to 923. Commands answer over mTLS; tenant filtering by domain
+  works; all ten config keys appear in `listConfigurations`.
+- **Role access**, by Marvin: 58 commands across three default roles,
+  allowed and denied, 7 tests.
+- **The UI section**, by Playwright inside a real 4.23.0.0 UI: 22 of 22
+  role tests.
+- **Terraform**: 6 of 8 acceptance tests against a live management server;
+  2 skip for want of a real `.safetensors` and a real deployment.
+- **Engine failover**, in all four branches, including that a replica which
+  answered is never retried.
+- **Events**: a write command records Completed on success and the same
+  event at ERROR level on failure.
+
+**Not verified against anything:** the write half of the reconciler (`apply`
+needs a Kubernetes cluster and there is none, though `deployVirtualMachine`
+itself now works in the harness), the gateway inside a real LiteLLM process,
+and any GPU that is not simulated.
+
+**Known not to work**, as of this date: thirteen commands point at engine
+routes that do not exist — the three deployment commands, all nine serving
+and generation profile commands, and `approveAiModel`. See
+`tests/contract/test_engine_api_contract.py`, where they are listed as
+`NOT_YET_SERVED` and the list may only shrink.
 
 Treat the rest of this sheet as a specification of what is built, not a
 claim about what is proven.

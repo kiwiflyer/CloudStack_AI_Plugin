@@ -22,6 +22,7 @@ would break the Java client fails here rather than in integration.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -32,6 +33,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from aisvc.api.app import API_VERSION, create_app
+from aisvc.api.commands import COMMANDS
 from aisvc.api.deps import Services
 from aisvc.db import Base
 from aisvc.registry import InMemoryObjectStore, ModelRegistry
@@ -191,3 +193,136 @@ class TestErrorContract:
     def test_a_problem_type_is_stable_and_machine_readable(self, client: TestClient) -> None:
         body = client.get("/v1/models").json()
         assert body["type"].endswith("/missing_caller_context")
+
+
+# --------------------------------------------------------------------------
+#
+# Section 9's map says every command maps onto a `/v1` route, and this
+# module's own docstring promised the two were checked against each
+# other. They were not: `test_async_commands_declare_202` asserted it
+# of `/v1/models/mirror` and nothing else, and `REQUIRED_PATHS` lists
+# twelve paths, every one of them a read bar that same mirror. So
+# nineteen commands pointed at routes that answer the wrong status or
+# do not exist, and every test stayed green.
+#
+# The engine is the authority on which operations are long-running, but
+# SPEC section 9 is the authority on which commands are async, and the
+# Java plugin is generated from that. A mismatch is not cosmetic: a
+# command declared async refuses anything but a 202 — on purpose, since
+# treating a 200 as acceptance would report work that no job ever did —
+# so it cannot succeed, ever.
+
+#: Commands SPEC names that the engine does not serve yet.
+#:
+#: Each one is a feature that is not built, not a defect in the route
+#: table: the serving and generation profiles of section 6 have no
+#: storage model at all, and deployments are created by the reconciler
+#: rather than through the API. Listing them here keeps the gap
+#: counted and the test honest — a name may leave this set, and
+#: `test_the_unserved_list_has_not_rotted` fails if one is served
+#: after all, but adding a name means admitting a new hole.
+NOT_YET_SERVED = frozenset(
+    {
+        # deployments: created and destroyed by the reconciler today
+        "deployAiModel",
+        "updateAiModelDeployment",
+        "deleteAiModelDeployment",
+        # section 6 profiles: no record type, no routes
+        "listAiServingProfiles",
+        "createAiServingProfile",
+        "updateAiServingProfile",
+        "deleteAiServingProfile",
+        "listAiGenerationProfiles",
+        "createAiGenerationProfile",
+        "updateAiGenerationProfile",
+        "deleteAiGenerationProfile",
+        "assignAiTuningProfile",
+        # the mirror-approval step
+        "approveAiModel",
+    }
+)
+
+
+def _shape(path: str) -> str:
+    """A path with its parameter names removed.
+
+    The command map spells a path parameter `{id}` and the engine
+    spells it `{model_name}`; they are the same route.
+    """
+    return re.sub(r"\{[^}]*\}", "{}", path)
+
+
+class TestEveryCommandMapsOntoARoute:
+    """Section 9's map against the routes the engine actually serves."""
+
+    @staticmethod
+    def _routes(schema: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+        return {
+            (verb.upper(), _shape(path)): operation
+            for path, operations in schema["paths"].items()
+            for verb, operation in operations.items()
+        }
+
+    def test_every_command_has_an_engine_route(self, schema: dict[str, Any]) -> None:
+        routes = self._routes(schema)
+        missing = sorted(
+            command.name
+            for command in COMMANDS
+            if command.name not in NOT_YET_SERVED
+            and (command.method, _shape(command.path)) not in routes
+        )
+
+        assert missing == [], (
+            "these commands point at engine routes that do not exist: " + ", ".join(missing)
+        )
+
+    def test_the_unserved_list_has_not_rotted(self, schema: dict[str, Any]) -> None:
+        routes = self._routes(schema)
+        by_name = {command.name: command for command in COMMANDS}
+
+        unknown = sorted(NOT_YET_SERVED - set(by_name))
+        assert unknown == [], f"not commands at all: {unknown}"
+
+        served = sorted(
+            name
+            for name in NOT_YET_SERVED
+            if (by_name[name].method, _shape(by_name[name].path)) in routes
+        )
+        assert served == [], "these are served now and should leave NOT_YET_SERVED: " + ", ".join(
+            served
+        )
+
+    def test_every_async_command_answers_202(self, schema: dict[str, Any]) -> None:
+        # A command the plugin declares async refuses anything but a
+        # 202, so a route that answers 200 makes it permanently
+        # unusable rather than merely inconsistent.
+        routes = self._routes(schema)
+        wrong = []
+        for command in COMMANDS:
+            if not command.is_async or command.name in NOT_YET_SERVED:
+                continue
+            operation = routes.get((command.method, _shape(command.path)))
+            if operation is None:
+                continue
+            if "202" not in operation["responses"]:
+                wrong.append(f"{command.name} ({sorted(operation['responses'])})")
+
+        assert wrong == [], "these are async commands, so the engine must answer 202: " + ", ".join(
+            sorted(wrong)
+        )
+
+    def test_no_sync_command_answers_202(self, schema: dict[str, Any]) -> None:
+        # The opposite mistake: a 202 reaching a sync command would be
+        # read as the response body itself, with no job to poll.
+        routes = self._routes(schema)
+        wrong = []
+        for command in COMMANDS:
+            if command.is_async or command.name in NOT_YET_SERVED:
+                continue
+            operation = routes.get((command.method, _shape(command.path)))
+            if operation is not None and "202" in operation["responses"]:
+                wrong.append(command.name)
+
+        assert wrong == [], "these are sync commands and must not answer 202: " + ", ".join(
+            sorted(wrong)
+        )

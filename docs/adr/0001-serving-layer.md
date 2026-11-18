@@ -195,18 +195,29 @@ precise acceptance criterion for it.
 
 ## Action items
 
-1. [ ] Milestone 3: render `Deployment` + `Service` + `PodDisruptionBudget` from Jinja in
-       `aisvc/k8s/`, with server-side apply.
-2. [ ] Pod spec: host anti-affinity across replicas, `nvidia.com/gpu` limits from
+*Reviewed 2026-11-18. Milestone 3 landed, so items 1–6 are done — with one
+correction to this ADR's own wording below.*
+
+**Correction: nothing here is rendered from Jinja.** This ADR said "rendered from
+Jinja by `k8s`" and the phrase was copied into `CLAUDE.md`, but `aisvc/k8s/`
+builds plain Python dicts and `config_hash` digests those. The only Jinja
+template in the repository is `aisvc/templates/cloud-init/gpu-node.yaml.j2`,
+which provisions a node and is not part of any manifest digest. The decision —
+plain `Deployment`s rather than KServe or llm-d — is unaffected; only the
+description of how they are produced was wrong.
+
+1. [x] Milestone 3: render `Deployment` + `Service` + `PodDisruptionBudget` in
+       `aisvc/k8s/`, with server-side apply under a fixed field manager.
+2. [x] Pod spec: host anti-affinity across replicas, `nvidia.com/gpu` limits from
        `tensor_parallel`, `hostPath` weight cache at `/var/lib/aisvc/weights`, node selector on
        the `aisvc.io/node-pool` label milestone 2's cloud-init already applies.
-3. [ ] Map serving profile parameters onto engine args per `aisvc/spec/engines.py`; a profile
+3. [x] Map serving profile parameters onto engine args per `aisvc/spec/engines.py`; a profile
        change rolls out blue/green (section 6).
-4. [ ] Readiness and liveness on the engine's `/health`, with `startupProbe` tolerating the
+4. [x] Readiness and liveness on the engine's `/health`, with `startupProbe` tolerating the
        three-minute cold start.
-5. [ ] Gateway must support weighted routing between blue and green backends — a requirement
+5. [x] Gateway must support weighted routing between blue and green backends — a requirement
        for ADR-0002 (gateway choice).
-6. [ ] Record the engine image and version per deployment so fleet health can spot drift.
+6. [x] Record the engine image and version per deployment so fleet health can spot drift.
 7. [ ] Re-evaluate llm-d at v2 planning, or sooner if the multi-node non-goal changes.
 
 ## Sources

@@ -110,6 +110,26 @@ same time — something subtracting one from a total cannot express. `host_tag` 
 hosts; `gpus_per_node` bounds one node VM and `tensor_parallel`, not a host's physical GPU
 count.
 
+**Amended 2026-11-18, twice, by a real 4.23.0.0 — a fake had agreed with both
+readings.** CloudStack reports *two* fields about a GPU and this read one.
+`GpuDevice.usable` tested `managedstate == "Enabled"`, a value 4.23.0.0 never
+returns: it reports `Managed` or `Unmanaged`, so every real GPU read as unusable
+and a platform full of idle cards would have refused every deployment. The check
+is a deny-list now, because an allow-list that misses a value fails silently
+everywhere while a deny-list that misses one fails loudly in one place. Then
+`state` turned out never to be parsed at all: on the live zone all 112 devices
+were `managedstate=Managed` while sixteen of them — every H100, the only
+inference-capable capacity there — carried `state=Error`, so the engine counted
+them as free. `GpuDevice.State` is `Allocated`, `Free`, `Error` or
+`PartiallyAllocated` (read from the management server's source, the API
+reference being wrong about the field beside it); only `Error` means "not
+capacity". Absence is read differently for the two on purpose: a missing
+`managedstate` leaves the primary question unanswered and is distrusted, while a
+missing `state` reports no fault, because treating silence as a fault would make
+any server that trims the field a zero-capacity platform — which is exactly how
+the `managedstate` bug failed. **Whenever CloudStack reports two fields about one
+thing, read both.**
+
 ### Stopping a GPU node does not release its GPU
 
 `gpu.detach.on.stop` defaults to false, so a stopped instance keeps its GPU allocated. Our

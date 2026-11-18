@@ -24,6 +24,7 @@ import org.apache.cloudstack.ai.engine.EngineJob;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 /** Registers a LoRA adapter. (SPEC.md section 9). */
@@ -53,6 +54,10 @@ public class UploadAiAdapterCmd extends AiServicesAsyncCmd {
             description = "size of the adapter in bytes")
     private Integer sizeBytes;
 
+    @Parameter(name = "files", type = CommandType.STRING, required = true,
+            description = "the adapter's artefact filenames; one must be a .safetensors")
+    private String files;
+
     @Parameter(name = "uri", type = CommandType.STRING,
             description = "where its artefacts are")
     private String uri;
@@ -77,6 +82,16 @@ public class UploadAiAdapterCmd extends AiServicesAsyncCmd {
         }
         if (sizeBytes != null) {
             body.addProperty("size_bytes", sizeBytes);
+        }
+        if (files != null) {
+            JsonArray valuesFiles = new JsonArray();
+            for (String part : files.split(",")) {
+                String trimmed = part.trim();
+                if (!trimmed.isEmpty()) {
+                    valuesFiles.add(trimmed);
+                }
+            }
+            body.add("files", valuesFiles);
         }
         if (uri != null) {
             body.addProperty("uri", uri);

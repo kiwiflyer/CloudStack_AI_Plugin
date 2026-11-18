@@ -10,6 +10,13 @@ endpoint the engine requires?
 **Short answer:** no, but a different CloudStack feature can replace the *credential
 and provisioning* half of it, and that is worth doing.
 
+
+*Reviewed 2026-11-18: still accurate. `aisvc/registry/bucket.py` resolves a
+bucket behind `AISVC_REGISTRY_FROM_CLOUDSTACK` and never creates one; a missing
+or credential-less bucket is an error rather than a fallback. The three
+questions this ADR sidesteps — what quota the bucket carries, who owns it, and
+what happens if it is deleted from under a running engine — are still open.*
+
 ## Context
 
 `aisvc/registry` keeps mirrored model artifacts in an S3-compatible store through

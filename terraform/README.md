@@ -140,6 +140,17 @@ TF_ACC=1 CLOUDSTACK_API_URL=http://localhost:8080/client/api \
   CLOUDSTACK_API_KEY=... CLOUDSTACK_SECRET_KEY=... go test ./... -v
 ```
 
-Point them at the simulator from `make test-int`. **They have not been
-run yet** — the simulator is not part of `make check`, and nothing here
-has been exercised against a live management server.
+Point them at the simulator from `make stack-up`. **Six of the eight
+pass against a live management server**; the other two skip, wanting a
+real `.safetensors` and a real deployment, and say so rather than
+failing. They are not part of `make check`, because they need a running
+CloudStack and a `terraform` binary — the SDK's own installer could not
+fetch one, so supply it with `TF_ACC_TERRAFORM_PATH`.
+
+Running them for the first time found seven defects, every one of them
+in code that compiled and whose unit tests passed. The worst was silent:
+the provider sent `allowedmodels`, `cidrs`, `expiresat` and
+`ratelimitrpm` to `createAiApiKey`, which takes `models`, `cidrlist` and
+`expires` and has no rate limit at all — so **every key was created
+unrestricted and never expiring while the plan said otherwise**, because
+CloudStack ignores a parameter it does not know without comment.

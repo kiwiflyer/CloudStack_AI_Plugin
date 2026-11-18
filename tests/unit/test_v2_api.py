@@ -43,6 +43,22 @@ BATCH_LINE = (
 )
 
 
+def finished(client: TestClient, response: Any, headers: dict[str, str] = TENANT) -> Any:
+    """The result of the job an async route started.
+
+    SPEC section 9 makes these commands async, so the route answers
+    202 with a job id rather than the object itself. That is not a
+    formality: the plugin's `AiServicesAsyncCmd` refuses anything but
+    a 202 — treating a 200 as acceptance would report work no job ever
+    did — so for a while every one of these commands returned a body
+    these tests were happy with and the product could not use.
+    """
+    assert response.status_code == 202, response.text
+    job = client.get(f"/v1/jobs/{response.json()['jobid']}", headers=headers).json()
+    assert job["jobstatus"] == 1, job
+    return job["jobresult"]
+
+
 class TestAdapters:
     def upload(self, client: TestClient, headers: dict[str, str] = TENANT, **kw: Any) -> Any:
         body = dict(ADAPTER)
@@ -52,8 +68,7 @@ class TestAdapters:
     def test_an_adapter_is_accepted(self, client: TestClient) -> None:
         response = self.upload(client)
 
-        assert response.status_code == 200
-        assert response.json()["id"]
+        assert finished(client, response)["id"]
 
     def test_it_is_listed_afterwards(self, client: TestClient) -> None:
         self.upload(client)
@@ -64,7 +79,7 @@ class TestAdapters:
 
     def test_the_gateway_name_is_reported(self, client: TestClient) -> None:
         """A tenant needs the `<base>:<adapter>` form to call it."""
-        body = self.upload(client).json()
+        body = finished(client, self.upload(client))
 
         assert body["servedmodelname"] == "llama-3.3-70b-instruct:legal-tone"
 
@@ -92,12 +107,12 @@ class TestAdapters:
         assert body["count"] == 0
 
     def test_an_adapter_can_be_deleted(self, client: TestClient) -> None:
-        adapter_id = self.upload(client).json()["id"]
+        adapter_id = finished(client, self.upload(client))["id"]
 
         assert client.delete(f"/v1/adapters/{adapter_id}", headers=TENANT).status_code == 200
 
     def test_another_tenant_cannot_delete_it(self, client: TestClient) -> None:
-        adapter_id = self.upload(client, headers=TENANT).json()["id"]
+        adapter_id = finished(client, self.upload(client, headers=TENANT))["id"]
 
         response = client.delete(f"/v1/adapters/{adapter_id}", headers=OTHER_TENANT)
 
@@ -123,13 +138,13 @@ class TestBatches:
     def test_a_batch_is_accepted(self, client: TestClient) -> None:
         response = self.create(client)
 
-        assert response.status_code == 200
-        assert response.json()["status"] == "validating"
+        assert finished(client, response)["status"] == "validating"
 
     def test_the_request_count_is_reported(self, client: TestClient) -> None:
-        body = self.create(
-            client, input="\n".join([BATCH_LINE, BATCH_LINE.replace('"a"', '"b"')])
-        ).json()
+        body = finished(
+            client,
+            self.create(client, input="\n".join([BATCH_LINE, BATCH_LINE.replace('"a"', '"b"')])),
+        )
 
         assert body["requestcount"] == 2
 
@@ -150,14 +165,14 @@ class TestBatches:
         assert client.get("/v1/batches", headers=OTHER_TENANT).json()["count"] == 0
 
     def test_a_batch_can_be_cancelled(self, client: TestClient) -> None:
-        batch_id = self.create(client).json()["id"]
+        batch_id = finished(client, self.create(client))["id"]
 
         response = client.post(f"/v1/batches/{batch_id}/cancel", headers=TENANT)
 
         assert response.json()["status"] == "cancelled"
 
     def test_cancelling_a_finished_batch_is_refused(self, client: TestClient) -> None:
-        batch_id = self.create(client).json()["id"]
+        batch_id = finished(client, self.create(client))["id"]
         client.post(f"/v1/batches/{batch_id}/cancel", headers=TENANT)
 
         response = client.post(f"/v1/batches/{batch_id}/cancel", headers=TENANT)
@@ -411,12 +426,16 @@ class TestEvaluations:
         )
 
     def test_a_passing_evaluation_is_recorded(self, client: TestClient) -> None:
-        body = self.run(client).json()
+        body = finished(client, self.run(client), ADMIN)
 
         assert body["passed"] is True
 
     def test_a_regression_blocks(self, client: TestClient) -> None:
-        body = self.run(client, suites=[{"name": "gsm8k", "score": 60.0, "baseline": 70.0}]).json()
+        body = finished(
+            client,
+            self.run(client, suites=[{"name": "gsm8k", "score": 60.0, "baseline": 70.0}]),
+            ADMIN,
+        )
 
         assert body["passed"] is False
         assert "gsm8k" in body["summary"]
@@ -504,10 +523,10 @@ class TestPrivateEndpoints:
         return client.post("/v1/endpoints/private", json=body, headers=headers)
 
     def test_an_exposure_is_created(self, client: TestClient) -> None:
-        assert self.create(client).status_code == 200
+        assert finished(client, self.create(client))["id"]
 
     def test_it_describes_how_it_is_reachable(self, client: TestClient) -> None:
-        body = self.create(client).json()
+        body = finished(client, self.create(client))
 
         assert "private" in body["exposure"]
 
@@ -528,11 +547,11 @@ class TestPrivateEndpoints:
         assert response.status_code == 400
 
     def test_an_exposure_can_be_removed(self, client: TestClient) -> None:
-        exposure_id = self.create(client).json()["id"]
+        exposure_id = finished(client, self.create(client))["id"]
 
-        assert (
-            client.delete(f"/v1/endpoints/private/{exposure_id}", headers=TENANT).status_code == 200
-        )
+        removed = client.delete(f"/v1/endpoints/private/{exposure_id}", headers=TENANT)
+
+        assert finished(client, removed)["deleted"] is True
 
     def test_the_exposures_are_listed(self, client: TestClient) -> None:
         """Create and delete existed; nothing could say what was there.
@@ -582,7 +601,7 @@ class TestPrivateEndpoints:
         assert len(listed["endpoints"]) == 1
 
     def test_a_deleted_exposure_stops_being_listed(self, client: TestClient) -> None:
-        exposure_id = self.create(client).json()["id"]
+        exposure_id = finished(client, self.create(client))["id"]
         client.delete(f"/v1/endpoints/private/{exposure_id}", headers=TENANT)
 
         assert client.get("/v1/endpoints/private", headers=TENANT).json()["endpoints"] == []
@@ -599,12 +618,12 @@ class TestBatchInputAndResults:
         return client.post("/v1/batches", json=body, headers=TENANT)
 
     def test_the_input_is_stored(self, client: TestClient) -> None:
-        body = self.create(client).json()
+        body = finished(client, self.create(client))
 
         assert body["inputuri"]
 
     def test_results_are_not_ready_before_it_runs(self, client: TestClient) -> None:
-        batch_id = self.create(client).json()["id"]
+        batch_id = finished(client, self.create(client))["id"]
 
         response = client.get(f"/v1/batches/{batch_id}/results", headers=TENANT)
 
@@ -613,7 +632,7 @@ class TestBatchInputAndResults:
     def test_results_come_back_once_it_has(self, client: TestClient) -> None:
         from aisvc.batch.runner import output_key
 
-        batch_id = self.create(client).json()["id"]
+        batch_id = finished(client, self.create(client))["id"]
         services = cast(FastAPI, client.app).state.services
         session = services.session_factory()
         from aisvc.db.tier2 import BatchStore
@@ -631,7 +650,7 @@ class TestBatchInputAndResults:
         assert "custom_id" in response.text
 
     def test_another_tenant_cannot_fetch_them(self, client: TestClient) -> None:
-        batch_id = self.create(client).json()["id"]
+        batch_id = finished(client, self.create(client))["id"]
 
         response = client.get(f"/v1/batches/{batch_id}/results", headers=OTHER_TENANT)
 
@@ -641,7 +660,7 @@ class TestBatchInputAndResults:
         from aisvc.batch.runner import output_key
         from aisvc.db.tier2 import BatchStore
 
-        batch_id = self.create(client).json()["id"]
+        batch_id = finished(client, self.create(client))["id"]
         services = cast(FastAPI, client.app).state.services
         session = services.session_factory()
         record = BatchStore(session).get(batch_id)
@@ -691,7 +710,9 @@ class TestNetworkOwnershipComesFromCloudStack:
         )
 
     def test_a_network_the_account_holds_is_accepted(self) -> None:
-        assert self.attach(self.client_with(("net-1",))).status_code == 200
+        # 202: section 9 makes createAiPrivateEndpoint async, and the
+        # record here is desired state the reconciler acts on later.
+        assert self.attach(self.client_with(("net-1",))).status_code == 202
 
     def test_one_it_does_not_hold_is_refused(self) -> None:
         assert self.attach(self.client_with(("net-9",))).status_code == 400
@@ -822,7 +843,7 @@ class TestCertificates:
             headers=TENANT,
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 202
 
     def test_an_exposure_naming_an_unknown_certificate_is_refused(self, client: TestClient) -> None:
         """Otherwise the proxy boots, cannot fetch its certificate, and

@@ -1123,6 +1123,21 @@ COMMANDS: tuple[Command, ...] = (
                 required=True,
                 wire="size_bytes",
             ),
+            # Required in practice, though the engine's field defaults
+            # to empty: `validate_adapter` refuses an adapter whose
+            # files contain no `.safetensors`, so a command that could
+            # not send them could never register one. It had no
+            # `files` parameter at all, so every upload through
+            # CloudStack was refused with "no adapter weights found".
+            p(
+                "files",
+                "files",
+                "STRING",
+                "the adapter's artefact filenames; one must be a .safetensors",
+                required=True,
+                is_list=True,
+                wire="files",
+            ),
             p("uri", "uri", "STRING", "where its artefacts are"),
         ),
     ),
@@ -1149,6 +1164,21 @@ COMMANDS: tuple[Command, ...] = (
         release="v2",
         params=(
             p("model", "model", "STRING", "the model to run against", required=True),
+            # The JSONL itself. The command carried only `inputuri`, and
+            # the engine parses `input` unconditionally — so every batch
+            # submitted through CloudStack was refused with "the batch
+            # input file has no requests", whatever the caller sent.
+            # `length` because 255 is the `@Parameter` default and no
+            # batch file meets it.
+            p(
+                "input",
+                "input",
+                "STRING",
+                "the batch's JSONL, one request per line",
+                required=True,
+                wire="input",
+                length=65535,
+            ),
             p("inputuri", "inputUri", "STRING", "where the JSONL input is", wire="input_uri"),
         ),
     ),
@@ -1165,7 +1195,9 @@ COMMANDS: tuple[Command, ...] = (
         "Cancels a batch job.",
         "/v1/batches/{batchId}/cancel",
         method="POST",
-        is_async=True,
+        # Sync: SPEC section 8 marks only batch *creation* async, and
+        # the engine answers 200 here. Declared async it could never
+        # succeed, because an async command treats 200 as a refusal.
         response="AiBatchResponse",
         event="BATCH_CANCEL",
         event_doing="cancelling batch",

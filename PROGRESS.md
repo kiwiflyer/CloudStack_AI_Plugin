@@ -5241,3 +5241,111 @@ saw work start and nothing after it, and every one of these commands
 failed into that gap. They now each write an ERROR row naming
 themselves. Which side moves is a decision per command — the engine's
 status code or the plugin's contract — and nothing here has made it.
+
+## The async contract, and the thirteen commands behind it
+
+### A contract test that checked one path
+
+`aisvc/api/commands.py` opens by saying section 9's map keeps three
+things in step, the third being "the contract tests, which check the
+two against each other". They did not.
+`test_async_commands_declare_202` asserted it of `/v1/models/mirror`
+and nothing else, and `REQUIRED_PATHS` named twelve paths — eleven
+reads and that same mirror. So nineteen of fifty-eight commands
+pointed at routes that answer the wrong status or do not exist, and
+every suite was green.
+
+The test now walks every command in the map against the app's own
+OpenAPI schema, in both directions: an async command must answer 202,
+a sync one must not, and every command must have a route. Written
+first, it failed with exactly the list below.
+
+### Six commands the engine answered 200
+
+`AiServicesAsyncCmd` requires a 202. A 200 is refused as "did not
+accept" — deliberately, because a 200 carries no job, and treating it
+as success would report work that no job ever did. Only five engine
+routes returned one: `/models/mirror`, `/setup/selftest`, both rollout
+routes and `/nodes/{id}/drain`.
+
+SPEC decides which side moves. Section 447 says async calls return 202,
+and section 9's table marks these commands async, so the engine was
+wrong for five of them. `/v1/adapters`, `/v1/batches`,
+`/v1/models/{name}/evaluations` and both `/v1/endpoints/private` routes
+now create a job, set `Location`, and return `{"jobid": …}`.
+
+Validation stays a 4xx, raised *before* the job exists. A caller who
+sent a rank over the limit wants a parameter error naming it, not a job
+that failed; and the plugin maps 400 and 422 onto `PARAM_ERROR`, which
+is what reaches the tenant.
+
+The sixth was the other way round. SPEC's batch row reads "Yes for
+create", so only *creation* is async — `cancelAiBatch` was declared
+async in both command maps and could therefore never succeed. It is
+sync now, and the engine was right all along.
+
+### Two commands that omitted a field the engine requires
+
+Making the status right was not enough, because a command cannot
+succeed if it never sends what the engine needs — and CloudStack drops
+an unknown parameter in silence, which is how `allowedmodels` went
+missing from Terraform.
+
+`uploadAiAdapter` had **no `files` parameter at all**. The engine's
+`validate_adapter` refuses an adapter whose files contain no
+`.safetensors`, so every upload through CloudStack was refused with
+"no adapter weights found" — a message that reads like a caller error
+and was in fact a surface that could not express the call.
+
+`createAiBatch` had `inputuri` and no `input`, while the engine parses
+`body.input` unconditionally. Every batch was refused with "the batch
+input file has no requests". It is declared now, with `length = 65535`,
+because 255 is the `@Parameter` default and no batch file meets it.
+
+**Still broken, recorded rather than fixed:** the engine never reads
+`input_uri` — it is stored on the record and nothing fetches it — so a
+batch can only be submitted inline.
+
+### Thirteen with no engine route
+
+These are a feature gap, not a routing mistake:
+
+- `deployAiModel`, `updateAiModelDeployment`, `deleteAiModelDeployment` —
+  deployments are created by the reconciler, not through the API. Both
+  flagship commands are hand-written, which is why the generated-surface
+  tests never looked at them.
+- the nine serving- and generation-profile commands — section 6's
+  precedence logic exists in `aisvc/profiles/` as pure resolution, but
+  there is no record type and no route, so nothing can store a profile.
+- `approveAiModel` — the mirror-approval step.
+
+They are `NOT_YET_SERVED` in `tests/contract/test_engine_api_contract.py`.
+The list may only shrink: one test fails if a command outside it has no
+route, another if a name in it turns out to be served after all.
+
+### A unit test that overwrote the developer's `.env`
+
+This surfaced the hard way. After restarting the engine, every call
+failed with `bad_certificate` — PKIX path validation — against a
+management server that had been talking to it minutes earlier.
+
+`.env` pointed at `/private/var/.../pytest-of-sweller/pytest-99/...`.
+Running `pytest tests/unit` had rewritten it. The installer test calls
+`install.py --make-certs`, which falls through into the rest of the
+installer — venv, migrations, `write_configuration` — and `install.py`
+resolves its root from `__file__`, not the working directory, so no
+`cwd` could have protected it. The file is git-ignored, so nothing
+showed in a diff.
+
+It passes `--dry-run` now, still makes its certificates into `tmp_path`,
+still checks for the `NameError` it was written for, and asserts the
+repository's `.env` is byte-identical afterwards. The full suite now
+leaves it unchanged, which was checked rather than assumed.
+
+### Measured
+
+2,022 unit, 37 contract, 36 integration and 29 security tests pass;
+467 JUnit. Against the live management server, `runAiModelEvaluation`
+and `uploadAiAdapter` — two commands that could not previously
+succeed — now complete, each returning a real record through a
+CloudStack async job.

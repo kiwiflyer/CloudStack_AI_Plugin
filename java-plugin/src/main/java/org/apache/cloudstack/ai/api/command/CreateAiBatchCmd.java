@@ -41,6 +41,10 @@ public class CreateAiBatchCmd extends AiServicesAsyncCmd {
             description = "the model to run against")
     private String model;
 
+    @Parameter(name = "input", type = CommandType.STRING, required = true, length = 65535,
+            description = "the batch's JSONL, one request per line")
+    private String input;
+
     @Parameter(name = "inputuri", type = CommandType.STRING,
             description = "where the JSONL input is")
     private String inputUri;
@@ -56,6 +60,9 @@ public class CreateAiBatchCmd extends AiServicesAsyncCmd {
         JsonObject body = new JsonObject();
         if (model != null) {
             body.addProperty("model", model);
+        }
+        if (input != null) {
+            body.addProperty("input", input);
         }
         if (inputUri != null) {
             body.addProperty("input_uri", inputUri);

@@ -149,6 +149,37 @@ lifecycle is safe for a passthrough-GPU node:
 nodes the cluster should not touch, which is exactly what a GPU node is. But that is
 an inference from a flag's existence, not a documented guarantee.
 
+## What the harness can and cannot answer (2026-11-18)
+
+CKS has now been driven end to end against the 4.23.0.0 simulator, which
+removes three obstacles from anyone attempting the experiment below — none of
+them ours, and all three invisible until something tried:
+
+- `addKubernetesSupportedVersion` marks `url` optional on the `@Parameter` and
+  then rejects an empty one in `KubernetesVersionManagerImpl`. The ISO it names
+  is never fetched in the simulator; `isostate` reads `Ready` at once.
+- `createKubernetesCluster` refuses with a bare *"Unable to complete this
+  operation. Contact your cloud admin."* while `endpoint.url` is still
+  `http://localhost:8080/client/api` — a node could never call back on that.
+  The log names the cause; the API does not.
+- The control VM fails with `NoSuchFileException:
+  /usr/share/cloudstack-management/cks/conf/k8s-control-node.yml`, because CKS
+  reads its cloud-init templates from the installed-package path and a
+  run-from-source image has them under
+  `plugins/integrations/kubernetes-service/target/classes/conf`.
+
+Past those, `createKubernetesCluster` deployed a control node and a worker,
+both `Running`, on a guest network CloudStack created with a virtual router it
+started. The cluster then holds at `Starting` forever: the hypervisor is
+simulated, so nothing executes inside those VMs and `kubeadm` never runs.
+
+**So the simulator cannot answer the question this ADR is gated on.** It has no
+real GPUs and no real kubelet, so `scaleKubernetesCluster` against a
+passthrough-GPU node still has to be tried on real hardware. What the exercise
+did establish is that `deployVirtualMachine` works in the harness, which is a
+different and more useful result — it is the gate on the reconciler's write
+half, recorded in `CLAUDE.md`.
+
 ## Recommendation
 
 1. **Adopt it, gated on one experiment.** Before writing any of it, add one GPU node
@@ -156,6 +187,7 @@ an inference from a flag's existence, not a documented guarantee.
    `scaleKubernetesCluster` on that cluster and watch what happens to the GPU node.
    If scaling leaves a `manualupgrade` node alone, the whole design holds. If it stops
    it, the GPU leaks and this ADR needs rethinking before it needs implementing.
+   **Still unrun, and the simulator cannot stand in for it** — see above.
 2. **Do `getKubernetesClusterConfig` first regardless.** It is independent of the join
    question, removes a prerequisite from `docs/installation.md`, and cannot leak a GPU
    if it is wrong. **Done.** `plan` and `apply` fetch it for any `cks` zone;

@@ -21,8 +21,15 @@ and usage records in the same console they already run their cloud from.
 > But **no GPU node has booted and no model has served a token.** The
 > write half of the reconciler needs a Kubernetes cluster, nothing has
 > been mirrored from Hugging Face, and the simulator's GPUs are
-> simulated. [docs/installation.md](docs/installation.md) ends with an
-> honest list of what has and has not run, and
+> simulated — though `deployVirtualMachine` itself has now been shown to
+> work there, so that gap is reachable rather than blocked.
+>
+> **Thirteen of the fifty-eight commands point at engine routes that do
+> not exist yet**: the three deployment commands, the nine serving- and
+> generation-profile commands, and `approveAiModel`. They are listed in
+> `tests/contract/test_engine_api_contract.py` as `NOT_YET_SERVED`, a
+> list that may only shrink. [docs/installation.md](docs/installation.md)
+> ends with an honest list of what has and has not run, and
 > [PROGRESS.md](PROGRESS.md) keeps the long version.
 
 ## How it fits together

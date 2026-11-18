@@ -1,6 +1,11 @@
 # ADR-0007: Where the Kubernetes cluster comes from
 
-**Status:** Proposed. Nothing is built; `platform.yaml`'s schema is unchanged.
+**Status:** Proposed, **partly built** (reviewed 2026-11-18). `platform.yaml` now
+carries the `kubernetes` block this ADR proposed — `source` (default `cks`),
+`cluster`, and a separate `create` permission — and `check_clusters` reads it,
+so an `external` zone is no longer failed for a cluster CloudStack never owned.
+What is still unbuilt is the part that would *create* a cluster, and ADR-0006's
+GPU experiment remains unrun.
 **Date:** 2026-11-12
 **Deciders:** Simon Weller
 **Amends:** [ADR-0006](0006-gpu-node-join.md), whose recommendation to drop the
@@ -114,6 +119,15 @@ business" without the source field, so **the check is correct today only because
 `cks_cluster` is mandatory and every cluster is assumed to be a CKS one.** It becomes
 a bug the moment this ADR is implemented, and the fix belongs in the same change.
 
+**Fixed since (reviewed 2026-11-18), ahead of the rest of this ADR.**
+`check_clusters` now branches on `zone.kubernetes.source`: a zone declared
+`external` passes with *"declared external, so CloudStack is not asked about it;
+reachability is what speaks for it"*, and only a `cks` zone is failed for a
+cluster CloudStack cannot find. A zone not yet observed is skipped rather than
+failed, as capacity is. So the schema field this ADR proposes exists and the
+preflight reads it — what remains unbuilt is everything that would *create* a
+cluster.
+
 The Kubernetes reachability half of that commit needs no change — it already asks the
 only question that matters for an external cluster.
 
@@ -150,8 +164,17 @@ only question that matters for an external cluster.
 
 ## What is still unknown
 
+*Reviewed 2026-11-18. Nothing here is built yet; `platform.yaml`'s schema is
+still unchanged. What has happened since is that CKS itself has been driven
+against the 4.23.0.0 simulator — a cluster's control node and worker both
+reached `Running` — which removes three undocumented obstacles from anyone
+attempting ADR-0006's experiment. They are listed there. The cluster never
+leaves `Starting`, because the simulator's hypervisor runs nothing inside those
+VMs, so none of the questions below moved.*
+
 - The GPU lifecycle question from [ADR-0006](0006-gpu-node-join.md) is untouched by
-  this and still needs its experiment.
+  this and still needs its experiment — and the simulator cannot stand in for it,
+  having neither a real GPU nor a real kubelet.
 - The admin guide says CKS supports Shared, Isolated and VPC networks via `networkid`
   but describes VPC generally, without a tier-specific parameter. Given how much
   trouble the tier question caused for private endpoints, confirm it rather than

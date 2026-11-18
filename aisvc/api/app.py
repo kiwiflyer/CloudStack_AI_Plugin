@@ -1136,14 +1136,31 @@ def _register_routes(app: FastAPI) -> None:
 
     # -- tier 2: adapters -------------------------------------------------
 
-    @app.post(f"{PREFIX}/adapters", tags=["adapters"], summary="Upload a LoRA adapter")
+    @app.post(
+        f"{PREFIX}/adapters",
+        tags=["adapters"],
+        summary="Upload a LoRA adapter",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
     async def upload_adapter(
-        caller: CallerDep, session: SessionDep, services: ServicesDep, body: AdapterBody
+        caller: CallerDep,
+        session: SessionDep,
+        services: ServicesDep,
+        jobs: JobsDep,
+        response: Response,
+        body: AdapterBody,
     ) -> dict[str, Any]:
         """Register a tenant's adapter (SPEC.md section 8).
 
         Validated here rather than at load time because every one of
         these failures is otherwise silent until the first request.
+
+        202 because section 9 makes `uploadAiAdapter` async, and the
+        plugin refuses anything else: a command declared async treats a
+        200 as "the engine did not accept this" rather than as success,
+        on purpose, since a 200 carries no job to poll. Validation
+        still answers 4xx, before any job exists — a caller who sent a
+        bad rank wants a parameter error, not a job that failed.
         """
         store = AdapterStore(session)
         request = AdapterRequest(
@@ -1168,8 +1185,15 @@ def _register_routes(app: FastAPI) -> None:
         except AdapterRejected as exc:
             raise ApiError(status.HTTP_400_BAD_REQUEST, exc.detail, code=exc.reason) from exc
 
-        record = store.add(request, uri=body.uri)
-        return _adapter_row(record)
+        job = jobs.create("uploadAiAdapter", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            record = store.add(request, uri=body.uri)
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(job, _adapter_row(record))
+        return {"jobid": job.id}
 
     @app.get(f"{PREFIX}/adapters", tags=["adapters"], summary="List LoRA adapters")
     async def list_adapters(caller: CallerDep, session: SessionDep) -> dict[str, Any]:
@@ -1200,11 +1224,27 @@ def _register_routes(app: FastAPI) -> None:
 
     # -- tier 2: batches --------------------------------------------------
 
-    @app.post(f"{PREFIX}/batches", tags=["batches"], summary="Submit a batch")
+    @app.post(
+        f"{PREFIX}/batches",
+        tags=["batches"],
+        summary="Submit a batch",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
     async def create_batch(
-        caller: CallerDep, session: SessionDep, services: ServicesDep, body: BatchBody
+        caller: CallerDep,
+        session: SessionDep,
+        services: ServicesDep,
+        jobs: JobsDep,
+        response: Response,
+        body: BatchBody,
     ) -> dict[str, Any]:
-        """Accept a JSONL batch (SPEC.md section 8)."""
+        """Accept a JSONL batch (SPEC.md section 8).
+
+        202 because section 9 makes `createAiBatch` async. The refusals
+        below stay 4xx: an unparseable input file is the caller's to
+        fix, and the plugin maps 400 onto a parameter error that names
+        it. Only the accepted batch becomes a job.
+        """
         if not any(m.name == body.model for m in services.spec.document.models):
             raise ApiError(
                 status.HTTP_404_NOT_FOUND,
@@ -1217,19 +1257,26 @@ def _register_routes(app: FastAPI) -> None:
         except BatchRejected as exc:
             raise ApiError(status.HTTP_400_BAD_REQUEST, exc.detail, code=exc.reason) from exc
 
-        record = BatchStore(session).add(
-            account=caller.account,
-            domain=caller.domain_path,
-            model=body.model,
-            request_count=len(requests),
-            input_uri=body.input_uri,
-        )
-        if body.input:
-            # To the registry, not a column: these run to hundreds of
-            # megabytes and the object store is already where large
-            # immutable artefacts live.
-            store_input(services.registry, record, body.input)
-        return _batch_row(record)
+        job = jobs.create("createAiBatch", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            record = BatchStore(session).add(
+                account=caller.account,
+                domain=caller.domain_path,
+                model=body.model,
+                request_count=len(requests),
+                input_uri=body.input_uri,
+            )
+            if body.input:
+                # To the registry, not a column: these run to hundreds of
+                # megabytes and the object store is already where large
+                # immutable artefacts live.
+                store_input(services.registry, record, body.input)
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(job, _batch_row(record))
+        return {"jobid": job.id}
 
     @app.get(
         f"{PREFIX}/batches/{{batch_id}}/results",
@@ -1444,18 +1491,26 @@ def _register_routes(app: FastAPI) -> None:
         f"{PREFIX}/models/{{model_name}}/evaluations",
         tags=["models"],
         summary="Record an evaluation",
+        status_code=status.HTTP_202_ACCEPTED,
     )
     async def run_evaluation(
         model_name: str,
-        _: AdminDep,
+        caller: AdminDep,
         session: SessionDep,
         services: ServicesDep,
+        jobs: JobsDep,
+        response: Response,
         body: EvaluationBody,
     ) -> dict[str, Any]:
         """Judge a staging evaluation (SPEC.md section 8).
 
         The suites are produced elsewhere; this applies the gate and
         records the verdict against the catalog entry.
+
+        202 because section 9 makes `runAiModelEvaluation` async. The
+        caller was anonymous here — `_: AdminDep` — which was fine
+        while nothing needed to know who asked; a job is owned, so it
+        is named now.
         """
         if not any(m.name == model_name for m in services.spec.document.models):
             raise ApiError(
@@ -1464,16 +1519,25 @@ def _register_routes(app: FastAPI) -> None:
                 code="model_not_found",
             )
 
-        decision = gate(
-            EvaluationRun(
-                model=model_name,
-                revision=body.revision,
-                suites=tuple(SuiteResult(**suite.model_dump()) for suite in body.suites),
-                performance=tuple(PerformanceResult(**p.model_dump()) for p in body.performance),
+        job = jobs.create("runAiModelEvaluation", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            decision = gate(
+                EvaluationRun(
+                    model=model_name,
+                    revision=body.revision,
+                    suites=tuple(SuiteResult(**suite.model_dump()) for suite in body.suites),
+                    performance=tuple(
+                        PerformanceResult(**p.model_dump()) for p in body.performance
+                    ),
+                )
             )
-        )
-        record = EvaluationStore(session).add(model_name, body.revision, decision)
-        return _evaluation_row(record)
+            record = EvaluationStore(session).add(model_name, body.revision, decision)
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(job, _evaluation_row(record))
+        return {"jobid": job.id}
 
     @app.get(
         f"{PREFIX}/models/{{model_name}}/evaluations",
@@ -1733,13 +1797,25 @@ def _register_routes(app: FastAPI) -> None:
         f"{PREFIX}/endpoints/private",
         tags=["deployments"],
         summary="Attach a private endpoint",
+        status_code=status.HTTP_202_ACCEPTED,
     )
     async def create_private_endpoint(
         caller: CallerDep,
         session: SessionDep,
         services: ServicesDep,
+        jobs: JobsDep,
+        response: Response,
         body: PrivateEndpointBody,
     ) -> dict[str, Any]:
+        """Record a private endpoint for the reconciler to build.
+
+        202 because section 9 makes `createAiPrivateEndpoint` async,
+        and here the job is more than a formality: what this writes is
+        desired state, and the proxy VM that serves it is created on a
+        later reconcile. The two refusals below stay 4xx — an unknown
+        certificate or a network the account does not own is the
+        caller's to fix.
+        """
         exposure = EndpointExposure(
             deployment=body.deployment,
             account=caller.account,
@@ -1768,12 +1844,22 @@ def _register_routes(app: FastAPI) -> None:
         except ExposureRejected as exc:
             raise ApiError(status.HTTP_400_BAD_REQUEST, exc.detail, code=exc.reason) from exc
 
-        record = ExposureStore(session).add(exposure)
-        return {
-            "id": record.id,
-            "deployment": record.deployment,
-            "exposure": describe_exposure(exposure),
-        }
+        job = jobs.create("createAiPrivateEndpoint", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            record = ExposureStore(session).add(exposure)
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(
+                job,
+                {
+                    "id": record.id,
+                    "deployment": record.deployment,
+                    "exposure": describe_exposure(exposure),
+                },
+            )
+        return {"jobid": job.id}
 
     @app.get(
         f"{PREFIX}/endpoints/private",
@@ -1798,10 +1884,21 @@ def _register_routes(app: FastAPI) -> None:
         f"{PREFIX}/endpoints/private/{{exposure_id}}",
         tags=["deployments"],
         summary="Remove a private endpoint",
+        status_code=status.HTTP_202_ACCEPTED,
     )
     async def delete_private_endpoint(
-        exposure_id: str, caller: CallerDep, session: SessionDep
+        exposure_id: str,
+        caller: CallerDep,
+        session: SessionDep,
+        jobs: JobsDep,
+        response: Response,
     ) -> dict[str, Any]:
+        """Drop a private endpoint; the reconciler destroys its proxy.
+
+        202 because section 9 makes `deleteAiPrivateEndpoint` async.
+        An unknown id stays a 404, before the job: nothing was asked
+        for, so there is nothing to report the outcome of.
+        """
         store = ExposureStore(session)
         record = store.get(exposure_id)
         if record is None or not caller.may_see(account=record.account, domain_path=record.domain):
@@ -1810,8 +1907,16 @@ def _register_routes(app: FastAPI) -> None:
                 f"no such private endpoint: {exposure_id}",
                 code="exposure_not_found",
             )
-        store.delete(record)
-        return {"id": exposure_id, "deleted": True}
+
+        job = jobs.create("deleteAiPrivateEndpoint", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            store.delete(record)
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(job, {"id": exposure_id, "deleted": True})
+        return {"jobid": job.id}
 
     # -- profiles ---------------------------------------------------------
 

@@ -206,7 +206,11 @@ COMMANDS: tuple[Command, ...] = (
         "POST",
         "/v1/batches/{batch_id}/cancel",
         ALL,
-        is_async=True,
+        # Not async: section 8's table marks only *create* async for
+        # batches, and cancelling is a flag on a row. It was declared
+        # async here and in the Java generator, which made it
+        # permanently unusable — an async command refuses the 200 the
+        # engine returns.
         release=Release.V2,
     ),
     # SPEC.md section 8 says results come back; without a command for

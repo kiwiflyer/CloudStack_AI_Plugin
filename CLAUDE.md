@@ -59,10 +59,9 @@ advertised none of them; with it loaded all twelve v1 ones are there (thirty-eig
 in all) while the five v2 routes drop, which is what the `ai.services.v2.enabled`
 default is supposed to do. What has not run is the UI against the loaded
 plugin: the two were verified in separate management servers, never the same one. `terraform/` builds and unit-tests (v1 and v2) but
-**4 of its 8 acceptance tests now pass** against a live management
-server; the four that fail each omit a parameter the engine requires, bar the
-certificate one, whose fixture is a placeholder PEM. Running them needs a
-`terraform` binary, which the SDK's own installer could not fetch.
+**6 of its 8 acceptance tests pass** against a live management server and the
+other two skip, wanting a real `.safetensors` and a real deployment. Running
+them needs a `terraform` binary, which the SDK's own installer could not fetch.
 **The Marvin tests exist and pass** — `test/integration/plugins/ai-services/`,
 58 commands across three roles, allowed and denied, against a live 4.23.0.0. They
 call each command with no arguments, because access is checked before parameters
@@ -427,7 +426,9 @@ Work from the spec's section numbers; require `aisvc plan --dry-run` output agai
 
 Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR first.
 
-- **ADR-0001 — serving layer:** plain Kubernetes `Deployment`s rendered from Jinja by `k8s`.
+- **ADR-0001 — serving layer:** plain Kubernetes `Deployment`s rendered by `k8s` (as
+  Python dicts — **not** Jinja, whatever the ADR's own wording said; `config_hash`
+  digests those dicts, and the repository's one `.j2` is the node cloud-init).
   No KServe, llm-d or vLLM production stack in v1. Blue/green canary weighting lives at the
   gateway, not in the serving layer. Revisit only if the one-replica-per-host cap is lifted.
 
@@ -680,6 +681,51 @@ used to fail into silence — an operator saw `Scheduled` and nothing more, whic
 exactly how it went unnoticed; now each one writes an ERROR row naming itself.
 Decide per command which side moves, the engine's status or the plugin's contract.
 
+**Eleven of the sixteen async commands could not succeed, and fixing the events is
+what made it visible.** `AiServicesAsyncCmd` requires a 202 — a 200 is refused as
+"did not accept", deliberately, because treating it as success would report work
+no job ever did. Only five engine routes returned one. **Fixed**: five more now
+answer 202 with a job (`/v1/adapters`, `/v1/batches`,
+`/v1/models/{name}/evaluations`, and both `/v1/endpoints/private` routes), and
+`cancelAiBatch` became sync, because SPEC section 8's table marks only batch
+*creation* async and the command map had it wrong. Validation still answers 4xx,
+*before* the job exists: a caller who sent a bad rank wants a parameter error,
+not a job that failed.
+
+**That left the other half: a command cannot succeed if it omits a field the
+engine requires, and CloudStack drops an unknown parameter in silence.** Two
+more of the same family as the Terraform `allowedmodels` bug — `uploadAiAdapter`
+had no `files` parameter at all, so `validate_adapter` saw an empty list and
+refused every upload with "no adapter weights found"; `createAiBatch` had only
+`inputuri` while the engine parses `input` unconditionally, so every batch was
+refused with "the batch input file has no requests". Both are declared now, the
+batch's with `length = 65535`. **Still broken, and recorded rather than fixed:**
+the engine never reads `input_uri`, so a batch can only be submitted inline.
+
+**Thirteen commands point at engine routes that do not exist** — the three
+deployment commands, all nine serving- and generation-profile commands, and
+`approveAiModel`. Deployments are created by the reconciler rather than through
+the API, and section 6's profiles have no storage model at all. This is a
+feature gap, not a routing mistake. `tests/contract/test_engine_api_contract.py`
+lists them as `NOT_YET_SERVED` and fails if the list grows *or* if one starts
+working without leaving it.
+
+**That whole class of bug existed because the contract test checked one path.**
+`test_async_commands_declare_202` asserted it of `/v1/models/mirror` and nothing
+else, and `REQUIRED_PATHS` listed twelve paths, every one a read bar that mirror.
+Nineteen commands were wrong and every suite was green. The test now walks every
+command in `aisvc/api/commands.py` against the app's own OpenAPI schema, both
+directions: an async command must answer 202, a sync one must not.
+
+**A unit test used to overwrite the repository's `.env`.** `install.py
+--make-certs` falls through into the rest of the installer, and `install.py`
+takes its root from `__file__` rather than the working directory, so no `cwd`
+could protect it — the installer test rewrote a developer's real database URL,
+CloudStack keys and TLS paths with pytest temp paths. It is git-ignored, so
+nothing showed in a diff; it surfaced as a live mTLS handshake failure against a
+management server that no longer trusted the engine. The test passes
+`--dry-run` now and asserts the file is byte-identical afterwards.
+
 **Default role access is `@APICommand(authorized = ...)`, not a schema seed.**
 `DynamicRoleBasedAPIAccessChecker.start()` walks every `PluggableService`'s
 commands, reads that attribute, and consults the resulting map whenever no
@@ -771,10 +817,14 @@ are linked rather than stored.
 **The repository is Apache 2.0 licensed.** `LICENSE` is the canonical text and
 `NOTICE` is the ASF attribution file. Every source file carries the ASF header:
 `.py`, `.java`, `.go`, `.js`, `.ts`, `.vue`, `.tf`, `.hcl`, `.yaml`. **Jinja
-templates are deliberately excluded** — `.j2` files render into manifests whose
-digest is `config_hash`, and fourteen comment lines would change every spec-hash
-and start a rollout everywhere. New files need the header; the Java generator
-already emits it.
+templates are deliberately excluded.** There is exactly one —
+`aisvc/templates/cloud-init/gpu-node.yaml.j2` — and it renders into a node's
+cloud-init, where fourteen comment lines are fourteen lines a node must
+download and a human must scroll past to read what actually runs. (An earlier
+version of this note justified the exclusion by `config_hash`; that was wrong.
+`config_hash` digests the Python dicts `aisvc/k8s` builds, and no Jinja is
+involved in a manifest.) New files need the header; the Java generator already
+emits it.
 
 `docs/installation.md` is the operator-facing install and setup guide: prerequisites,
 the four pieces and their order, every config key and environment variable, and an

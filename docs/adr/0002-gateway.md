@@ -174,19 +174,26 @@ disappears and this ADR should be reopened.
 
 ## Action items
 
-1. [ ] Milestone 3: `gateway-hooks/` with `async_pre_call_hook` applying resolved generation
+*Reviewed 2026-11-18. Items 1, 2, 3 and 6 are done; 4, 5 and 7 are not, and
+item 4 is the one that matters — **LiteLLM is still not a dependency.** It
+appears in `pyproject.toml` only as a mypy override, so nothing pins a version,
+nothing contract-tests the hook signatures, and the hooks in `gateway-hooks/`
+have never run inside a LiteLLM process. The enforcement logic they call is
+tested; the integration they exist for is not.*
+
+1. [x] Milestone 3: `gateway-hooks/` with `async_pre_call_hook` applying resolved generation
        parameters, key scopes (model allow-list, CIDR, expiry) and quota checks; 403 with a
        reason naming which scope failed.
-2. [ ] The hook imports `aisvc.profiles.resolve()`. No second implementation of precedence —
+2. [x] The hook imports `aisvc.profiles.resolve()`. No second implementation of precedence —
        add a test asserting the hook and `getAiEffectiveParameters` agree for the same inputs.
-3. [ ] Generate LiteLLM config from `platform.yaml` in the `gateway` module, with weighted
+3. [x] Generate LiteLLM config from `platform.yaml` in the `gateway` module, with weighted
        entries per model group so `lifecycle` can shift canary weight.
 4. [ ] Pin the LiteLLM version in `pyproject.toml`; contract-test the hook signatures so an
        upgrade that changes them fails in CI. Re-check the MIT/`enterprise/` licence split on
        every upgrade, and add LiteLLM to `docs/third-party-licenses.md` when it lands.
 5. [ ] Redis for shared rate-limit and budget state across replicas; at least two replicas
        behind the zone load balancer.
-6. [ ] Assert in a test that no prompt or completion content reaches logs or metering by
+6. [x] Assert in a test that no prompt or completion content reaches logs or metering by
        default (section 11).
 7. [ ] Load test through the gateway against the mock model server, and record the measured
        per-instance ceiling in `PROGRESS.md` so the revisit trigger above has a real number
