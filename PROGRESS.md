@@ -5001,3 +5001,57 @@ caller who does not. `Action` carries the zone now, taken from
 `planned.zone`, which is already the name CloudStack knows.
 
 2,019 unit tests pass.
+
+## Two authority rules, checked against a running system
+
+Both were written down, unit-tested against fakes, and never once
+exercised through CloudStack by two different callers.
+
+### Guardrail scoping
+
+SPEC sections 6 and 8, and `aisvc/guardrails/authority.py`: a caller
+writes at their own level and no higher. Driven through the plugin as
+root admin and as a tenant in `/Customers/Acme`:
+
+```
+admin   platform scope          ALLOWED
+acme    platform scope          403  the platform profile is not yours
+acme    another account         403  not your account
+acme    a domain above them      403  / is not a domain you may write at
+acme    their own account       ALLOWED
+```
+
+The last one only once the target is named. Omitted, it is refused —
+and the refusal says what to use:
+
+> a guardrail profile at the account scope applies to '', which is not
+> your account; you may set one for 'acme'
+
+That is the right trade: explicit beats implicit, and an error that
+names the fix costs nothing. The UI's create action already asks for
+`target`, so a tenant clicking the button does not meet it.
+
+### The budget asymmetry, confirmed rather than assumed
+
+CLAUDE.md records that `createAiBudget` is granted to every role and
+served `AdminDep`, and that the engine is the side that is right — a
+tenant who could set their own budget could lift the limit blocking
+them. Live, that is exactly what happens:
+
+```
+admin   createAiBudget   ALLOWED
+acme    createAiBudget   403  this command is available to root admins only
+```
+
+CloudStack lets the call through, because the command map grants it;
+the engine refuses it. The gap is real, it behaves as documented, and
+the message is clear enough that a tenant meeting it knows why.
+
+Underneath, the filtering holds too: root admin lists three budgets
+and the tenant lists one, which is `UsageStore.list_for` keying on
+the `(account, domain)` pair rather than the account name.
+
+### The gate
+
+`make check` is green end to end: 2,019 unit, 33 contract, 36
+integration and 29 security tests.
