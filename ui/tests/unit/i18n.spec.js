@@ -35,7 +35,11 @@ function keysUsed () {
   for (const screen of screens()) {
     keys.add(screen.title)
     for (const tab of screen.tabs ?? []) {
-      if (tab.name?.startsWith('label.')) keys.add(tab.name)
+      // CloudStack renders a tab as $t('label.' + tab.name), so the
+      // key is the name with the prefix added — not the name itself.
+      // Collecting it the other way round is what let five tabs ship
+      // with names that rendered as `label.label.ai.…`.
+      if (tab.name && tab.name !== 'details') keys.add(`label.${tab.name}`)
     }
     for (const action of screen.actions ?? []) {
       if (action.label) keys.add(action.label)
@@ -177,5 +181,40 @@ describe('the fields a screen lists', () => {
     }
 
     expect(unresolved).toEqual([])
+  })
+})
+
+describe('a tab name is a key without its prefix', () => {
+  it('no tab carries label. in its name', () => {
+    // CloudStack renders a tab as $t('label.' + tab.name). Five tabs
+    // were named `label.ai.…`, so the detail view drew
+    // "label.label.ai.api.keys" where a title should be — visible on
+    // every endpoint, usage and registry record, and invisible to
+    // every test, because the i18n check collected the name as the
+    // key rather than deriving the key from the name.
+    const named = []
+    for (const screen of screens()) {
+      for (const tab of screen.tabs ?? []) {
+        if (typeof tab.name === 'string' && tab.name.startsWith('label.')) {
+          named.push(`${screen.name}: ${tab.name}`)
+        }
+      }
+    }
+
+    expect(named).toEqual([])
+  })
+
+  it('every tab name resolves to a key that exists', () => {
+    const missing = []
+    for (const screen of screens()) {
+      for (const tab of screen.tabs ?? []) {
+        if (typeof tab.name !== 'string' || tab.name === 'details') continue
+        if (!(`label.${tab.name}` in en)) {
+          missing.push(`${screen.name}: label.${tab.name}`)
+        }
+      }
+    }
+
+    expect(missing).toEqual([])
   })
 })

@@ -60,6 +60,8 @@ tenant choosing a model is choosing its terms.
 The OpenAI-compatible base URL per model, with an **API keys** tab and a
 **Snippets** tab on each.
 
+![The endpoints list](images/ui/endpoints.jpg)
+
 Keys are scoped: a key may name the models it may use, the CIDRs it may
 be called from, and when it expires. The secret is shown once, on
 creation, because keys are stored as salted hashes.

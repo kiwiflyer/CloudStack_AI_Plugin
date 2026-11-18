@@ -121,11 +121,16 @@ export default {
       tabs: [
         detailsTab,
         {
-          name: 'label.ai.api.keys',
+          // A tab's name is the key *without* `label.`: CloudStack
+          // renders it as $t('label.' + tab.name), so a name carrying
+          // the prefix came out as "label.label.ai.api.keys" on the
+          // screen. The shared `detailsTab` is named plain `details`,
+          // which is why that one tab always read correctly.
+          name: 'ai.api.keys',
           component: view('ApiKeysTab')
         },
         {
-          name: 'label.ai.snippets',
+          name: 'ai.snippets',
           component: view('SnippetsTab')
         }
       ],
@@ -259,7 +264,7 @@ export default {
       tabs: [
         detailsTab,
         {
-          name: 'label.ai.budgets',
+          name: 'ai.budgets',
           component: view('BudgetsTab')
         }
       ],
@@ -647,7 +652,7 @@ export default {
           // `listAiEvaluations` are not registered on a v1 install, so
           // the action is hidden by CloudStack and the tab reports
           // nothing to show.
-          name: 'label.ai.evaluations',
+          name: 'ai.evaluations',
           component: view('EvaluationsTab')
         }
       ],
@@ -833,7 +838,7 @@ export default {
       tabs: [
         detailsTab,
         {
-          name: 'label.ai.run.actions',
+          name: 'ai.run.actions',
           component: view('RunActionsTab')
         }
       ],
