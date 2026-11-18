@@ -5055,3 +5055,90 @@ the `(account, domain)` pair rather than the account name.
 
 `make check` is green end to end: 2,019 unit, 33 contract, 36
 integration and 29 security tests.
+
+## Two more surfaces, driven against the live server
+
+### Events stop at `Scheduled`, and the obvious patch does not work
+
+`listEvents` on the running management server returns six AI rows and
+every one of them reads `Scheduled`. An operator watching a mirror or a
+rollout sees it start and never learns whether it finished.
+
+The obvious fix is `@ActionEvent` on `AiServicesAsyncCmd.execute()` and
+`AiServicesSyncCmd.execute()`. It was written, built — 462 JUnit tests
+green — deployed into the running server, and measured: still six rows,
+still all `Scheduled`. `javap` confirms the annotation is in the loaded
+class and `RuntimeVisibleAnnotations`, so it is there and the
+interceptor simply never looks at it.
+
+Two independent reasons, both read out of 4.23.0.0's own source:
+
+- The interceptor is a Spring AOP advisor —
+  `execution(* *(..)) && @annotation(com.cloud.event.ActionEvent)` in
+  `spring-core-system-context-inheritable.xml` — so it wraps **beans**.
+  A command is not one. `ComponentContext.inject` calls
+  `autowireBean(instance)` and returns that same instance; no proxy is
+  ever created, so nothing can intercept `execute()`. CloudStack's own
+  commands annotate the *manager* method instead, which the CKS stack
+  trace shows plainly: `ActionEventInterceptor.invoke` sits beneath
+  `$Proxy608.startKubernetesCluster`, called from
+  `CreateKubernetesClusterCmd.execute` — from outside the proxy.
+- Even on a proxied method, `eventType = ""` records nothing.
+  `interceptComplete` returns early on an empty type, and the fallback
+  it would otherwise use, `ctx.getEventType()`, is never populated:
+  nothing in the API path calls `CallContext.setEventType`. The comment
+  written into the patch claimed otherwise, and a grep over the whole
+  tree disproved it.
+
+So the fix is a method on `AiServicesManagerImpl` that both base classes
+route the engine call through, carrying `@ActionEvent`, with the command
+setting `CallContext`'s event type and description first. Sync write
+commands additionally declare no event type at all — `createAiGuardrailProfile`
+succeeded live and produced no event in either direction — so they need
+one before they can record anything. The dead patch was reverted; nothing
+is committed for this.
+
+Two things did work on the way through. The engine's explanation reached
+the caller — `createAiGuardrailProfile` with a bad preset returned *"the
+AI Services engine returned 404 for /v1/profiles/guardrail: no such
+guardrail preset: standard"*, which is `EngineResponse.explain()` doing
+its job — and the same command with `education-safe` created a profile
+through the whole chain.
+
+### CKS: VMs really do boot here
+
+Asked whether a Kubernetes cluster can be deployed in this harness, the
+answer turns out to be *almost*, and the almost is worth more than the
+answer.
+
+`createKubernetesCluster` now deploys a control node and a worker, both
+`Running`, with addresses on a guest network CloudStack created and a
+virtual router it started. Three obstacles came first, none of them ours:
+
+1. `addKubernetesSupportedVersion` marks `url` optional on the
+   `@Parameter` and then rejects an empty one in
+   `KubernetesVersionManagerImpl`. The ISO is never actually fetched —
+   the simulator answers `isostate: Ready` immediately.
+2. `createKubernetesCluster` refused with a bare *"Unable to complete
+   this operation. Contact your cloud admin."* The log names the cause:
+   `endpoint.url` was still `http://localhost:8080/client/api`, which a
+   node could never call back on.
+3. The control VM failed with
+   `NoSuchFileException: /usr/share/cloudstack-management/cks/conf/k8s-control-node.yml`.
+   CKS reads its cloud-init templates from the installed-package path,
+   and this image runs from source; copying
+   `plugins/integrations/kubernetes-service/target/classes/conf` there
+   fixes it.
+
+The cluster then reaches `Starting` and stays there. That is the real
+ceiling and it is not removable: the hypervisor is simulated, so nothing
+executes inside those VMs, `kubeadm` never runs and the Kubernetes API
+never answers.
+
+The finding that matters is the one underneath. CLAUDE.md has recorded
+for several milestones that the reconciler's write half is unexercised
+"because `apply` builds a deployer that needs a Kubernetes cluster and
+there is none". The missing cluster is still missing — but
+`deployVirtualMachine` is not the thing blocking it. It works here, end
+to end, including network creation and address assignment. The largest
+untested area in the project is reachable from this harness.

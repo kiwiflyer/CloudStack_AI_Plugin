@@ -149,9 +149,28 @@ the engine client — to be refused with *"mTLS is required to call the AI Servi
 engine; set ai.services.engine.tls.client.cert"*. **What has not:** the write half
 of the reconciler, because `apply` builds a deployer that needs a Kubernetes
 cluster and there is none — so `deployVirtualMachine` and everything after it is
-unexercised; and no AI command has yet reached a running engine, because nothing
-has pointed the plugin's TLS settings at one. The simulator's hosts are simulated:
-the API, the signing and the schema are real, the GPUs are not.
+unexercised. The simulator's hosts are simulated: the API, the signing and the
+schema are real, the GPUs are not.
+
+**But the simulator does boot VMs, so that last gap is reachable.** Driving CKS
+end to end proved it: `createKubernetesCluster` deployed a control node and a
+worker, both reported `Running` with addresses on a guest network CloudStack
+created for them. Three things had to be fixed first, none of them ours, and the
+order they surfaced in is the useful part. `addKubernetesSupportedVersion` marks
+`url` optional on the `@Parameter` and then rejects an empty one in
+`KubernetesVersionManagerImpl`, but the ISO it names is never fetched here — the
+simulator reports `isostate: Ready` at once. `createKubernetesCluster` then
+refused with a bare *"Unable to complete this operation"*, which the log explains
+as `endpoint.url` still being `http://localhost:8080/client/api`; a node could
+never call back on that, so CKS blocks the create. And the control VM failed on
+`NoSuchFileException: /usr/share/cloudstack-management/cks/conf/k8s-control-node.yml`,
+because CKS reads its cloud-init templates from the **installed-package** path
+while this image runs from source — copying `plugins/integrations/kubernetes-service/target/classes/conf`
+there fixes it. After all three the cluster reaches `Starting` and stays there,
+which is the real ceiling: the hypervisor is simulated, so nothing runs inside
+those VMs, `kubeadm` never executes and the Kubernetes API never answers. **So
+CKS is not a way to get a cluster here — but `deployVirtualMachine` working is
+the gate on the reconciler's write half**, and it is open.
 
 **A plugin that fails to wire is not an optional plugin — it is a dead management
 server.** The Spring context declared the manager and never `AiDeploymentDaoImpl`,
@@ -605,6 +624,29 @@ because a proxy may have answered. **Still open:** `getEngineClient()` caches th
 client in a field, so every `ai.services.engine.*` key is declared dynamic
 (`true`) and none of them takes effect without a management-server restart; and
 `isEnabledInZone` has no callers, so `ai.services.enabled` gates nothing.
+
+**Every AI event stops at `Scheduled`, and `@ActionEvent` on a command cannot fix
+it.** A live `listEvents` shows six AI rows and all six read `Scheduled` — an
+operator sees work being scheduled and never whether it finished. The obvious
+patch is to annotate `AiServicesAsyncCmd.execute()`, and it was written, built,
+deployed and measured: still six, still all `Scheduled`. Two reasons, both
+checked against 4.23.0.0's own source rather than guessed. The interceptor is a
+Spring AOP advisor — `execution(* *(..)) && @annotation(ActionEvent)` in
+`spring-core-system-context-inheritable.xml` — so it only wraps *beans*, and a
+command is not one: `ApiDispatcher` builds it with `ComponentContext.inject`,
+which calls `autowireBean` and returns **the same instance**, never a proxy. That
+is why CloudStack's own commands carry no such annotation and the *manager*
+method does — visible in a CKS stack trace, where `ActionEventInterceptor.invoke`
+sits under `$Proxy608.startKubernetesCluster` and above nothing, with
+`CreateKubernetesClusterCmd.execute` calling in from outside the proxy. And even
+on a proxied method `eventType = ""` records nothing: `interceptComplete` returns
+early on an empty type, and the fallback it would use — `ctx.getEventType()` — is
+never set, because **nothing in the API path calls `CallContext.setEventType`**.
+So the fix is a method on `AiServicesManagerImpl` that both base classes route
+the engine call through, with the command setting `CallContext`'s event type and
+description first. Sync write commands need an event type of their own before
+they can record anything at all; today they declare none, so `createAiGuardrailProfile`
+produces no event in either direction. Nothing is committed for this.
 
 **Default role access is `@APICommand(authorized = ...)`, not a schema seed.**
 `DynamicRoleBasedAPIAccessChecker.start()` walks every `PluggableService`'s
