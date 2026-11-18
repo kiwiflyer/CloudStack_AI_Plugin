@@ -6008,3 +6008,44 @@ The filter is in the plugin, not the engine: it fixes eleven commands
 in one place and needs no engine change. The cost is fetching every
 row to return one, which these list sizes do not notice; pushing it
 into the engine is the follow-up when they do.
+
+### The Playwright suite, and what it was hiding
+
+Running it against the rebuilt server: the role specs pass 22 of 22,
+and the v2 group went from 9 of 13 to 13 of 15 once the field-dropping
+fixes landed. Four specs still failed, three of them for the same
+reason — and the reason recorded for them was wrong.
+
+They clicked `getByRole('row').nth(1)`. Clicking a row does nothing:
+CloudStack puts the link on the first column. One looked for a button
+by its words, and an action button is icon-only with the words in a
+hover tooltip. Both facts were already written down in CLAUDE.md, and
+`tests/e2e/table.js` exports `rowLink` and `action` for exactly them.
+The specs simply did not use them. Three now pass.
+
+The fourth is the product, not the test. `createAiApiKey` returns the
+secret — measured live, `apikey` is a 66-character `aisvc-…` string —
+and CloudStack's dialog closes without showing it. `action.response`
+and `successMethod`, the two hooks that would, are inside `$pollJob`
+and fire for an async command only. Keys are stored as salted hashes,
+so a secret nobody saw is gone: **a key created in the UI cannot be
+used**. It is `test.fixme` with the reason on it, and recorded in the
+UI guide as ·not built. CloudMonkey and Terraform return it correctly.
+
+### And every dialog was showing raw keys
+
+Opening Create API key showed `label.models`, `label.expires` and
+`label.ratelimitrpm` beside a correct "Name". A dialog field's label is
+`$t('label.' + the command's parameter name)` and `AutogenView.vue`
+offers no alias — so unlike a column, which takes a `customTitle`, an
+argument CloudStack has no word for renders as its own key. 25 of the
+section's 39 arguments had none.
+
+This is the one place the `label.ai.*` rule cannot hold, so those 25
+keys are bare. `cloudstack-label-fields.json` now also records the
+argument names CloudStack owns, and `i18n.spec.js` checks that every
+argument resolves and that none of ours shadows one of theirs — it had
+only ever checked the keys the section names as strings, and an
+argument's key is named nowhere.
+
+160 Vitest, 39 Playwright (8 skipped), 2,130 Python and 481 Java.

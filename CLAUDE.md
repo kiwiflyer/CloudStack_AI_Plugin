@@ -595,6 +595,37 @@ JSON array — so `listAiEndpoints` delivers four snippets with each endpoint an
 the tab reads them off `resource`. Before that every `Field` was a scalar, and a
 response that cannot hold a list silently drops one.
 
+**A key created in the UI cannot be used, because its secret is never
+shown.** `createAiApiKey` returns it — measured live, `apikey` is a
+66-character `aisvc-…` string — and CloudStack's dialog closes without
+displaying it, so a salted-hash-only key is gone the moment it is made. The
+two hooks that would show it, `action.response` and `successMethod`, are both
+inside `$pollJob` in `AutogenView.vue`, so they fire for an **async** command
+only and this one is sync. **Nothing in a section's config can display a sync
+command's response**, so the fix is to mint the key from the API keys tab the
+way the playground mints a session. Marked `test.fixme` and recorded as
+·not built, not quietly dropped.
+
+**A dialog field's label is `$t('label.' + the command's parameter name)` and
+nothing overrides it.** `AutogenView.vue` renders `:title="$t('label.' +
+field.name)"`, so unlike a column — which takes a `customTitle` — a dialog
+argument has no alias, and 25 of the section's 39 arguments had no key
+anywhere: the Create API key dialog read `label.models`, `label.expires` and
+`label.ratelimitrpm` beside a correct "Name". **This is the one place the
+`label.ai.*` rule cannot hold**, so those keys are bare, and
+`cloudstack-label-fields.json` now also records which argument names
+CloudStack owns so none of ours shadows one. `i18n.spec.js` checks every
+argument resolves, and that we shadow nothing — it had only ever checked keys
+the section names as strings, and an argument's key is named nowhere.
+
+**Four Playwright specs could never have passed**, and the recorded reason —
+"sign-in timeouts and one screen that wants a mirrored model to click" — was
+wrong. They clicked `getByRole('row').nth(1)`, and **clicking a row does
+nothing**; one looked for a button by its words, and **an action button is
+icon-only**. Both facts were already in this file, and `tests/e2e/table.js`
+exports `rowLink` and `action` for exactly them. The whole suite now passes,
+39 with 8 skipped.
+
 **Every detail view in the section showed the first record in its list.**
 CloudStack opens one by calling the *same list command* with `id=<the row's
 key>`; no list command declared an `id`, so the parameter was dropped in

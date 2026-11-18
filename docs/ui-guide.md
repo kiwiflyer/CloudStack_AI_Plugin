@@ -63,8 +63,17 @@ The OpenAI-compatible base URL per model, with an **API keys** tab and a
 ![The endpoints list](images/ui/endpoints.jpg)
 
 Keys are scoped: a key may name the models it may use, the CIDRs it may
-be called from, and when it expires. The secret is shown once, on
-creation, because keys are stored as salted hashes.
+be called from, and when it expires.
+
+**The secret is not shown · not built.** Keys are stored as salted
+hashes, so creation is the only moment the secret exists —
+`createAiApiKey` returns it, and CloudStack's dialog closes without
+displaying it. The hooks that would (`action.response`,
+`successMethod`) live inside `$pollJob` and fire for an async command
+only, and this one is sync, so there is nothing for the section config
+to hang a warning on. Until the key is minted from the tab itself, the
+way the playground mints a session, a key created in the UI cannot be
+used. CloudMonkey and Terraform return it correctly.
 
 ![The code snippets tab](images/ui/endpoint-snippets.jpg)
 

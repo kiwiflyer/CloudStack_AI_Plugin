@@ -71,9 +71,23 @@ while the setting is off.
 
 They check each default role sees what it should and not what it should
 not, and that a tenant reaching an admin screen by URL cannot get to it.
-**The role specs pass, 22 of 22**, against a management server with the
-plugin loaded. The v2 group is 9 of 13; the rest are sign-in timeouts
-and one screen that wants a mirrored model to click.
+**The whole suite passes — 39, with 8 skipped**, against a management
+server with the plugin loaded and `ai.services.v2.enabled` on.
+
+It used to be 22 role specs plus 9 of 13 in the v2 group, with the rest
+put down to "sign-in timeouts and one screen that wants a mirrored model
+to click". That was the wrong diagnosis. Four specs clicked
+`getByRole('row').nth(1)`, and **clicking a row does nothing** —
+CloudStack puts the link on the first column — while one looked for a
+button by its words, and **an action button is icon-only** with the words
+in a hover tooltip. Both facts were already written down, and `table.js`
+exports `rowLink` and `action` for exactly them; the specs simply did not
+use them. They do now.
+
+One is `test.fixme`, and the product is what is wrong there: a key's
+secret is returned by `createAiApiKey` and CloudStack's dialog closes
+without showing it. The hooks that would show it are inside `$pollJob`,
+so they fire for an async command only. See the comment on the spec.
 
 ### Pointing them at a real CloudStack
 

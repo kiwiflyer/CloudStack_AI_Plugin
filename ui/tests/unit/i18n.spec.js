@@ -29,6 +29,23 @@ function screens (node = section, found = []) {
   return found
 }
 
+/**
+ * The keys CloudStack derives from an action's argument names.
+ *
+ * A dialog field is labelled `$t('label.' + field.name)` with no override,
+ * so these are named nowhere in the section as strings — they are implied
+ * by the parameter names the command takes.
+ */
+function argumentKeys () {
+  const keys = new Set()
+  for (const screen of screens()) {
+    for (const action of screen.actions ?? []) {
+      for (const arg of action.args ?? []) keys.add(`label.${arg}`)
+    }
+  }
+  return keys
+}
+
 /** Every translatable key the section refers to. */
 function keysUsed () {
   const keys = new Set([section.title])
@@ -75,8 +92,11 @@ describe('the English strings', () => {
 
   it('carry no key the section does not use', () => {
     // An orphan string is one a translator spends time on for nothing.
+    // A dialog argument's key counts as used: the section never writes it
+    // down, but CloudStack asks for it every time the dialog opens.
     const used = keysUsed()
-    const orphans = Object.keys(en).filter((key) => !used.has(key))
+    const args = argumentKeys()
+    const orphans = Object.keys(en).filter((key) => !used.has(key) && !args.has(key))
     expect(orphans).toEqual([])
   })
 
@@ -87,9 +107,18 @@ describe('the English strings', () => {
   })
 
   it('uses our own namespace', () => {
-    // Everything is label.ai.* or message.ai.*, bar the section title,
-    // so our strings can never collide with CloudStack's own.
+    // Everything is label.ai.* or message.ai.*, bar the section title and
+    // the dialog-argument keys, so our strings can never collide with
+    // CloudStack's own.
+    //
+    // Those arguments are the one forced exception: a dialog field's label
+    // is $t('label.' + the command's parameter name), AutogenView offers no
+    // alias, and the parameter name is fixed by the API. The fixture records
+    // which of those names CloudStack already owns, and the test below
+    // holds us to never shadowing one.
+    const args = argumentKeys()
     for (const key of Object.keys(en)) {
+      if (args.has(key)) continue
       expect(key).toMatch(/^(label|message)\.ai/)
     }
   })
@@ -216,5 +245,50 @@ describe('a tab name is a key without its prefix', () => {
     }
 
     expect(missing).toEqual([])
+  })
+})
+
+describe('every dialog field has a word for it', () => {
+  // CloudStack builds an action's form from the command's parameters and
+  // labels each one `$t('label.' + field.name)` — AutogenView.vue offers no
+  // override, so an argument it has no word for renders as its own key.
+  // Measured on a live server: the Create API key dialog showed `label.models`,
+  // `label.expires` and `label.ratelimitrpm` beside a correct "Name".
+  //
+  // This is the one place the label.ai.* rule cannot hold. A column takes a
+  // `customTitle`; a dialog argument cannot, because its name is the command's
+  // parameter name and nothing reads an alias. So these keys are bare, and the
+  // fixture records which names CloudStack already owns so we never shadow one.
+  const cloudstack = new Set(
+    JSON.parse(
+      readFileSync(resolve(process.cwd(), 'tests/fixtures/cloudstack-label-fields.json'), 'utf8')
+    ).args
+  )
+  const english = en
+
+  const args = new Set()
+  for (const screen of screens()) {
+    for (const action of screen.actions ?? []) {
+      for (const arg of action.args ?? []) args.add(arg)
+    }
+  }
+
+  it('reads the section\'s action arguments', () => {
+    // A regex that matches nothing passes the test below for ever.
+    expect(args.size).toBeGreaterThan(20)
+  })
+
+  it('every action argument resolves to a label', () => {
+    const unresolved = [...args].filter(
+      (arg) => !cloudstack.has(arg) && !(`label.${arg}` in english)
+    )
+
+    expect(unresolved).toEqual([])
+  })
+
+  it('none of our bare keys shadows one CloudStack owns', () => {
+    const shadowed = [...cloudstack].filter((arg) => `label.${arg}` in english)
+
+    expect(shadowed).toEqual([])
   })
 })

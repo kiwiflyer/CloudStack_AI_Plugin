@@ -16,7 +16,7 @@ import { expect, test } from '@playwright/test'
 
 import { credentials, signIn } from './sign-in.js'
 import { sessionFor } from './sessions.js'
-import { header } from './table.js'
+import { action, header, rowLink } from './table.js'
 
 // Milestone 6 is "tenant first", so the journey that has to work is a
 // tenant's: find a model, deploy it, get a key, try it.
@@ -49,10 +49,24 @@ test.describe('a tenant going from catalog to a working endpoint', () => {
     await expect(header(page, /base.*url/i)).toBeVisible()
   })
 
-  test('creating a key shows the secret once, with a warning', async ({ page }) => {
+  // Two CloudStack facts this used to get wrong, both already written
+  // down and both silent: clicking a row does nothing, because the link
+  // is on the first column; and an action button is icon-only, with its
+  // words in a hover tooltip, so its accessible name is the icon.
+  // Not built, and the test is right to ask for it. `createAiApiKey`
+  // returns the secret — measured live, `apikey` is a 66-character
+  // `aisvc-…` string — and CloudStack's dialog closes without showing
+  // it. The hooks that would (`action.response`, `successMethod`) are
+  // both inside $pollJob, so they fire for an async command only, and
+  // this one is sync. Keys are stored as salted hashes, so a secret
+  // nobody saw is gone: the UI cannot currently produce a usable key.
+  //
+  // The fix is to mint it from the API keys tab the way the playground
+  // mints a session, rather than through an autogen action.
+  test.fixme('creating a key shows the secret once, with a warning', async ({ page }) => {
     await page.goto('/client/#/aiendpoint')
-    await page.getByRole('row').nth(1).click()
-    await page.getByRole('button', { name: /create api key/i }).click()
+    await rowLink(page, /./).first().click()
+    await action(page, 'key').first().click()
     await page.getByLabel('Name').fill('playwright')
     await page.getByRole('button', { name: /^ok$/i }).click()
 
@@ -63,7 +77,7 @@ test.describe('a tenant going from catalog to a working endpoint', () => {
 
   test('the key list never shows a secret', async ({ page }) => {
     await page.goto('/client/#/aiendpoint')
-    await page.getByRole('row').nth(1).click()
+    await rowLink(page, /./).first().click()
     await page.getByRole('tab', { name: /api keys/i }).click()
 
     await expect(page.getByText(/aisvc-[a-f0-9]{16}-/)).toHaveCount(0)

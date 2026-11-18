@@ -32,5 +32,22 @@
     "total",
     "value",
     "zone"
+  ],
+  "_comment_args": "`args` holds the action-argument names for which CloudStack 4.23.0.0 defines label.<arg>. A dialog field's label is $t('label.' + field.name) with no override available, so an argument CloudStack has no word for needs a bare key of ours \u2014 the one place the label.ai.* rule cannot hold.",
+  "args": [
+    "account",
+    "certificate",
+    "certificateid",
+    "cidrlist",
+    "currency",
+    "domain",
+    "files",
+    "monthly",
+    "name",
+    "networkid",
+    "params",
+    "privatekey",
+    "scope",
+    "zoneid"
   ]
 }

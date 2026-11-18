@@ -161,16 +161,22 @@ test.describe('evaluations, for a root admin', () => {
     }
   })
 
+  // Clicking the row does nothing — CloudStack puts the link on the
+  // first column, and only when that column is keyed `name`. These two
+  // clicked `getByRole('row').nth(1)` and so could never have opened
+  // anything; they were recorded as "a screen that wants a mirrored
+  // model to click", which was the wrong diagnosis. `rowLink` exists
+  // for exactly this and says so in its own comment.
   test('a model in the registry has an evaluations tab', async ({ page }) => {
     await page.goto('/client/#/airegistry')
-    await page.getByRole('row').nth(1).click()
+    await rowLink(page, /./).first().click()
 
     await expect(page.getByRole('tab', { name: /evaluations/i })).toBeVisible()
   })
 
   test('the tab says what the gate decided, not just a score', async ({ page }) => {
     await page.goto('/client/#/airegistry')
-    await page.getByRole('row').nth(1).click()
+    await rowLink(page, /./).first().click()
     await page.getByRole('tab', { name: /evaluations/i }).click()
 
     await expect(header(page, /gate/i)).toBeVisible()
