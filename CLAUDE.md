@@ -11,7 +11,8 @@ See `PROGRESS.md`.
 Working today: `aisvc/spec`, `capacity`, `cloudstack`, `inventory`, `provision`, `db`,
 `reconciler`, `profiles`, `k8s`, `registry`, `hf`, `gateway`, `api`, `setup`, `playground`,
 `observability`, the `aisvc` CLI
-(`validate`, `plan`, `apply`, `status`, `serve`), `gateway-hooks/` and `templates/packer/`.
+(`validate`, `plan`, `apply`, `batch`, `status`, `serve`), `gateway-hooks/` and
+`templates/packer/`.
 
 v2 is reachable through the engine API, the CLI and now CloudStack: the Java
 plugin generates all twenty `Release.V2` commands, but registers them only when
@@ -80,7 +81,16 @@ holds at the replica floor without it. The engine exports its own counters on `/
 
 `aisvc apply` takes an empty zone to a served model in one run — nodes, then deployments, then
 routes — and a second run plans nothing. **Still missing:** LiteLLM as a real dependency, any
-rollout between blue and green, and a single test against a real API server.
+rollout between blue and green, and a single test against a real Kubernetes API server.
+
+**The engine now serves every command SPEC section 9 declares but one.** Milestone 3's
+serving- and generation-profile commands answered 404 until migration 0009 gave them
+tables, and the three deployment commands until `placement` gave them something to
+decide ([ADR-0008](docs/adr/0008-api-deployments.md)). `approveAiModel` is the last, and
+it waits on an open decision rather than on code.
+`tests/contract/test_engine_api_contract.py` holds the line: it walks every command in
+`aisvc/api/commands.py` against the app's own OpenAPI schema, both directions, and
+`NOT_YET_SERVED` may only shrink.
 
 **The engine API trusts its callers' asserted identity**, which is only safe because mTLS
 proves who they are. Never weaken `ssl_cert_reqs`, and never bind a non-loopback address
@@ -822,10 +832,14 @@ open source), and LiteLLM's commercial `enterprise/` directory.
 
 ## Open decisions — do not silently pick one
 
-The spec leaves these unresolved. If a task depends on one, ask rather than assume:
-- Target CloudStack release, and how much its GPU offerings, resource limits and Extensions
-  framework already cover
-- Whether reseller domain admins mirror from Hugging Face directly or only request it
+The spec leaves these unresolved. If a task depends on one, ask rather than assume.
+(The target CloudStack release used to be here and is not: SPEC section 14 marks it
+decided, 4.23.0.0, by [ADR-0003](docs/adr/0003-cloudstack-release.md).)
+- Whether to upstream a generic `ai-services` plugin, keeping metering, guardrails,
+  evaluation and LoRA as the differentiated part
+- Whether reseller domain admins mirror from Hugging Face directly or only request it.
+  **This is what blocks `approveAiModel`**, the one command with no engine route: with
+  direct mirroring there is nothing to approve, and `mirrorAiModel` already works
 - Public Hugging Face Hub vs a private mirror or Enterprise Hub
 - Whether dedicated-tier tenants may choose serving profiles for their own node pools
 - Initial catalog, license allow-list, price tiers and pricing unit

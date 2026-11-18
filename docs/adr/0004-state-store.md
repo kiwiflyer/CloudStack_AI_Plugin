@@ -89,7 +89,7 @@ until the run finishes — minutes, when a run is provisioning node VMs. That is
 thing to do to our own pool and an uncomfortable thing to do to CloudStack's.
 
 **Alembic would be managing tables inside a schema CloudStack's upgrade tooling
-inspects.** Thirteen tables CloudStack does not know about are generally tolerated,
+inspects.** Seventeen tables CloudStack does not know about are generally tolerated,
 but they make every CloudStack upgrade a slightly riskier conversation, and they make
 a support question about a broken management database harder to answer.
 

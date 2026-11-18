@@ -5,8 +5,10 @@ migration 0010 holds placements, all three commands are served, and the planner
 branches on both values. Verified against a live management server.
 **Date:** 2026-11-18
 **Deciders:** Simon Weller
-**Resolves:** the last of the thirteen commands with no engine route, recorded
-as `NOT_YET_SERVED` in `tests/contract/test_engine_api_contract.py`
+**Resolves:** the three deployment commands, which with the nine profile ones made
+up twelve of the thirteen recorded as `NOT_YET_SERVED` in
+`tests/contract/test_engine_api_contract.py`; `approveAiModel` is the thirteenth
+and waits on an open decision instead
 **Depends on:** [ADR-0004](0004-state-store.md) (the engine's own Postgres),
 and the rule in `CLAUDE.md` that `platform.yaml` is the source of truth for
 desired state

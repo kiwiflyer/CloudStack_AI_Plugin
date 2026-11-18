@@ -60,8 +60,11 @@ what CloudStack 4.23 sets as `cs.jdk.version`. `openjdk@17` is keg-only, so set
 
 ## Generated code
 
-Thirty-five v1 commands and a dozen response types differ only in name, verb, engine path,
-parameters and response shape. Writing them out by hand invites the one transposed path or
+Thirty-six of the thirty-eight v1 commands, the twenty v2 ones, and twenty-one
+response types differ only in name, verb, engine path, parameters and response shape.
+(`deployAiModel` and `deleteAiModelDeployment` are the two written by hand: they own
+the `ai_deployment` row CloudStack uses for ownership and cleanup, which the generator
+does not model.) Writing them out by hand invites the one transposed path or
 wrong role no reviewer would spot, so the leaves are generated:
 
 ```bash

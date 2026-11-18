@@ -91,6 +91,7 @@ models:
     max_model_len: 32768
     node_pool: h100-pool
     replicas: {min: 2, max: 4}
+    placement: spec            # spec | api — who decides where it runs (ADR-0008)
     slo: {ttft_p95_ms: 800, queue_depth_target: 8}
     rollout: {strategy: bluegreen, canary_percent: 10}
     serving_profile: h100-throughput
@@ -374,7 +375,7 @@ A Java API plugin owns auth, RBAC, async jobs, events, usage and limits, and a V
 | `createAiApiKey`, `listAiApiKeys`, `revokeAiApiKey` | `/v1/keys` | No | All | v1 |
 | `listAiServingProfiles`, `createAiServingProfile`, `updateAiServingProfile`, `deleteAiServingProfile` | `/v1/profiles/serving` | Yes (edits roll out) | Root admin | v1 |
 | `listAiGenerationProfiles`, `createAiGenerationProfile`, `updateAiGenerationProfile`, `deleteAiGenerationProfile` | `/v1/profiles/generation` | No | All, scoped | v1 |
-| `assignAiTuningProfile` | POST `/v1/profiles/assignments` | Yes for serving | All, scoped | v1 |
+| `assignAiTuningProfile` | POST `/v1/profiles/assignments` | Yes | All, scoped | v1 |
 | `getAiEffectiveParameters` | GET `/v1/profiles/effective` | No | All | v1 |
 | `listAiUsage` | GET `/v1/usage` | No | All | v1 |
 | `listAiBudgets`, `createAiBudget`, `updateAiBudget`, `deleteAiBudget` | `/v1/budgets` | No | All, scoped | v1 |
@@ -392,6 +393,16 @@ A Java API plugin owns auth, RBAC, async jobs, events, usage and limits, and a V
 | `runAiModelEvaluation`, `listAiEvaluations` | `/v1/models/{id}/evaluations` | Yes | Admin | v2 |
 | `uploadAiCertificate`, `listAiCertificates`, `replaceAiCertificate`, `deleteAiCertificate` | `/v1/certificates` | Yes for upload, replace, delete | All, scoped | v2 |
 | `listAiPrivateEndpoints`, `createAiPrivateEndpoint`, `deleteAiPrivateEndpoint` | `/v1/endpoints/private` | Yes for create, delete | All, where enabled | v2 |
+
+A row naming several commands may be async for some of them, as the batch and
+adapter rows are: those are separate commands and each is one or the other. A
+*single* command cannot be, which is why `assignAiTuningProfile` reads "Yes"
+rather than the "Yes for serving" it once did. A CloudStack command's class
+decides whether it runs as an async job, at compile time, and the engine's
+reply has to match: `AiServicesAsyncCmd` treats anything but a `202` as "the
+engine did not accept this", so a command that answered `200` for some inputs
+would simply fail for those. Assigning a serving profile rolls out, so the
+whole command is async.
 
 **UI section**
 
