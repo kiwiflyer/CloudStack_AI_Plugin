@@ -9,6 +9,7 @@ start depending on why you are here.
 | --- | --- |
 | Install and run it | [installation.md](installation.md) |
 | Know what it does, exactly | [feature-spec-sheet.md](feature-spec-sheet.md) |
+| See what it looks like | [ui-guide.md](ui-guide.md) |
 | Understand why it exists | [why-cloudstack-ai-services.md](why-cloudstack-ai-services.md) |
 | Know how it is put together | [the architecture walkthrough](https://claude.ai/artifact/8CQa9yPN8jDbYYDkKNGpdH) |
 | Change the code | [../CLAUDE.md](../CLAUDE.md), then the ADRs below |
@@ -20,6 +21,10 @@ start depending on why you are here.
   in, every configuration key and environment variable, how to bring up
   a CloudStack to test against with `make stack-up`, and an honest list
   of what has and has not been run.
+- **[ui-guide.md](ui-guide.md)** — the AI Services UI section screen by
+  screen, with screenshots: what each role sees, why screens appear and
+  disappear with the commands rather than with any setting, and the
+  gaps that are still there.
 - **[feature-spec-sheet.md](feature-spec-sheet.md)** — the
   limits-and-defaults sheet. Every threshold, TTL, supported value and
   surface count, each read from the code rather than the specification.
