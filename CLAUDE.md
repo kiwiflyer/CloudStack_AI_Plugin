@@ -626,19 +626,24 @@ the section names as strings, and an argument's key is named nowhere.
 wrong. They clicked `getByRole('row').nth(1)`, and **clicking a row does
 nothing**; one looked for a button by its words, and **an action button is
 icon-only**. Both facts were already in this file, and `tests/e2e/table.js`
-exports `rowLink` and `action` for exactly them. The whole suite passed at
-39 with 8 skipped when that landed; it has **not been re-run since the API
-keys tab started minting its own key**, because every published port on every
-container on this machine stopped carrying data. **The signature is worth
-knowing**: TCP connects and nothing ever flows, on Postgres as much as on
-HTTP, while `docker exec` keeps working because it uses the unix socket. That
-is not the port forwarder — the bridge devices were gone from the Colima VM
-(`colima ssh -- ip -o link show` listing no `docker0` and no `br-…`, only
-dangling veths, while `docker network ls` still named the network). Rebuilding
-them needs `sudo service docker restart` inside the VM, or `colima restart`.
-**Do not `docker restart` a container while its bridge is missing** — it exits
-128 with *"adding interface vethXXXX to bridge br-… failed: Device does not
-exist"* and will not come back until the bridges are rebuilt.
+exports `rowLink` and `action` for exactly them. **The whole suite passes, 40
+with 7 skipped**, measured against the plugin and the UI in the same
+management server; the seven are the `ai.services.v2.enabled` *off* group,
+which cannot run while the setting is on, so nothing is skipped for being
+unbuilt.
+
+**When every published port on this machine stops carrying data**, the
+signature is worth knowing: TCP connects and nothing ever flows, on Postgres
+as much as on HTTP, while `docker exec` keeps working because it uses the unix
+socket. That is not the port forwarder — the bridge devices were gone from the
+Colima VM (`colima ssh -- ls /sys/class/net` showing no `docker0` and no
+`br-…`, only dangling veths, while `docker network ls` still named the
+network). `colima ssh -- sudo service docker restart` rebuilds them without a
+VM boot; every container then needs starting by hand and CloudStack takes
+about ten minutes to come back. **Do not `docker restart` a container while
+its bridge is missing** — it exits 128 with *"adding interface vethXXXX to
+bridge br-… failed: Device does not exist"* and will not come back until the
+bridges are rebuilt.
 
 **Every detail view in the section showed the first record in its list.**
 CloudStack opens one by calling the *same list command* with `id=<the row's

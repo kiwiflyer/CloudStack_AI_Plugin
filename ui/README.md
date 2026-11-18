@@ -71,7 +71,7 @@ while the setting is off.
 
 They check each default role sees what it should and not what it should
 not, and that a tenant reaching an admin screen by URL cannot get to it.
-**The whole suite passes — 39, with 8 skipped**, against a management
+**The whole suite passes — 40, with 7 skipped**, against a management
 server with the plugin loaded and `ai.services.v2.enabled` on.
 
 It used to be 22 role specs plus 9 of 13 in the v2 group, with the rest
@@ -91,13 +91,13 @@ inside `$pollJob`, so they fire for an async command only. The API keys
 tab mints the key itself now, so the spec asserts the real thing again
 and nothing is skipped for being unbuilt.
 
-**The counts above were last measured before that change.** The suite
-has not been re-run since, because every published port on every
-container on this machine stopped carrying data — not just this
-harness, and Postgres as well as HTTP. The management server itself
-stayed healthy throughout, answering 401 to an unsigned call from
-inside its own container. Re-run the suite before trusting the
-numbers.
+Re-measured after that change, against the plugin and the UI in the
+same management server: **40 passed, 7 skipped, nothing failed.** The
+seven are the `ai.services.v2.enabled` *off* group, which cannot run
+while the setting is on — nothing is skipped for being unbuilt, and
+there is no `fixme`. The key-minting spec drives the tab in a real
+browser and asserts both the "shown once" warning and a visible
+`aisvc-…` secret.
 
 ### Pointing them at a real CloudStack
 
