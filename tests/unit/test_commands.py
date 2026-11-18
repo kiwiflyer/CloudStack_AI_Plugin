@@ -1222,10 +1222,7 @@ class TestTheUiUnwrapsWhatCloudStackSends:
     def test_every_view_reads_the_name_cloudstack_serialises(self) -> None:
         module = generator_module()
         serialised = {r.name: r.object_name for r in module.RESPONSES}
-        by_lowered = {
-            f"{command.name.lower()}response": command
-            for command in module.COMMANDS
-        }
+        by_lowered = {f"{command.name.lower()}response": command for command in module.COMMANDS}
 
         wrong = []
         for view in self._views():
@@ -1278,7 +1275,7 @@ class TestGeneratedCommandsImportOnlyWhatTheyUse:
                 line = line.strip()
                 if not line.startswith("import ") or not line.endswith(";"):
                     continue
-                simple = line[len("import "):-1].rsplit(".", 1)[-1]
+                simple = line[len("import ") : -1].rsplit(".", 1)[-1]
                 if not re.search(rf"\b{re.escape(simple)}\b", tail):
                     unused.append(f"{command.name}: imports {simple} and never uses it")
 

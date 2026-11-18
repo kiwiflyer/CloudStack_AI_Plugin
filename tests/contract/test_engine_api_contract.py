@@ -471,9 +471,7 @@ class TestNoFieldTheEngineSendsIsSilentlyDropped:
     ) -> None:
         sends = self._engine_fields(builder)
         carries = self._java_fields(response_name)
-        dropped = {
-            f for f in sends - carries if (response_name, f) not in self.NOT_CARRIED
-        }
+        dropped = {f for f in sends - carries if (response_name, f) not in self.NOT_CARRIED}
 
         assert dropped == set(), (
             f"{response_name} does not declare {sorted(dropped)}, which {builder} "
