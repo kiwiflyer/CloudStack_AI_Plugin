@@ -5816,3 +5816,80 @@ test mounts all eight fetching screens against a refusal and fails on
 any unhandled rejection.
 
 126 Vitest tests pass, up from 115.
+
+## Three screens that could not have worked, found by opening them
+
+The UI section's two known gaps closed, so the next thing was to open
+the screens on the live management server rather than trust the suite.
+Three defects, and all three are the same shape as the ones already
+recorded here: a test that agreed with the code instead of with the
+other side.
+
+### The setup wizard had never rendered a check
+
+`listAiSetupChecks` answers with all eight — `platform spec` passing,
+the model registry failing on S3 credentials, a GPU card CloudStack
+does not know, three skipped for capacity nobody has observed — each
+with the remedy that names the setting to change. The screen showed
+*"No setup checks have been run yet."*
+
+It read `listaisetupchecksresponse.checks`. CloudStack serialises that
+list as `aisetupcheck`. Both names are in the generator and they mean
+different things: `items_key` is the key the Java reads out of the
+**engine's** JSON, and a `Response`'s `object_name` is what CloudStack
+sends on to the browser. The UI is on the far side of the second one
+and had copied the first. The evaluations tab had the identical bug.
+
+Nothing could have caught it. The rendering tests pass the array in as
+a prop, so they never touch the unwrap; the fetching tests assert only
+that the command was called; and the vitest fixture keyed its envelope
+`checks` under a comment reading "the value is the envelope CloudStack
+returns" — it was not one. `tests/unit/test_commands.py` now walks
+every `json?.…response?.…` in the eleven views against the generator's
+own table, and says explicitly when the key used is the engine's rather
+than CloudStack's, because that is the mistake worth naming.
+
+### Every "could not load" message named a status code and no remedy
+
+The capacity screen on a fresh zone read:
+
+> Could not read GPU capacity. Request failed with status code 534
+
+while the engine was saying *"capacity has not been observed yet"* and
+the plugin was carrying that sentence all the way to the browser.
+CloudStack wraps a refusal in a key named after the command, so the
+text sits at `data.listaigpucapacityresponse.errortext`, one level
+deeper than the screen looked — and `??` then fell through to axios's
+own `message`.
+
+The test had agreed with it: it queued `new Error('capacity has not
+been observed yet')`, and a bare Error carries its reason on
+`.message`, which is exactly the field that is wrong on a real server.
+The double now builds the shape read off the wire, and the first run of
+the corrected test reproduced the live string word for word.
+
+`ui/src/utils/errors.js` reads the reason out of whatever single
+wrapper is present — not a key reconstructed from the command name,
+because a refusal before dispatch comes back under `errorresponse`
+instead.
+
+### And eight screens showed no reason at all
+
+Only the heatmap distinguished the three states. The other eight set
+their list to `[]` in the catch and said nothing, so "could not reach
+the engine" and "you have no keys yet" rendered as the same blank
+panel — the conflation the three-state work was supposed to have
+ended, fixed on one screen out of nine. All nine have it now, each with
+its own empty sentence, and the setup wizard's **Continue** is disabled
+when the checks could not be read: `canProceed([])` is true, which is
+right for a zone whose checks all passed and wrong for a wizard that
+never got any.
+
+Verified on the running management server, not in the suite: the
+capacity screen now reads *"Could not read GPU capacity — the AI
+Services engine returned 503 for /v1/capacity: capacity has not been
+observed yet"*, the Hub browser *"…Hugging Face sourcing is not
+configured on this engine"*, and the setup wizard renders all eight
+checks grouped by outcome with Continue disabled.
+
+152 Vitest tests (up from 128) and 2,181 Python tests pass.

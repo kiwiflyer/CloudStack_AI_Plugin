@@ -23,6 +23,16 @@ under the License.
      zone on its first run. -->
 <template>
   <div class="ai-setup">
+    <!-- A wizard that could not reach the engine used to render as a
+         wizard with no checks — and "Continue" was enabled, because
+         canProceed([]) is true. Saying why comes first. -->
+    <p v-if="failed" data-test="load-failed" class="ai-setup__failed">
+      Could not read the setup checks — {{ failed }}
+    </p>
+    <p v-else-if="!rows.length" data-test="empty" class="ai-setup__empty">
+      No setup checks have been run yet.
+    </p>
+
     <section
       v-for="status in order"
       :key="status"
@@ -52,6 +62,7 @@ under the License.
 <script>
 import { getAPI } from '@/api'
 
+import { engineReason } from '@/utils/errors'
 import { canProceed, groupChecks } from '@/utils/setup'
 
 export default {
@@ -60,7 +71,7 @@ export default {
     checks: { type: Array, default: null }
   },
   data () {
-    return { fetched: [], order: ['fail', 'warn', 'skipped', 'pass'] }
+    return { fetched: [], failed: '', order: ['fail', 'warn', 'skipped', 'pass'] }
   },
   computed: {
     rows () {
@@ -70,7 +81,8 @@ export default {
       return groupChecks(this.rows)
     },
     proceedable () {
-      return canProceed(this.rows)
+      // Checks that could not be read are not checks that passed.
+      return !this.failed && canProceed(this.rows)
     }
   },
   mounted () {
@@ -79,11 +91,13 @@ export default {
   methods: {
     load () {
       getAPI('listAiSetupChecks', {}).then((json) => {
-        this.fetched = json?.listaisetupchecksresponse?.checks ?? []
-      }).catch(() => {
-        // Shown, never thrown. An unhandled rejection leaves a blank
-        // screen with the reason only in the browser console, where
-        // no operator is looking.
+        this.fetched = json?.listaisetupchecksresponse?.aisetupcheck ?? []
+        this.failed = ''
+      }).catch((problem) => {
+        // Shown, never thrown, and shown as the engine said it. An
+        // unhandled rejection leaves a blank screen with the reason
+        // only in the browser console, where nobody looks.
+        this.failed = engineReason(problem)
         this.fetched = []
       })
     }

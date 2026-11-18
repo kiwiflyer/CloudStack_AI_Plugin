@@ -22,35 +22,51 @@ under the License.
      is drain and replace — passthrough GPUs cannot migrate
      (ADR-0003) — which is the action this screen carries. -->
 <template>
-  <table class="ai-fleet">
-    <thead>
-      <tr>
-        <th>Host</th>
-        <th>Template</th>
-        <th>Driver</th>
-        <th>State</th>
-        <th>Nodes</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr
-        v-for="host in rows"
-        :key="host.host"
-        data-test="host"
-        :class="{ 'is-drifted': host.drift }"
-      >
-        <td>{{ host.host }}</td>
-        <td>{{ host.template }}</td>
-        <td>{{ host.driver }}</td>
-        <td>{{ host.state }}</td>
-        <td>{{ host.nodes }}</td>
-      </tr>
-    </tbody>
-  </table>
+  <div class="ai-fleet__panel">
+    <!-- Three states, kept apart on purpose. Emptying the list on a
+         refusal renders a screen that could not reach the engine
+         exactly like one with nothing to show, and the reason is the
+         engine's own sentence because that is the one that names a
+         remedy. -->
+    <p v-if="failed" data-test="load-failed" class="ai-fleet__failed">
+      Could not read fleet health — {{ failed }}
+    </p>
+    <p v-else-if="!rows.length" data-test="empty" class="ai-fleet__empty">
+      No GPU hosts have been observed yet.
+    </p>
+
+    <table class="ai-fleet">
+      <thead>
+        <tr>
+          <th>Host</th>
+          <th>Template</th>
+          <th>Driver</th>
+          <th>State</th>
+          <th>Nodes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr
+          v-for="host in rows"
+          :key="host.host"
+          data-test="host"
+          :class="{ 'is-drifted': host.drift }"
+        >
+          <td>{{ host.host }}</td>
+          <td>{{ host.template }}</td>
+          <td>{{ host.driver }}</td>
+          <td>{{ host.state }}</td>
+          <td>{{ host.nodes }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 </template>
 
 <script>
 import { getAPI } from '@/api'
+
+import { engineReason } from '@/utils/errors'
 
 export default {
   name: 'AiFleetHealth',
@@ -58,7 +74,7 @@ export default {
     hosts: { type: Array, default: null }
   },
   data () {
-    return { fetched: [] }
+    return { fetched: [], failed: '' }
   },
   computed: {
     rows () {
@@ -72,10 +88,12 @@ export default {
     load () {
       getAPI('listAiGpuCapacity', {}).then((json) => {
         this.fetched = json?.listaigpucapacityresponse?.aigpucapacity ?? []
-      }).catch(() => {
-        // Shown, never thrown. An unhandled rejection leaves a blank
-        // screen with the reason only in the browser console, where
-        // no operator is looking.
+        this.failed = ''
+      }).catch((problem) => {
+        // Shown, never thrown, and shown as the engine said it.
+        // An unhandled rejection leaves a blank screen with the
+        // reason only in the browser console, where nobody looks.
+        this.failed = engineReason(problem)
         this.fetched = []
       })
     }

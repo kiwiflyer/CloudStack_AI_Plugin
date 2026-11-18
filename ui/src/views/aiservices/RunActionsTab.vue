@@ -20,33 +20,49 @@ under the License.
      applied; the outcome per action is what tells an operator how far
      it got. -->
 <template>
-  <table class="ai-run-actions">
-    <thead>
-      <tr>
-        <th>Action</th>
-        <th>Resource</th>
-        <th>Outcome</th>
-        <th>Detail</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr
-        v-for="action in rows"
-        :key="action.id"
-        data-test="action"
-        :class="`is-${action.outcome}`"
-      >
-        <td>{{ action.kind }}</td>
-        <td>{{ action.resourcetype }} / {{ action.name }}</td>
-        <td>{{ action.outcome }}</td>
-        <td>{{ action.error || action.detail }}</td>
-      </tr>
-    </tbody>
-  </table>
+  <div class="ai-run-actions__panel">
+    <!-- Three states, kept apart on purpose. Emptying the list on a
+         refusal renders a screen that could not reach the engine
+         exactly like one with nothing to show, and the reason is the
+         engine's own sentence because that is the one that names a
+         remedy. -->
+    <p v-if="failed" data-test="load-failed" class="ai-run-actions__failed">
+      Could not read reconciler runs — {{ failed }}
+    </p>
+    <p v-else-if="!rows.length" data-test="empty" class="ai-run-actions__empty">
+      No reconciler run has recorded an action yet.
+    </p>
+
+    <table class="ai-run-actions">
+      <thead>
+        <tr>
+          <th>Action</th>
+          <th>Resource</th>
+          <th>Outcome</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr
+          v-for="action in rows"
+          :key="action.id"
+          data-test="action"
+          :class="`is-${action.outcome}`"
+        >
+          <td>{{ action.kind }}</td>
+          <td>{{ action.resourcetype }} / {{ action.name }}</td>
+          <td>{{ action.outcome }}</td>
+          <td>{{ action.error || action.detail }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 </template>
 
 <script>
 import { getAPI } from '@/api'
+
+import { engineReason } from '@/utils/errors'
 
 export default {
   name: 'AiRunActionsTab',
@@ -59,7 +75,7 @@ export default {
     actions: { type: Array, default: null }
   },
   data () {
-    return { fetched: [] }
+    return { fetched: [], failed: '' }
   },
   computed: {
     rows () {
@@ -73,10 +89,12 @@ export default {
     load () {
       getAPI('listAiReconcilerRuns', {}).then((json) => {
         this.fetched = json?.listaireconcilerrunsresponse?.aireconcilerrun ?? []
-      }).catch(() => {
-        // Shown, never thrown. An unhandled rejection leaves a blank
-        // screen with the reason only in the browser console, where
-        // no operator is looking.
+        this.failed = ''
+      }).catch((problem) => {
+        // Shown, never thrown, and shown as the engine said it.
+        // An unhandled rejection leaves a blank screen with the
+        // reason only in the browser console, where nobody looks.
+        this.failed = engineReason(problem)
         this.fetched = []
       })
     }

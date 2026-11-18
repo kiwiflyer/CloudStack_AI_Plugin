@@ -25,6 +25,15 @@ under the License.
      screen is a credential in someone's slide deck. -->
 <template>
   <div class="ai-playground">
+    <!-- Two different reasons to show no models, and they had looked
+         the same: a refused listAiModels left an empty select beside
+         a disabled "Open session" button, which reads as a provider
+         that sells nothing rather than an engine that cannot be
+         reached. -->
+    <p v-if="failed" data-test="load-failed" class="ai-playground__failed">
+      Could not open the playground — {{ failed }}
+    </p>
+
     <header v-if="active" class="ai-playground__header">
       <span class="ai-playground__model">{{ active.model }}</span>
       <span class="ai-playground__expiry">
@@ -34,6 +43,10 @@ under the License.
 
     <div v-else class="ai-playground__empty">
       <p>Open a session to try this endpoint.</p>
+
+      <p v-if="!failed && !models.length" data-test="empty" class="ai-playground__none">
+        No models are published to this account yet.
+      </p>
 
       <!-- A session is only minted when asked for. Opening one on
            page load would issue a credential nobody requested and
@@ -75,6 +88,8 @@ under the License.
 <script>
 import { getAPI, postAPI } from '@/api'
 
+import { engineReason } from '@/utils/errors'
+
 export default {
   name: 'AiPlayground',
   props: {
@@ -87,7 +102,7 @@ export default {
     transcript: { type: Array, default: () => [] }
   },
   data () {
-    return { models: [], chosen: '', opened: null }
+    return { models: [], chosen: '', opened: null, failed: '' }
   },
   computed: {
     active () {
@@ -106,7 +121,9 @@ export default {
       getAPI('listAiModels', {}).then((json) => {
         this.models = (json?.listaimodelsresponse?.aimodel ?? []).map((m) => m.name)
         if (!this.chosen && this.models.length) this.chosen = this.models[0]
-      }).catch(() => {
+        this.failed = ''
+      }).catch((problem) => {
+        this.failed = engineReason(problem)
         this.models = []
       })
     },
@@ -114,9 +131,11 @@ export default {
       if (!this.chosen) return
       postAPI('createAiPlaygroundSession', { model: this.chosen }).then((json) => {
         this.opened = json?.createaiplaygroundsessionresponse?.aiplaygroundsession ?? null
-      }).catch(() => {
+      }).catch((problem) => {
         // A refused session leaves the screen as it was rather than
-        // half-opened; CloudStack's own notification carries the why.
+        // half-opened, and says why: a playground key is minted on
+        // demand, so a tenant clicking the button is owed an answer.
+        this.failed = engineReason(problem)
         this.opened = null
       })
     }

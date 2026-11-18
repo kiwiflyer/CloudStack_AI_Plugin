@@ -578,6 +578,47 @@ JSON array — so `listAiEndpoints` delivers four snippets with each endpoint an
 the tab reads them off `resource`. Before that every `Field` was a scalar, and a
 response that cannot hold a list silently drops one.
 
+**The setup wizard had never shown a check, and the fix names the rule.**
+A live `listAiSetupChecks` answers with all eight — three failures, each
+carrying the remedy that names the setting to change — and the screen drew
+*"No setup checks have been run yet."* It read
+`listaisetupchecksresponse.checks`; CloudStack serialises the list as
+`aisetupcheck`. **`items_key` is the key the Java reads out of the engine's
+JSON; a `Response`'s `object_name` is what CloudStack sends on**, and the UI
+is on the far side of the second one. The evaluations tab had the same bug
+for the same reason. Neither could be caught by a rendering test, which
+passes the array in as a prop, nor by a fetching test, which only asserts the
+command was called — and the vitest fixture agreed with the bug, keying its
+envelope `checks` under a comment that said it was what CloudStack returns.
+`tests/unit/test_commands.py` now parses every `json?.…response?.…` in the
+views and compares the key against the generator's own table, naming
+`items_key` explicitly when that is what was used. Same family as the
+playground session reading `session_key` for `apikey`: only the far side can
+say what the far side sends.
+
+**A refusal's reason is one level deeper than it looks.** CloudStack wraps
+every answer in a key named after the command, errors included —
+`{"listaigpucapacityresponse": {"errorcode": 534, "errortext": …}}` — so a
+screen reading `response.data.errortext` gets nothing and falls through to
+axios's `message`, which is *"Request failed with status code 534"*. Measured
+live: that is what the capacity screen showed while the engine was saying
+*"capacity has not been observed yet"*, the sentence that names the remedy.
+`ui/src/utils/errors.js` reads it out of whatever single wrapper is there,
+because a refusal that never reached the command comes back under
+`errorresponse` instead, so reconstructing the key from the command name is
+not reliable. **The test double had agreed with the bug**: it queued a bare
+`new Error(reason)`, whose `.message` *is* the reason, so `.message` passed
+its test and failed on a real server. `refusal()` in `ui/tests/doubles/api.js`
+now builds the shape read off the wire.
+
+**And eight of the nine screens never showed a reason at all** — their
+`catch` set the list to `[]`, so a screen that could not reach the engine
+rendered identically to one with nothing to show, which is the conflation the
+three-state work was supposed to have ended. Only the heatmap had the three
+states; the rest had one. All nine have them now, and the setup wizard's
+**Continue** is disabled when the checks could not be read, where before
+`canProceed([])` was true and a refused preflight read as a clean one.
+
 **Nine of the eleven views called the API with no `catch`.** A refusal became an
 unhandled rejection: blank screen, reason in the browser console. That mattered
 most on capacity, where `listAiGpuCapacity` answers 534 until capacity has been

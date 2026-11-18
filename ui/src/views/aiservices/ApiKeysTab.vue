@@ -21,30 +21,46 @@ under the License.
      here because it is how a tenant decides whether an old key is
      still in use before revoking it. -->
 <template>
-  <table class="ai-keys">
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th>Models</th>
-        <th>Last used</th>
-        <th>Expires</th>
-        <th>Status</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr v-for="key in rows" :key="key.id" data-test="key">
-        <td>{{ key.name }}</td>
-        <td>{{ (key.allowedmodels || []).join(', ') || 'any' }}</td>
-        <td>{{ key.lastused || 'never' }}</td>
-        <td>{{ key.expires || 'never' }}</td>
-        <td>{{ key.revoked ? 'revoked' : 'active' }}</td>
-      </tr>
-    </tbody>
-  </table>
+  <div class="ai-keys__panel">
+    <!-- Three states, kept apart on purpose. Emptying the list on a
+         refusal renders a screen that could not reach the engine
+         exactly like one with nothing to show, and the reason is the
+         engine's own sentence because that is the one that names a
+         remedy. -->
+    <p v-if="failed" data-test="load-failed" class="ai-keys__failed">
+      Could not read API keys — {{ failed }}
+    </p>
+    <p v-else-if="!rows.length" data-test="empty" class="ai-keys__empty">
+      No API keys have been created for this account yet.
+    </p>
+
+    <table class="ai-keys">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Models</th>
+          <th>Last used</th>
+          <th>Expires</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="key in rows" :key="key.id" data-test="key">
+          <td>{{ key.name }}</td>
+          <td>{{ (key.allowedmodels || []).join(', ') || 'any' }}</td>
+          <td>{{ key.lastused || 'never' }}</td>
+          <td>{{ key.expires || 'never' }}</td>
+          <td>{{ key.revoked ? 'revoked' : 'active' }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 </template>
 
 <script>
 import { getAPI } from '@/api'
+
+import { engineReason } from '@/utils/errors'
 
 export default {
   name: 'AiApiKeysTab',
@@ -57,7 +73,7 @@ export default {
     keys: { type: Array, default: null }
   },
   data () {
-    return { fetched: [] }
+    return { fetched: [], failed: '' }
   },
   computed: {
     rows () {
@@ -71,10 +87,12 @@ export default {
     load () {
       getAPI('listAiApiKeys', {}).then((json) => {
         this.fetched = json?.listaiapikeysresponse?.aiapikey ?? []
-      }).catch(() => {
-        // Shown, never thrown. An unhandled rejection leaves a blank
-        // screen with the reason only in the browser console, where
-        // no operator is looking.
+        this.failed = ''
+      }).catch((problem) => {
+        // Shown, never thrown, and shown as the engine said it.
+        // An unhandled rejection leaves a blank screen with the
+        // reason only in the browser console, where nobody looks.
+        this.failed = engineReason(problem)
         this.fetched = []
       })
     }

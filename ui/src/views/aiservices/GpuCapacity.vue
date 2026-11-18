@@ -26,7 +26,7 @@ under the License.
          both blank — and listAiGpuCapacity answers 534 until capacity
          has been observed, so a fresh install read as a broken one. -->
     <p v-if="failed" data-test="load-failed" class="ai-capacity__failed">
-      Could not read GPU capacity. {{ failed }}
+      Could not read GPU capacity — {{ failed }}
     </p>
     <p v-else-if="!rows.length" data-test="empty" class="ai-capacity__empty">
       No GPU capacity has been observed in any zone yet.
@@ -58,6 +58,7 @@ under the License.
 import { getAPI } from '@/api'
 
 import { heatmapRows } from '@/utils/capacity'
+import { engineReason } from '@/utils/errors'
 
 export default {
   name: 'AiGpuCapacity',
@@ -86,8 +87,10 @@ export default {
       }).catch((problem) => {
         // The reason, not just the fact: "capacity has not been
         // observed yet" names the remedy, and the engine sends it as
-        // problem JSON precisely so a caller can repeat it.
-        this.failed = problem?.response?.data?.errortext ?? problem?.message ?? ''
+        // problem JSON precisely so a caller can repeat it. Reading it
+        // takes a helper because CloudStack wraps it a level deeper
+        // than it looks.
+        this.failed = engineReason(problem)
         this.fetched = []
       })
     }

@@ -1178,3 +1178,78 @@ class TestEveryListScreenCanReachItsDetailView:
 
         missing = sorted(set(self.SCREEN_RESPONSES.values()) - existing)
         assert missing == [], f"no such response classes: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# The UI reads what CloudStack serialises, which is not what the Java reads
+# from the engine. Those are two different names on the same command and the
+# generator holds both: `items_key` is the key in the engine's own JSON, and
+# the Response's `object_name` is what CloudStack puts the list under.
+#
+# The setup wizard read `checks` — the engine's key — so on a live management
+# server it drew "No setup checks have been run yet." while the API was
+# answering with all eight, two of them failures naming their remedy. The
+# evaluations tab had the same bug for the same reason. Neither could be
+# caught by a rendering test, which passes the array in as a prop, nor by a
+# fetching test, which only asserts the command was called.
+#
+# Same family as the playground session reading `session_key` for `apikey`:
+# only the far side can say what the far side sends.
+
+
+def generator_module() -> Any:
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "java-plugin" / "tools" / "generate_commands.py"
+    spec = importlib.util.spec_from_file_location("aisvc_java_generator_responses", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+UNWRAP = re.compile(r"json\?\.([a-z0-9]+response)\?\.([A-Za-z_][A-Za-z0-9_]*)")
+
+
+class TestTheUiUnwrapsWhatCloudStackSends:
+    def _views(self) -> list[Path]:
+        root = Path(__file__).resolve().parents[2]
+        return sorted((root / "ui" / "src" / "views" / "aiservices").glob("*.vue"))
+
+    def test_every_view_reads_the_name_cloudstack_serialises(self) -> None:
+        module = generator_module()
+        serialised = {r.name: r.object_name for r in module.RESPONSES}
+        by_lowered = {
+            f"{command.name.lower()}response": command
+            for command in module.COMMANDS
+        }
+
+        wrong = []
+        for view in self._views():
+            for envelope, key in UNWRAP.findall(view.read_text()):
+                command = by_lowered.get(envelope)
+                if command is None:
+                    continue  # a hand-written command; checked by its own test
+                expected = serialised.get(command.response)
+                if expected is None or key == expected:
+                    continue
+                wrong.append(
+                    f"{view.name} reads {envelope}.{key}, but {command.name} "
+                    f"serialises its payload as '{expected}'"
+                    + (
+                        f" ('{key}' is the key the Java reads from the engine,"
+                        " not the one CloudStack sends on)"
+                        if key == command.items_key
+                        else ""
+                    )
+                )
+
+        assert not wrong, "\n".join(wrong)
+
+    def test_the_views_are_actually_being_read(self) -> None:
+        # A regex that matches nothing passes the test above for ever.
+        found = sum(len(UNWRAP.findall(v.read_text())) for v in self._views())
+        assert found >= 10, f"only {found} response unwraps found in the UI views"

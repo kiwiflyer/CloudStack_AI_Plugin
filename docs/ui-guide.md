@@ -66,6 +66,8 @@ Keys are scoped: a key may name the models it may use, the CIDRs it may
 be called from, and when it expires. The secret is shown once, on
 creation, because keys are stored as salted hashes.
 
+![The code snippets tab](images/ui/endpoint-snippets.jpg)
+
 The snippets tab carries copy-ready calls — curl, plain Python, and the
 OpenAI clients for Python and JavaScript — rendered by the engine and
 delivered with the endpoint. They are rendered there rather than in the
@@ -127,6 +129,17 @@ above them.
 A preflight wizard: what CloudStack must have before anything can be
 deployed, each check passing, failing or skipped with the remedy named.
 
+![The setup wizard](images/ui/setup-wizard.jpg)
+
+Grouped by outcome, failures first, because a wizard is read top down
+and what blocks you should not be below what did not. **Continue is
+disabled while anything failed** — and also while the checks could not
+be read at all, which is not the same as nothing having failed.
+
+Every remedy is the engine's own sentence, naming the setting or the
+command that fixes it: `gpu_card` has to match a card CloudStack knows,
+so the check that finds it does not lists the ones it does.
+
 ### GPU capacity and fleet health
 
 A heatmap of GPU capacity by zone and class, and the health of what is
@@ -168,13 +181,29 @@ table or a Hub search.
 Every screen tells you which of three things happened, because they
 used to look identical — blank:
 
-- **Could not load**, with the reason the engine gave. `listAiGpuCapacity`
-  answers 534 until capacity has been observed, and that sentence names
-  the remedy, so it is shown rather than swallowed.
+- **Could not load**, in the engine's own words.
 - **Nothing to show**, which is a different thing and says so.
 - The data.
 
-None of them leaves an unhandled promise rejection. They used to: nine
-of the eleven views called the API with no `catch`, so a refusal put the
-reason in the browser console, where nobody is looking, and left the
-page blank.
+![Capacity that has not been observed](images/ui/capacity-not-observed.jpg)
+
+That sentence is the point of the whole chain. The engine answers in
+RFC 9457 problem JSON so its caller can explain itself, the plugin
+appends the detail to the status, and CloudStack carries it to the
+browser as `errortext`. Read the wrong field and all of it is wasted:
+axios's own `message` is *"Request failed with status code 534"*, which
+names no remedy at all — and that is exactly what every screen showed,
+because CloudStack wraps a refusal one level deeper than it looks:
+
+```json
+{"listaigpucapacityresponse": {"errorcode": 534, "errortext": "…"}}
+```
+
+`ui/src/utils/errors.js` reads it out of that wrapper. Nine screens use
+it; before it existed one screen tried and got the depth wrong, and the
+other eight emptied their list and said nothing, so "could not reach the
+engine" and "you have no keys yet" were the same blank panel.
+
+None of them leaves an unhandled promise rejection either. They used
+to: nine of the eleven views called the API with no `catch`, so a
+refusal put the reason in the browser console, where nobody is looking.

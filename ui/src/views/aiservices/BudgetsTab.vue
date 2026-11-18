@@ -20,37 +20,53 @@ under the License.
      through the API, because the two disagree often enough that an
      operator needs to know which one is in force. -->
 <template>
-  <table class="ai-budgets">
-    <thead>
-      <tr>
-        <th>Account</th>
-        <th>Monthly</th>
-        <th>Spent</th>
-        <th>Used</th>
-        <th>At the limit</th>
-        <th>Set in</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr
-        v-for="budget in rows"
-        :key="budget.account"
-        data-test="budget"
-        :class="{ 'is-blocked': budget.blocked }"
-      >
-        <td>{{ budget.account }}</td>
-        <td>{{ budget.monthly }} {{ budget.currency }}</td>
-        <td>{{ budget.spent }} {{ budget.currency }}</td>
-        <td>{{ budget.percent_used }}%</td>
-        <td>{{ budget.on_exceed === 'block' ? 'stop serving' : 'alert only' }}</td>
-        <td>{{ budget.source === 'api' ? 'CloudStack' : 'platform.yaml' }}</td>
-      </tr>
-    </tbody>
-  </table>
+  <div class="ai-budgets__panel">
+    <!-- Three states, kept apart on purpose. Emptying the list on a
+         refusal renders a screen that could not reach the engine
+         exactly like one with nothing to show, and the reason is the
+         engine's own sentence because that is the one that names a
+         remedy. -->
+    <p v-if="failed" data-test="load-failed" class="ai-budgets__failed">
+      Could not read budgets — {{ failed }}
+    </p>
+    <p v-else-if="!rows.length" data-test="empty" class="ai-budgets__empty">
+      No budget has been set for this account.
+    </p>
+
+    <table class="ai-budgets">
+      <thead>
+        <tr>
+          <th>Account</th>
+          <th>Monthly</th>
+          <th>Spent</th>
+          <th>Used</th>
+          <th>At the limit</th>
+          <th>Set in</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr
+          v-for="budget in rows"
+          :key="budget.account"
+          data-test="budget"
+          :class="{ 'is-blocked': budget.blocked }"
+        >
+          <td>{{ budget.account }}</td>
+          <td>{{ budget.monthly }} {{ budget.currency }}</td>
+          <td>{{ budget.spent }} {{ budget.currency }}</td>
+          <td>{{ budget.percent_used }}%</td>
+          <td>{{ budget.on_exceed === 'block' ? 'stop serving' : 'alert only' }}</td>
+          <td>{{ budget.source === 'api' ? 'CloudStack' : 'platform.yaml' }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 </template>
 
 <script>
 import { getAPI } from '@/api'
+
+import { engineReason } from '@/utils/errors'
 
 export default {
   name: 'AiBudgetsTab',
@@ -63,7 +79,7 @@ export default {
     budgets: { type: Array, default: null }
   },
   data () {
-    return { fetched: [] }
+    return { fetched: [], failed: '' }
   },
   computed: {
     rows () {
@@ -77,10 +93,12 @@ export default {
     load () {
       getAPI('listAiBudgets', {}).then((json) => {
         this.fetched = json?.listaibudgetsresponse?.aibudget ?? []
-      }).catch(() => {
-        // Shown, never thrown. An unhandled rejection leaves a blank
-        // screen with the reason only in the browser console, where
-        // no operator is looking.
+        this.failed = ''
+      }).catch((problem) => {
+        // Shown, never thrown, and shown as the engine said it.
+        // An unhandled rejection leaves a blank screen with the
+        // reason only in the browser console, where nobody looks.
+        this.failed = engineReason(problem)
         this.fetched = []
       })
     }

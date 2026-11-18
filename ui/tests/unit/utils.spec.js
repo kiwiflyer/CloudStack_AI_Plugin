@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { cellFor, heatmapRows } from '@/utils/capacity'
+import { engineReason } from '@/utils/errors'
 import { describeParameter, sourceLabel } from '@/utils/profiles'
 import { canProceed, groupChecks } from '@/utils/setup'
 
@@ -159,5 +160,56 @@ describe('the setup wizard', () => {
 
   it('may proceed when there is nothing to check', () => {
     expect(canProceed([])).toBe(true)
+  })
+})
+
+describe('the reason a screen could not load', () => {
+  // Measured off the wire against a live management server, not
+  // imagined: this is byte for byte what listAiGpuCapacity answers on
+  // a zone whose capacity has never been observed.
+  const asCloudStackRefuses = {
+    message: 'Request failed with status code 534',
+    response: {
+      status: 534,
+      data: {
+        listaigpucapacityresponse: {
+          uuidList: [],
+          errorcode: 534,
+          cserrorcode: 9999,
+          errortext: 'the AI Services engine returned 503 for /v1/capacity: capacity has not been observed yet'
+        }
+      }
+    }
+  }
+
+  it('is read out of the wrapper CloudStack puts it in', () => {
+    expect(engineReason(asCloudStackRefuses)).toContain('capacity has not been observed yet')
+  })
+
+  it('is never the transport\'s own message when a reason exists', () => {
+    // The whole point. A screen reading `.message` shows a status code
+    // and no remedy, which is what every one of them used to do.
+    expect(engineReason(asCloudStackRefuses)).not.toContain('status code')
+  })
+
+  it('falls back to the transport when there is no reason to read', () => {
+    // A proxy, a dropped connection or a non-CloudStack answer. Saying
+    // something imperfect beats a blank screen.
+    expect(engineReason(new Error('Network Error'))).toBe('Network Error')
+  })
+
+  it('reads a refusal that never reached the command', () => {
+    // Dispatch refuses under "errorresponse", not under a key named
+    // after a command that was never run.
+    const denied = {
+      message: 'Request failed with status code 432',
+      response: { data: { errorresponse: { errorcode: 432, errortext: 'command not available' } } }
+    }
+    expect(engineReason(denied)).toBe('command not available')
+  })
+
+  it('says nothing rather than inventing something', () => {
+    expect(engineReason(undefined)).toBe('')
+    expect(engineReason({ response: { data: 'not json at all' } })).toBe('')
   })
 })

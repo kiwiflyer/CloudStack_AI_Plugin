@@ -43,6 +43,13 @@ under the License.
       </button>
     </form>
 
+    <p v-if="failed" data-test="load-failed" class="ai-hf__failed">
+      Could not search the Hub — {{ failed }}
+    </p>
+    <p v-else-if="searched && !rows.length" data-test="empty" class="ai-hf__none">
+      No models on the Hub matched that search.
+    </p>
+
     <ul class="ai-hf__results">
       <li v-for="model in rows" :key="model.repoid || model.repo" data-test="result">
         <strong>{{ model.repoid || model.repo }}</strong>
@@ -61,6 +68,8 @@ under the License.
 <script>
 import { getAPI } from '@/api'
 
+import { engineReason } from '@/utils/errors'
+
 export default {
   name: 'AiHuggingFaceBrowser',
   props: {
@@ -71,7 +80,7 @@ export default {
     models: { type: Array, default: null }
   },
   data () {
-    return { query: '', results: [] }
+    return { query: '', results: [], failed: '', searched: false }
   },
   computed: {
     rows () {
@@ -83,10 +92,15 @@ export default {
       if (!this.query) return
       getAPI('searchAiHfModels', { query: this.query }).then((json) => {
         this.results = json?.searchaihfmodelsresponse?.aihfmodel ?? []
-      }).catch(() => {
+        this.failed = ''
+        this.searched = true
+      }).catch((problem) => {
         // The Hub is somebody else's service; a failed search is a
-        // normal outcome, not an exception to leave unhandled.
+        // normal outcome, not an exception to leave unhandled — and
+        // "no results" is a different answer from "could not ask".
+        this.failed = engineReason(problem)
         this.results = []
+        this.searched = true
       })
     }
   }

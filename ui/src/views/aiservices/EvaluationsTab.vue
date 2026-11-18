@@ -104,7 +104,7 @@ export default {
     },
     load (model) {
       getAPI('listAiEvaluations', { model }).then((json) => {
-        this.fetched = json?.listaievaluationsresponse?.evaluations ?? []
+        this.fetched = json?.listaievaluationsresponse?.aievaluation ?? []
       })
     }
   }

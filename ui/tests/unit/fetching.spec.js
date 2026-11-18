@@ -25,7 +25,7 @@ import EffectiveParameters from '@/views/aiservices/EffectiveParameters.vue'
 import Playground from '@/views/aiservices/Playground.vue'
 import RunActionsTab from '@/views/aiservices/RunActionsTab.vue'
 import SetupWizard from '@/views/aiservices/SetupWizard.vue'
-import { apiCalls, reset } from '../doubles/api.js'
+import { apiCalls, refusal, reset } from '../doubles/api.js'
 
 // CloudStack renders a section's `component` as the route view and
 // passes it nothing. A screen that only accepts props therefore renders
@@ -173,10 +173,14 @@ describe('route screens fetch their own data', () => {
 
   it('renders what came back', async () => {
     reset({
-      // Keyed by command; the value is the envelope CloudStack returns.
+      // Keyed by command; the value is the envelope CloudStack returns —
+      // and the list sits under the name CloudStack serialises the
+      // response as, 'aisetupcheck'. This fixture used to say 'checks',
+      // which is the key the *Java* reads from the engine, so it agreed
+      // with the screen's bug instead of with the server.
       listAiSetupChecks: {
         listaisetupchecksresponse: {
-          checks: [
+          aisetupcheck: [
             { name: 'model registry', status: 'fail', detail: 'x', remedy: 'Fix it.' }
           ]
         }
@@ -207,6 +211,25 @@ describe('route screens fetch their own data', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="load-failed"]').exists()).toBe(true)
+  })
+
+  it('a screen that could not load repeats the engine\'s own sentence', async () => {
+    // Not "Request failed with status code 534", which tells an
+    // operator nothing they can act on. CloudStack wraps a refusal in
+    // a key named after the command, so the sentence sits at
+    // data.listaigpucapacityresponse.errortext — one level deeper than
+    // the screen used to look, which is why it always fell through to
+    // axios's own message.
+    reset({
+      listAiGpuCapacity: refusal(
+        'listAiGpuCapacity', 'capacity has not been observed yet', 534)
+    })
+    const wrapper = mount(GpuCapacity)
+    await flushPromises()
+
+    const said = wrapper.find('[data-test="load-failed"]').text()
+    expect(said).toContain('capacity has not been observed yet')
+    expect(said).not.toContain('status code')
   })
 
   it('a screen with nothing to show says that instead', async () => {
@@ -258,7 +281,7 @@ describe('the evaluations tab', () => {
     reset({
       listAiEvaluations: {
         listaievaluationsresponse: {
-          evaluations: [
+          aievaluation: [
             { id: 'e1', model: 'm', revision: 'abc123', passed: false, overridden: false }
           ]
         }
@@ -275,7 +298,7 @@ describe('the evaluations tab', () => {
     reset({
       listAiEvaluations: {
         listaievaluationsresponse: {
-          evaluations: [
+          aievaluation: [
             { id: 'e1', model: 'm', revision: 'abc', passed: false, overridden: true }
           ]
         }
@@ -321,5 +344,72 @@ describe('a screen survives the API failing', () => {
       expect(rejections).toHaveLength(0)
       expect(wrapper.exists()).toBe(true)
     })
+  })
+})
+
+describe('every screen says why it could not load', () => {
+  // A screen that empties its list on a refusal renders exactly like a
+  // screen with nothing to show. Only the heatmap told them apart; the
+  // other eight set their list to [] in the catch and said nothing, so
+  // "could not reach the engine" and "you have no keys yet" were the
+  // same blank panel. The reason has to be the engine's own sentence,
+  // which is the thing that names a remedy.
+  const screens = [
+    ['the heatmap', GpuCapacity, 'listAiGpuCapacity'],
+    ['fleet health', FleetHealth, 'listAiGpuCapacity'],
+    ['the setup wizard', SetupWizard, 'listAiSetupChecks'],
+    ['the playground', Playground, 'listAiModels'],
+    ['effective parameters', EffectiveParameters, 'listAiModels'],
+    ['the api keys tab', ApiKeysTab, 'listAiApiKeys'],
+    ['the budgets tab', BudgetsTab, 'listAiBudgets'],
+    ['the activity tab', RunActionsTab, 'listAiReconcilerRuns']
+  ]
+
+  screens.forEach(([what, component, command]) => {
+    it(`${what} repeats the engine's sentence`, async () => {
+      reset({ [command]: refusal(command, 'the engine is not configured', 530) })
+      const wrapper = mount(component)
+      await flushPromises()
+
+      const failed = wrapper.find('[data-test="load-failed"]')
+      expect(failed.exists()).toBe(true)
+      expect(failed.text()).toContain('the engine is not configured')
+      expect(failed.text()).not.toContain('status code')
+    })
+
+    it(`${what} does not claim failure when it simply has nothing`, async () => {
+      reset({ [command]: {} })
+      const wrapper = mount(component)
+      await flushPromises()
+
+      expect(wrapper.find('[data-test="load-failed"]').exists()).toBe(false)
+    })
+  })
+
+  it('the setup wizard does not let you continue past checks it could not read', async () => {
+    // canProceed([]) is true, which is right for a zone whose checks
+    // all passed and wrong for a wizard that never got any: the button
+    // was enabled, so a refused listAiSetupChecks read as a clean
+    // preflight. Checks that could not be read are not checks that
+    // passed.
+    reset({ listAiSetupChecks: refusal('listAiSetupChecks', 'the engine is not configured', 530) })
+    const wrapper = mount(SetupWizard)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="proceed"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('the hugging face browser repeats the hub refusal', async () => {
+    // Its fetch happens on search rather than on mount, so it needs
+    // asking before there is anything to fail.
+    reset({ searchAiHfModels: refusal('searchAiHfModels', 'the hub could not be reached', 530) })
+    const wrapper = mount(HuggingFaceBrowser)
+    await wrapper.find('[data-test="query"]').setValue('llama')
+    await wrapper.find('[data-test="search"]').trigger('click')
+    await flushPromises()
+
+    const failed = wrapper.find('[data-test="load-failed"]')
+    expect(failed.exists()).toBe(true)
+    expect(failed.text()).toContain('the hub could not be reached')
   })
 })

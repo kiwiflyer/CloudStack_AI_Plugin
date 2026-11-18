@@ -26,6 +26,10 @@ under the License.
          a route view with no resource — so the screen asks which. It
          previously took a `parameters` prop nothing supplied and drew
          an empty table for ever. -->
+    <p v-if="failed" data-test="load-failed" class="ai-effective__failed">
+      Could not resolve parameters — {{ failed }}
+    </p>
+
     <form class="ai-effective__picker" @submit.prevent="resolve">
       <select v-model="chosen" data-test="model">
         <option v-for="name in models" :key="name" :value="name">{{ name }}</option>
@@ -66,6 +70,7 @@ under the License.
 import { describeParameter } from '@/utils/profiles'
 
 import { getAPI } from '@/api'
+import { engineReason } from '@/utils/errors'
 
 export default {
   name: 'AiEffectiveParameters',
@@ -75,7 +80,7 @@ export default {
     parameters: { type: Array, default: null }
   },
   data () {
-    return { models: [], chosen: '', resolved: [] }
+    return { models: [], chosen: '', resolved: [], failed: '' }
   },
   computed: {
     described () {
@@ -90,7 +95,9 @@ export default {
       getAPI('listAiModels', {}).then((json) => {
         this.models = (json?.listaimodelsresponse?.aimodel ?? []).map((m) => m.name)
         if (!this.chosen && this.models.length) this.chosen = this.models[0]
-      }).catch(() => {
+        this.failed = ''
+      }).catch((problem) => {
+        this.failed = engineReason(problem)
         this.models = []
       })
     },
@@ -99,7 +106,11 @@ export default {
       getAPI('getAiEffectiveParameters', { model: this.chosen }).then((json) => {
         this.resolved =
           json?.getaieffectiveparametersresponse?.aieffectiveparameter ?? []
-      }).catch(() => {
+        this.failed = ''
+      }).catch((problem) => {
+        // A locked bound a tenant may not read resolves to a refusal,
+        // and the sentence says which level locked it.
+        this.failed = engineReason(problem)
         this.resolved = []
       })
     }

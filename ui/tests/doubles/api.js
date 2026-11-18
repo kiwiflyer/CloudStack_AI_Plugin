@@ -45,3 +45,21 @@ export function getAPI (command, params) {
 export function postAPI (command, params) {
   return answer(command, params)
 }
+
+// An axios error shaped the way CloudStack actually refuses a command.
+// This matters more than it looks: a bare `new Error(reason)` carries
+// the reason on `.message`, so a screen reading `.message` passed its
+// test while showing "Request failed with status code 534" on a real
+// server. CloudStack wraps every answer, refusals included, in a key
+// named after the command, and the engine's sentence is the
+// `errortext` inside it.
+export function refusal (command, errortext, errorcode = 530) {
+  const problem = new Error(`Request failed with status code ${errorcode}`)
+  problem.response = {
+    status: errorcode,
+    data: {
+      [`${command.toLowerCase()}response`]: { errorcode, cserrorcode: 9999, errortext }
+    }
+  }
+  return problem
+}
