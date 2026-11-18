@@ -1253,3 +1253,33 @@ class TestTheUiUnwrapsWhatCloudStackSends:
         # A regex that matches nothing passes the test above for ever.
         found = sum(len(UNWRAP.findall(v.read_text())) for v in self._views())
         assert found >= 10, f"only {found} response unwraps found in the UI views"
+
+
+# ---------------------------------------------------------------------------
+# CloudStack's own build runs checkstyle with cloud-style.xml, and an unused
+# import is an error there, not a warning. The out-of-tree pom does not run
+# it, so the generator emitted `import org.apache.cloudstack.api.Parameter`
+# unconditionally and sixteen parameterless list commands carried an import
+# they never used — invisible here, sixteen build failures in a CloudStack
+# tree. The rule is general rather than about that one import: an import a
+# generated file does not use is a defect whichever it is.
+
+
+class TestGeneratedCommandsImportOnlyWhatTheyUse:
+    def test_no_command_imports_a_type_it_never_names(self) -> None:
+        module = generator_module()
+
+        unused = []
+        for command in module.COMMANDS:
+            source = module.render_command(command)
+            head, sep, rest = source.partition("@APICommand")
+            tail = sep + rest
+            for line in head.splitlines():
+                line = line.strip()
+                if not line.startswith("import ") or not line.endswith(";"):
+                    continue
+                simple = line[len("import "):-1].rsplit(".", 1)[-1]
+                if not re.search(rf"\b{re.escape(simple)}\b", tail):
+                    unused.append(f"{command.name}: imports {simple} and never uses it")
+
+        assert not unused, "\n".join(unused)

@@ -20,7 +20,6 @@ package org.apache.cloudstack.ai.api.command;
 import org.apache.cloudstack.acl.RoleType;
 import org.apache.cloudstack.ai.api.response.AiGpuCapacityResponse;
 import org.apache.cloudstack.api.APICommand;
-import org.apache.cloudstack.api.Parameter;
 
 import com.google.gson.JsonObject;
 

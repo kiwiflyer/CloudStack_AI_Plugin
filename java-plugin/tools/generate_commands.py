@@ -1685,8 +1685,14 @@ def render_command(command: Command) -> str:
     imports = [
         "org.apache.cloudstack.acl.RoleType",
         "org.apache.cloudstack.api.APICommand",
-        "org.apache.cloudstack.api.Parameter",
     ]
+    # Only where there is a @Parameter to annotate. CloudStack's own build
+    # runs checkstyle with cloud-style.xml, where an unused import is an
+    # error — so emitting this unconditionally turned sixteen parameterless
+    # list commands into sixteen build failures in a CloudStack tree, while
+    # the standalone pom here, which runs no checkstyle, stayed green.
+    if command.params:
+        imports.append("org.apache.cloudstack.api.Parameter")
     if command.success_response:
         imports.append("org.apache.cloudstack.api.response.SuccessResponse")
         response_type = "SuccessResponse"
