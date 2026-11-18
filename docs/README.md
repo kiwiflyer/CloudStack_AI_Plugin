@@ -35,7 +35,8 @@ start depending on why you are here.
   denied, with a runner for the Python 3.12 images where `nosetests`
   cannot import.
 - **[adr/](adr/)** — the decisions, and why. Read one before
-  relitigating it.
+  relitigating it. 0001–0005 are accepted; 0006, 0007 and 0008 are
+  proposed, and each says what is built and what is not.
 
 ## Presentations
 

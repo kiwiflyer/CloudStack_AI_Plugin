@@ -223,12 +223,11 @@ class TestErrorContract:
 #: after all, but adding a name means admitting a new hole.
 NOT_YET_SERVED = frozenset(
     {
-        # Deployments. `platform.yaml` is the source of truth for
-        # desired state and the reconciler diffs against it, so these
-        # three mean "change the spec and commit it" — and there is no
-        # spec-writing or Git machinery anywhere in the engine. A
-        # Postgres overlay would be a second source of desired state,
-        # which is the thing the spec exists to avoid.
+        # Deployments. Decided by ADR-0008 and not yet built: a spec
+        # model's zone comes from its node pool and its replicas are a
+        # declared range, so there is nothing here for these three to
+        # decide that the spec has not already. They wait on a
+        # `placement: spec | api` field saying who owns placement.
         "deployAiModel",
         "updateAiModelDeployment",
         "deleteAiModelDeployment",

@@ -229,10 +229,10 @@ class TestAgainstTheEngine:
         resource arriving, that one notices a verb.
 
         Four remain, and neither is waiting on a route to be written.
-        The three deployment commands mean "change `platform.yaml` and
-        commit it", and there is no spec-writing machinery in the
-        engine; a Postgres overlay would be a second source of desired
-        state, which is the thing the spec exists to avoid.
+        The three deployment commands are decided by ADR-0008 and not
+        yet built: a spec model's zone comes from its node pool and its
+        replicas are a declared range, so they have nothing to decide
+        until a `placement` field says who owns placement.
         `approveAiModel` waits on SPEC section 14's open question about
         whether reseller domain admins mirror directly or only request
         it — what approval *means* depends on the answer.

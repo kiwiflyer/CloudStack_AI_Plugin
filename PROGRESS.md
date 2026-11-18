@@ -5468,3 +5468,70 @@ What approval *is* depends on the answer: with direct mirroring there
 is no request to approve, and `mirrorAiModel` already works. There is
 no mirror-request table either, though CLAUDE.md has listed one as
 Postgres state for some time.
+
+## Deciding the deployment commands (ADR-0008)
+
+`deployAiModel`, `updateAiModelDeployment` and `deleteAiModelDeployment`
+were the last three commands with no engine route, and writing the
+decision down meant first noticing that they are not missing endpoints.
+
+The signatures give it away:
+
+```
+deployAiModel(name, zoneid, replicas?)
+```
+
+`name` is "the catalog name of the model to deploy", so the model is
+already in `platform.yaml`. And a model there already settles everything
+this appears to decide. Its zone comes from its `node_pool`, and a
+`NodePool` declares a `zone` — so a `zoneid` that disagrees contradicts
+the spec and one that agrees adds nothing. Its `replicas` is a
+`{min, max}` range, and the live count is deliberately outside
+`config_hash` because scaling is an in-place change. And
+`reconciler/deployer.py` renders a `Deployment` for every model in the
+spec, so there is no catalogued-but-not-deployed state to move a model
+out of: **declaring a model is declaring a deployment.**
+
+So the commands can neither create a deployment from a catalogue entry
+— there is no such transition — nor add a model, since they carry no
+`source`, `license`, `max_model_len` or `node_pool`.
+
+Four options, written up properly in
+[ADR-0008](docs/adr/0008-api-deployments.md):
+
+- **Write `platform.yaml` and commit it**, which is what `CLAUDE.md`
+  describes and the only one that cannot be built from here. `AISVC_SPEC`
+  is a path and may be a bare file nowhere near a repository; two engine
+  replicas would race a working tree; a failed push leaves desired state
+  diverged from what the reconciler just acted on; and a tenant's click
+  fails for reasons about Git that mean nothing to them.
+- **A Postgres overlay with no spec involvement**, whose real defect is
+  not duplication but ambiguity: with the spec still declaring the model
+  and a row also describing it, `deleteAiModelDeployment` has no
+  defensible meaning. The spec says deploy it, the row says do not.
+- **Retire the three commands**, which is honestly defensible —
+  declaring a model already deploys it — but gives up three wired UI
+  actions and a published surface rather than resolving anything.
+- **A `placement: spec | api` field on the model**, chosen.
+
+The chosen option is the overlay with the ambiguity removed, removed the
+way this codebase already removes this kind: ADR-0007 answered "who owns
+a zone's cluster" with a `source` field plus a separate `create`
+permission, so `check_clusters` could tell a typo from none of
+CloudStack's business. `placement` is that field for deployments.
+
+`spec` is the default and changes nothing, so a GitOps install never
+sees a difference and the three commands refuse those models with a
+message naming the field. `api` means the model is catalogued but runs
+nowhere until a row says otherwise. The row holds a model, a zone, a
+desired replica count and a serving profile — and nothing else, so no
+licence, no bound and no supply-chain rule moves out of the file into a
+database nobody reviews.
+
+What it costs is a mode: two models in one file may be governed
+differently and an operator has to read the field to know which. That is
+the price of the capability, and the option that avoids it is retiring
+the commands.
+
+Nothing is built. The ADR carries seven action items, and the one that
+proves the rest is removing the three names from `NOT_YET_SERVED`.

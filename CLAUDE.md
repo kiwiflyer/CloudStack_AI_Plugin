@@ -465,6 +465,16 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
   experiment in the ADR has run: nothing in CKS's documentation mentions GPUs, and a
   CKS operation that stops rather than destroys a passthrough node leaks its GPU.
 
+- **ADR-0008 — deployments made through the API:** **proposed, nothing built.**
+  `deployAiModel` and its two siblings cannot mean what they look like: a spec
+  model's zone comes from its node pool and its replica count is a declared
+  range, so there is nothing for them to decide that the spec has not. A
+  `placement: spec | api` field per model says who owns placement; `api` models
+  run only where a Postgres row says, and that row holds placement alone —
+  never a source, a licence or a bound. Do not build the Postgres half without
+  the spec field: an overlay with no declared owner makes
+  `deleteAiModelDeployment` undefined, because the spec still says deploy it.
+
 - **ADR-0007 — where the cluster comes from:** **proposed, nothing built.** Amends
   0006: a zone declares its cluster's `source` (`cks` or `external`) and whether the
   engine may `create` one, so CKS is the paved road rather than the only road and
@@ -729,13 +739,18 @@ iterated.
 
 **Four commands still point at engine routes that do not exist** — the three
 deployment commands and `approveAiModel` — and neither is waiting on a route.
-`platform.yaml` is the source of truth for desired state and the reconciler
-diffs against it, so a deployment command means changing the spec and committing
-it; there is no spec-writing or Git machinery in the engine, and a Postgres
-overlay would be a second source of desired state, which is the thing the spec
-exists to avoid. What `approveAiModel` should do depends on SPEC section 14's
-open question about whether reseller domain admins mirror directly or only
-request it. `tests/contract/test_engine_api_contract.py` lists them as
+**[ADR-0008](docs/adr/0008-api-deployments.md) decides the deployment three**
+and is proposed, not built. The problem was never a missing endpoint: the
+commands take `(name, zoneid, replicas)`, and a spec model already fixes its
+zone through its `node_pool` and already declares `replicas` as a range the
+autoscaler moves within — so declaring a model *is* declaring a deployment, and
+there is no catalogued-but-not-deployed state for them to move anything out of.
+The answer is a `placement: spec | api` field on the model, the same shape
+ADR-0007 used for cluster ownership: the file keeps saying who decides, the
+database holds placement and nothing else, and a `spec` model is refused with a
+message naming the field. What `approveAiModel` should do depends on SPEC
+section 14's open question about whether reseller domain admins mirror directly
+or only request it. `tests/contract/test_engine_api_contract.py` lists them as
 `NOT_YET_SERVED` and fails if the list grows *or* if one starts working without
 leaving it.
 
