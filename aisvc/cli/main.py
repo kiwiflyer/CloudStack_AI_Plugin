@@ -56,6 +56,7 @@ from aisvc.cloudstack.clusters import (
 )
 from aisvc.db import RunLog, UsageStore, create_session_factory, session_scope
 from aisvc.db.migrate import upgrade_to_head
+from aisvc.db.profiles import PlacementStore
 from aisvc.db.session import database_url
 from aisvc.db.tier2 import (
     AdapterStore,
@@ -323,6 +324,34 @@ def _stored_exposures() -> list[Any]:
             "[bold red]Cannot read private endpoints:[/bold red] "
             f"{exc}\nObserving needs AISVC_DATABASE_URL; without it a plan "
             "would wrongly re-publish private deployments."
+        )
+        raise typer.Exit(code=1) from exc
+
+
+def _stored_placements(spec: PlatformSpec) -> list[Any]:
+    """Where `placement: api` models run (ADR-0008).
+
+    Nothing is read when the catalogue has no such model, so
+    `plan --no-observe` still works with no database at all — which is
+    every spec written before the field existed.
+
+    When there is one, a failure refuses rather than assuming none, for
+    the same reason `_stored_exposures` does: a plan drawn without the
+    rows would show every API-placed model being torn down, which is
+    the opposite of what is true and reads as a routine change.
+    """
+    if not any(model.placement == "api" for model in spec.document.models):
+        return []
+    try:
+        factory = create_session_factory()
+        with session_scope(factory) as session:
+            return list(PlacementStore(session).all())
+    except Exception as exc:
+        err.print(
+            "[bold red]Cannot read deployment placements:[/bold red] "
+            f"{exc}\nThis spec has models with placement: api, whose "
+            "deployments live in the database; without it the plan would "
+            "wrongly tear every one of them down."
         )
         raise typer.Exit(code=1) from exc
 
@@ -637,7 +666,12 @@ def plan(
     loaded = _load(spec, licenses)
 
     state = _observe_or_empty(loaded, observe=observe)
-    computed: Plan = plan_all(loaded, state, registry=_registry(observe=observe))
+    computed: Plan = plan_all(
+        loaded,
+        state,
+        registry=_registry(observe=observe),
+        placements=_stored_placements(loaded),
+    )
     out.print(computed.render())
     out.print("\n[dim]plan is read-only; nothing was changed.[/dim]")
 
@@ -676,7 +710,7 @@ def apply(
     # AISVC_REGISTRY_FROM_CLOUDSTACK on this makes an API call, and the
     # execution below runs inside an event loop that cannot start another.
     registry = _registry(observe=observe)
-    computed = plan_all(loaded, state, registry=registry)
+    computed = plan_all(loaded, state, registry=registry, placements=_stored_placements(loaded))
     out.print(computed.render())
 
     if not computed.has_changes:

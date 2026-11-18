@@ -228,27 +228,22 @@ class TestAgainstTheEngine:
         PATCH or DELETE. Both are kept: this one notices a whole
         resource arriving, that one notices a verb.
 
-        Four remain, and neither is waiting on a route to be written.
-        The three deployment commands are decided by ADR-0008 and not
-        yet built: a spec model's zone comes from its node pool and its
-        replicas are a declared range, so they have nothing to decide
-        until a `placement` field says who owns placement.
-        `approveAiModel` waits on SPEC section 14's open question about
-        whether reseller domain admins mirror directly or only request
-        it — what approval *means* depends on the answer.
+        One remains. `approveAiModel` waits on SPEC section 14's open
+        question about whether reseller domain admins mirror from
+        Hugging Face directly or only request it: what approval
+        *means* depends on the answer, and `mirrorAiModel` already
+        works, so with direct mirroring there is no request to approve.
+
+        The deployment three are served now, by ADR-0008's `placement`
+        field. They were never missing endpoints — a spec model's zone
+        comes from its node pool and its replicas are a declared
+        range, so until the file said who owned placement there was
+        nothing for them to decide.
         """
         paths = self.engine_paths()
         missing = sorted(c.name for c in V1 if c.path not in paths)
 
-        # `deployAiModel` is absent from this list and still unserved:
-        # its path is `/v1/deployments`, which GET answers, so a check
-        # that counts paths cannot see that POST is missing. The
-        # method-aware contract test is what holds that one.
-        assert missing == [
-            "approveAiModel",
-            "deleteAiModelDeployment",
-            "updateAiModelDeployment",
-        ], f"v1 commands with no engine route: {missing}"
+        assert missing == ["approveAiModel"], f"v1 commands with no engine route: {missing}"
 
 
 class TestGeneratedArtifacts:

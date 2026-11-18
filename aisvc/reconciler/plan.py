@@ -291,15 +291,25 @@ def plan_models(
     registry: ModelRegistry,
     namespace: str = DEFAULT_NAMESPACE,
     capacity_actions: Sequence[Action] = (),
+    placements: Sequence[Any] = (),
 ) -> tuple[list[Action], list[str]]:
     """Diff declared models against what the cluster is serving.
 
     A model is only deployed once its weights are in the registry: a
     deployment pointing at an unmirrored revision would start, fail to
     load and crash-loop, which is worse than not starting.
+
+    `placements` carries the rows behind `placement: api` models
+    (ADR-0008). A model the spec places is planned from the spec, as
+    it always was. A model that hands placement to the API is planned
+    only where a row says so — and **not being declared is the point**:
+    that absence is what `deleteAiModelDeployment` leaves behind, and
+    what makes the sweep below tear its Deployment down.
     """
     actions: list[Action] = []
     warnings: list[str] = []
+
+    placed_in = {(record.model, record.zone): record for record in placements}
 
     node_action_for = {
         action.name: action
@@ -329,6 +339,12 @@ def plan_models(
         if pool is None:  # already reported by validation
             continue
 
+        placement = placed_in.get((model.name, pool.zone))
+        if model.placement == "api" and placement is None:
+            # Catalogued, and placed nowhere. Deliberately left out of
+            # `declared`, so anything already serving it is swept.
+            continue
+
         live = state.live_colour(model.name)
         candidate = _other_colour(live)
         blue_green = model.rollout.strategy == "bluegreen"
@@ -342,6 +358,11 @@ def plan_models(
         rolling = deployed_live is not None and deployed_candidate is not None
 
         replicas = _replicas_for(model, state, deployed_live, rolling=rolling)
+        if placement is not None and deployed_live is None:
+            # What the caller asked for, within the bounds the API
+            # already checked against the spec. Once it is running the
+            # autoscaler owns the count, exactly as for a spec model.
+            replicas = int(placement.replicas)
         depends_on = _depends_on(node_action_for, pool.name)
 
         live_hash = _target_hash(spec, model, pool, registry, replicas, live, namespace)
@@ -653,6 +674,7 @@ def plan_all(
     *,
     registry: ModelRegistry,
     namespace: str = DEFAULT_NAMESPACE,
+    placements: Sequence[Any] = (),
 ) -> Plan:
     """The whole plan, in dependency order: capacity, models, routes.
 
@@ -668,6 +690,7 @@ def plan_all(
         registry=registry,
         namespace=namespace,
         capacity_actions=capacity.actions,
+        placements=placements,
     )
     proxies = plan_proxies(spec, state)
     routes = plan_routes(
@@ -819,7 +842,11 @@ def _deployment_action(
         count=1,
         detail=(
             f"{replicas} replica(s) of {image_for(model)} on {pool.name}, "
-            f"weights {registry.uri_for(model.repo_id, model.revision or '')}"
+            f"weights {registry.uri_for(model.repo_id, model.revision or '')}, "
+            # Two sources feed one reconcile since ADR-0008, so a plan
+            # that does not say which leaves an operator unable to
+            # explain why a model appeared.
+            f"placement: {model.placement}"
         ),
         reason=reason,
         depends_on=depends_on,

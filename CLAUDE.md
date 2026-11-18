@@ -465,15 +465,16 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
   experiment in the ADR has run: nothing in CKS's documentation mentions GPUs, and a
   CKS operation that stops rather than destroys a passthrough node leaks its GPU.
 
-- **ADR-0008 — deployments made through the API:** **proposed, nothing built.**
-  `deployAiModel` and its two siblings cannot mean what they look like: a spec
-  model's zone comes from its node pool and its replica count is a declared
-  range, so there is nothing for them to decide that the spec has not. A
-  `placement: spec | api` field per model says who owns placement; `api` models
-  run only where a Postgres row says, and that row holds placement alone —
-  never a source, a licence or a bound. Do not build the Postgres half without
-  the spec field: an overlay with no declared owner makes
-  `deleteAiModelDeployment` undefined, because the spec still says deploy it.
+- **ADR-0008 — deployments made through the API:** **accepted and built.**
+  `deployAiModel` and its two siblings could not mean what they looked like: a
+  spec model's zone comes from its node pool and its replica count is a declared
+  range, so there was nothing for them to decide that the spec had not. A
+  `placement: spec | api` field per model says who owns placement. `spec` is the
+  default and changes nothing; `api` models run only where a row in
+  `aisvc_deployment_placement` says, and that row holds placement alone — never
+  a source, a licence or a bound. **The planner leaving an `api` model out of
+  `declared` is not an oversight**: that absence is what the existing sweep acts
+  on, and it is how `deleteAiModelDeployment` takes effect.
 
 - **ADR-0007 — where the cluster comes from:** **proposed, nothing built.** Amends
   0006: a zone declares its cluster's `source` (`cks` or `external`) and whether the
@@ -737,20 +738,24 @@ a list now, each entry naming itself, with `count` beside it; `by_name()` is the
 keyed form, kept for the metering record, which is looked up rather than
 iterated.
 
-**Four commands still point at engine routes that do not exist** — the three
-deployment commands and `approveAiModel` — and neither is waiting on a route.
-**[ADR-0008](docs/adr/0008-api-deployments.md) decides the deployment three**
-and is proposed, not built. The problem was never a missing endpoint: the
-commands take `(name, zoneid, replicas)`, and a spec model already fixes its
-zone through its `node_pool` and already declares `replicas` as a range the
-autoscaler moves within — so declaring a model *is* declaring a deployment, and
-there is no catalogued-but-not-deployed state for them to move anything out of.
-The answer is a `placement: spec | api` field on the model, the same shape
-ADR-0007 used for cluster ownership: the file keeps saying who decides, the
-database holds placement and nothing else, and a `spec` model is refused with a
-message naming the field. What `approveAiModel` should do depends on SPEC
-section 14's open question about whether reseller domain admins mirror directly
-or only request it. `tests/contract/test_engine_api_contract.py` lists them as
+**One command still points at an engine route that does not exist**:
+`approveAiModel`, and it is not waiting on a route. What approval *does* depends
+on SPEC section 14's open question about whether reseller domain admins mirror
+from Hugging Face directly or only request it — with direct mirroring there is
+no request to approve, and `mirrorAiModel` already works. There is no
+mirror-request table either, though this file has listed one as Postgres state
+for some time.
+
+**`deployAiModel` sent CloudStack's internal numeric zone id**, which is the
+defect the generator's `resolve=` exists to prevent, reintroduced because this
+command is hand-written. A live engine answered 422. It resolves through
+`_entityMgr` and sends the zone's *name* now, which is what `platform.yaml`
+records as `cloudstack_zone`. **Its unit test had pinned the bug** —
+`assertEquals(4L, body.get("zone_id").getAsLong())` — the same shape as the
+`name=my+host` signature test. And `GeneratedSurfaceTest` could not have caught
+it: it renders every command's body with no `_entityMgr`, so a command that
+resolves one dies there with a `NullPointerException` instead. It supplies a
+mock now. `tests/contract/test_engine_api_contract.py` lists them as
 `NOT_YET_SERVED` and fails if the list grows *or* if one starts working without
 leaving it.
 

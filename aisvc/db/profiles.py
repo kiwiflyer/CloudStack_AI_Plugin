@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 from aisvc.db.models import (
+    DeploymentPlacementRecord,
     GenerationProfileRecord,
     ProfileAssignmentRecord,
     ServingProfileRecord,
@@ -45,6 +46,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "AssignmentStore",
     "GenerationProfileStore",
+    "PlacementStore",
     "ServingProfileStore",
 ]
 
@@ -205,3 +207,67 @@ class AssignmentStore:
                 self.session.delete(record)
         self.session.flush()
         return removed
+
+
+class PlacementStore:
+    """Where `placement: api` models run (ADR-0008)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def add(
+        self,
+        *,
+        model: str,
+        zone: str,
+        replicas: int,
+        serving_profile: str = "",
+        account: str = "",
+        domain: str = "",
+    ) -> DeploymentPlacementRecord:
+        record = DeploymentPlacementRecord(
+            id=_new_id(),
+            model=model,
+            zone=zone,
+            replicas=replicas,
+            serving_profile=serving_profile,
+            account=account,
+            domain=domain,
+        )
+        self.session.add(record)
+        self.session.flush()
+        return record
+
+    def get(self, placement_id: str) -> DeploymentPlacementRecord | None:
+        return self.session.get(DeploymentPlacementRecord, placement_id)
+
+    def for_model(self, model: str, zone: str) -> DeploymentPlacementRecord | None:
+        return self.session.scalars(
+            select(DeploymentPlacementRecord)
+            .where(DeploymentPlacementRecord.model == model)
+            .where(DeploymentPlacementRecord.zone == zone)
+        ).first()
+
+    def all(self) -> list[DeploymentPlacementRecord]:
+        return list(
+            self.session.scalars(
+                select(DeploymentPlacementRecord).order_by(DeploymentPlacementRecord.created_at)
+            )
+        )
+
+    def update(
+        self,
+        record: DeploymentPlacementRecord,
+        *,
+        replicas: int | None = None,
+        serving_profile: str | None = None,
+    ) -> None:
+        if replicas is not None:
+            record.replicas = replicas
+        if serving_profile is not None:
+            record.serving_profile = serving_profile
+        self.session.flush()
+
+    def delete(self, record: DeploymentPlacementRecord) -> None:
+        self.session.delete(record)
+        self.session.flush()

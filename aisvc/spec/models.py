@@ -35,6 +35,13 @@ Tier = Literal["shared", "dedicated"]
 #: CloudStack manages it, so it can be asked about and nodes can be
 #: handed to it; "external" means CloudStack knows nothing about it.
 ClusterSource = Literal["cks", "external"]
+#: Who decides where a model runs (ADR-0008). `spec` is this file: the
+#: model runs in its node pool's zone, between its declared bounds, and
+#: the deployment commands refuse it. `api` hands placement to
+#: `deployAiModel`, so the model is catalogued but runs nowhere until a
+#: placement says otherwise. Everything about *what the model is* stays
+#: here either way.
+Placement = Literal["spec", "api"]
 Policy = Literal["default", "clamp", "locked"]
 AssignmentScope = Literal["domain", "account", "deployment", "key"]
 OnExceed = Literal["alert", "block"]
@@ -268,6 +275,9 @@ class Model(Base):
     max_model_len: int = Field(gt=0)
     node_pool: str
     replicas: Replicas
+    #: ADR-0008. Default `spec`, so an install that has never heard of
+    #: this field behaves exactly as before.
+    placement: Placement = "spec"
     slo: Slo = Field(default_factory=Slo)
     rollout: Rollout = Field(default_factory=Rollout)
     serving_profile: str | None = None

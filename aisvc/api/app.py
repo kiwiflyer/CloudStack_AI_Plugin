@@ -59,6 +59,7 @@ from aisvc.db import BudgetRecord, KeyStore, RunLog, UsageStore
 from aisvc.db.profiles import (
     AssignmentStore,
     GenerationProfileStore,
+    PlacementStore,
     ServingProfileStore,
 )
 from aisvc.db.tier2 import (
@@ -204,6 +205,34 @@ class BatchBody(BaseModel):
     #: The JSONL itself. Large files arrive by reference instead.
     input: str = ""
     input_uri: str = ""
+
+
+class DeploymentBody(BaseModel):
+    """A catalogued model being placed in a zone (ADR-0008)."""
+
+    model: str = Field(min_length=1)
+    #: The plugin sends the CloudStack zone's *name*, which
+    #: `platform.yaml` records as `cloudstack_zone`; a direct caller
+    #: may send the spec's own zone name. Either is checked against
+    #: the model's node pool rather than believed. Coerced from a
+    #: number so a caller that sends CloudStack's internal id gets the
+    #: zone refusal rather than a 422 about types.
+    zone_id: str = ""
+
+    @field_validator("zone_id", mode="before")
+    @classmethod
+    def _as_text(cls, value: Any) -> Any:
+        return "" if value is None else str(value)
+
+    replicas: int | None = None
+    serving_profile: str = ""
+
+
+class DeploymentUpdateBody(BaseModel):
+    """A change to an existing placement."""
+
+    replicas: int | None = None
+    serving_profile: str | None = None
 
 
 class ServingProfileBody(BaseModel):
@@ -654,6 +683,120 @@ def _register_routes(app: FastAPI) -> None:
                 }
             )
         return {"count": len(visible), "deployments": visible}
+
+    @app.post(
+        f"{PREFIX}/deployments",
+        tags=["deployments"],
+        summary="Deploy a catalogued model",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def create_deployment(
+        caller: CallerDep,
+        session: SessionDep,
+        services: ServicesDep,
+        jobs: JobsDep,
+        response: Response,
+        body: DeploymentBody,
+    ) -> dict[str, Any]:
+        """Place a `placement: api` model in its zone (ADR-0008).
+
+        This writes placement and nothing else. The spec still owns
+        what the model is — its source, its licence, its bounds — so a
+        count outside those bounds is refused here rather than clamped
+        later, and a zone that is not the model's is refused rather
+        than stored.
+        """
+        model, pool = _placeable(services, body.model)
+        _check_zone(services, pool, body.zone_id)
+        replicas = _placement_replicas(model, body.replicas)
+
+        store = PlacementStore(session)
+        if store.for_model(model.name, pool.zone) is not None:
+            raise ApiError(
+                status.HTTP_409_CONFLICT,
+                f"{model.name} is already placed in {pool.zone}; "
+                f"change it with updateAiModelDeployment",
+                code="already_placed",
+            )
+
+        job = jobs.create("deployAiModel", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            record = store.add(
+                model=model.name,
+                zone=pool.zone,
+                replicas=replicas,
+                serving_profile=body.serving_profile,
+                account=caller.account,
+                domain=caller.domain_path,
+            )
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(job, _placement_row(record))
+        return {"jobid": job.id}
+
+    @app.patch(
+        f"{PREFIX}/deployments/{{placement_id}}",
+        tags=["deployments"],
+        summary="Change a deployment",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def update_deployment(
+        placement_id: str,
+        caller: CallerDep,
+        session: SessionDep,
+        services: ServicesDep,
+        jobs: JobsDep,
+        response: Response,
+        body: DeploymentUpdateBody,
+    ) -> dict[str, Any]:
+        store = PlacementStore(session)
+        record = _own_placement(store, caller, placement_id)
+        model, _ = _placeable(services, record.model)
+        replicas = _placement_replicas(model, body.replicas) if body.replicas is not None else None
+
+        job = jobs.create("updateAiModelDeployment", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            store.update(record, replicas=replicas, serving_profile=body.serving_profile)
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(job, _placement_row(record))
+        return {"jobid": job.id}
+
+    @app.delete(
+        f"{PREFIX}/deployments/{{placement_id}}",
+        tags=["deployments"],
+        summary="Remove a deployment",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def delete_deployment(
+        placement_id: str,
+        caller: CallerDep,
+        session: SessionDep,
+        jobs: JobsDep,
+        response: Response,
+    ) -> dict[str, Any]:
+        """Stop running this model here.
+
+        The row going away is what the reconciler reads: a
+        `placement: api` model with no row for a zone is not declared
+        there, so the next apply tears its Deployment down.
+        """
+        store = PlacementStore(session)
+        record = _own_placement(store, caller, placement_id)
+
+        job = jobs.create("deleteAiModelDeployment", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            store.delete(record)
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(job, {"id": placement_id, "deleted": True})
+        return {"jobid": job.id}
 
     @app.get(f"{PREFIX}/endpoints", tags=["deployments"], summary="List endpoints")
     async def list_endpoints(caller: CallerDep, services: ServicesDep) -> dict[str, Any]:
@@ -2453,6 +2596,118 @@ def _model_summary(model: Any, services: Services) -> dict[str, Any]:
         "price_tier": model.price_tier,
         "max_model_len": model.max_model_len,
         "mirrored": mirrored,
+    }
+
+
+def _placeable(services: Services, name: str) -> tuple[Any, Any]:
+    """The catalogued model and its pool, if the API may place it.
+
+    Three refusals, and the middle one is the point of ADR-0008: a
+    model the file places is not this command's to move, and saying so
+    by naming the field is what tells an operator how to change their
+    mind.
+    """
+    model = next((m for m in services.spec.document.models if m.name == name), None)
+    if model is None:
+        raise ApiError(
+            status.HTTP_404_NOT_FOUND,
+            f"no such model: {name}",
+            code="model_not_found",
+        )
+    if model.placement != "api":
+        raise ApiError(
+            status.HTTP_409_CONFLICT,
+            f"{name} has placement: spec, so platform.yaml decides where it runs "
+            f"and it is already deployed there. Set placement: api on the model "
+            f"to hand that decision to this command.",
+            code="placement_is_spec",
+        )
+    pool = next((p for p in services.spec.document.node_pools if p.name == model.node_pool), None)
+    if pool is None:  # pragma: no cover - validation refuses this spec
+        raise ApiError(
+            status.HTTP_409_CONFLICT,
+            f"{name} names node pool {model.node_pool}, which the spec does not declare",
+            code="pool_not_found",
+        )
+    return model, pool
+
+
+def _check_zone(services: Services, pool: Any, zone_id: str) -> None:
+    """The zone has to be the model's own.
+
+    A node pool already determines it, so a `zoneid` naming another is
+    a caller who believes something untrue — and a row carrying it
+    would disagree with the spec for as long as it existed. An empty
+    one is taken as "the model's zone", since there is only one.
+
+    Two spellings are accepted because two callers use two. The plugin
+    resolves CloudStack's zone id to its *name*, which `platform.yaml`
+    records as `cloudstack_zone`; a direct caller has the spec's own
+    zone name in front of them. Either resolves to the same zone, and
+    anything else is refused.
+    """
+    if not zone_id:
+        return
+
+    named = [
+        zone
+        for zone in services.spec.document.zones
+        if zone_id in (zone.name, zone.cloudstack_zone)
+    ]
+    if named and named[0].name == pool.zone:
+        return
+
+    raise ApiError(
+        status.HTTP_400_BAD_REQUEST,
+        f"this model runs in zone {pool.zone}, because its node pool {pool.name} "
+        f"is there; it cannot be placed in {zone_id}",
+        code="wrong_zone",
+    )
+
+
+def _placement_replicas(model: Any, wanted: int | None) -> int:
+    """A replica count the model's declared bounds allow.
+
+    Refused rather than clamped: a tenant who asks for fifty and is
+    quietly given eight has been told nothing, and will ask again.
+    """
+    bounds = model.replicas
+    if wanted is None:
+        return int(bounds.min)
+    if wanted < bounds.min or wanted > bounds.max:
+        raise ApiError(
+            status.HTTP_400_BAD_REQUEST,
+            f"{model.name} declares replicas between {bounds.min} and {bounds.max}, "
+            f"so {wanted} cannot be served; change the bounds in platform.yaml first",
+            code="replicas_out_of_bounds",
+        )
+    return int(wanted)
+
+
+def _own_placement(store: Any, caller: Any, placement_id: str) -> Any:
+    """A placement this caller may change.
+
+    404 rather than 403 for someone else's, as everywhere: an id they
+    cannot see is one they should not be able to confirm.
+    """
+    record = store.get(placement_id)
+    if record is None or not caller.may_see(account=record.account, domain_path=record.domain):
+        raise ApiError(
+            status.HTTP_404_NOT_FOUND,
+            f"no such deployment: {placement_id}",
+            code="deployment_not_found",
+        )
+    return record
+
+
+def _placement_row(record: Any) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "model": record.model,
+        "zone": record.zone,
+        "replicas": record.replicas,
+        "serving_profile": record.serving_profile,
+        "placement": "api",
     }
 
 

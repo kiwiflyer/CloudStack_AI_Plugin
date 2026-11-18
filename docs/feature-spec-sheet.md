@@ -131,7 +131,7 @@ and the gaps are marked **·not built** in the tables below.
 | Terraform | 12 entries — 5 resources and 1 data source per release |
 | Usage types | 5 — input tokens, output tokens, GPU-hours, adapter premium, batch tokens |
 | CLI commands | `validate`, `plan`, `apply`, `status`, `serve`, `batch` |
-| Database migrations | 9 revisions |
+| Database migrations | 10 revisions |
 | Async convention | `202` plus a job id mirroring CloudStack async job states |
 | Errors | RFC 9457 problem JSON |
 
@@ -181,13 +181,11 @@ needs a Kubernetes cluster and there is none, though `deployVirtualMachine`
 itself now works in the harness), the gateway inside a real LiteLLM process,
 and any GPU that is not simulated.
 
-**Known not to work**, as of this date: four commands point at engine routes
-that do not exist — the three deployment commands and `approveAiModel`.
-Neither is a missing route so much as a missing decision: deployments mean
-changing `platform.yaml` and committing it, and the engine has no
-spec-writing machinery, while what approval *does* depends on SPEC section
+**Known not to work**, as of this date: one command points at an engine
+route that does not exist — `approveAiModel`, and it is a missing decision
+rather than a missing route. What approval *does* depends on SPEC section
 14's open question about whether resellers mirror directly or only request.
-See `tests/contract/test_engine_api_contract.py`, where they are listed as
+See `tests/contract/test_engine_api_contract.py`, where it is listed as
 `NOT_YET_SERVED` and the list may only shrink.
 
 Treat the rest of this sheet as a specification of what is built, not a

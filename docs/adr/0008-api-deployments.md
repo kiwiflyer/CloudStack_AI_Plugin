@@ -1,6 +1,8 @@
 # ADR-0008: How a deployment made through the API reaches desired state
 
-**Status:** Proposed. Nothing is built; the three commands still answer 404.
+**Status:** **Accepted and built, 2026-11-18.** `placement` is on the model,
+migration 0010 holds placements, all three commands are served, and the planner
+branches on both values. Verified against a live management server.
 **Date:** 2026-11-18
 **Deciders:** Simon Weller
 **Resolves:** the last of the thirteen commands with no engine route, recorded
@@ -205,20 +207,51 @@ reviews them.
 
 ## Action items
 
-1. [ ] Add `placement: spec | api` to `Model`, defaulting to `spec`, with a
-       validation rule that an `api` model still declares bounds.
-2. [ ] Migration 0010: `aisvc_deployment_placement` — model, zone, desired
-       replicas, serving profile, account, domain, created_at.
-3. [ ] Serve `POST`, `PATCH` and `DELETE` on `/v1/deployments`, async per
-       section 9, refusing a `placement: spec` model with a message naming the
-       field, and refusing a replica count outside the model's bounds.
-4. [ ] Branch the deployer on `placement`, and cover both values — a model that
-       silently runs nowhere is the failure this risks.
-5. [ ] Make `aisvc plan` say where each deployment came from.
-6. [ ] Remove the three names from `NOT_YET_SERVED`, which is what proves it.
-7. [ ] Decide whether `listAiModelDeployments` should show spec-placed and
-       api-placed deployments in one list, which it does today by observing the
-       cluster and would continue to.
+1. [x] `placement: spec | api` is on `Model`, defaulting to `spec`. The
+       bounds rule needed no new validation: `replicas` is already a required
+       field, so an `api` model cannot omit them.
+2. [x] Migration 0010, `aisvc_deployment_placement`, unique on (model, zone) —
+       a second row would make the replica count depend on which the planner
+       found first.
+3. [x] `POST`, `PATCH` and `DELETE` on `/v1/deployments`, async, each refusing
+       a `placement: spec` model by naming the field and a replica count
+       outside the model's bounds by naming the bounds. Refused rather than
+       clamped: a tenant given 8 after asking for 50 has been told nothing.
+4. [x] The planner branches on `placement`, and both values are covered.
+       An `api` model with no row is deliberately left out of `declared`, so
+       the existing sweep tears its Deployment down — which is what
+       `deleteAiModelDeployment` leaves behind.
+5. [x] `aisvc plan` prints `placement: spec` or `placement: api` on every
+       deployment action. The CLI refuses rather than assuming none when the
+       catalogue has an `api` model and the database cannot be read, as
+       `_stored_exposures` already did.
+6. [x] The three names are out of `NOT_YET_SERVED`. Only `approveAiModel`
+       remains.
+7. [x] One list. `listAiModelDeployments` observes the cluster, so it shows
+       what is running whoever placed it, which is the question an operator is
+       asking. The placement rows are the desired state behind it, and the
+       plan is where the two are compared.
+
+## What building it turned up
+
+**`deployAiModel` sent CloudStack's internal numeric zone id.** `zoneid` is a
+`CommandType.UUID`, which CloudStack hands back as an internal `Long`, and this
+hand-written command passed it straight through — the exact defect the generator
+avoids with `resolve=`, recorded in `CLAUDE.md` and reintroduced here because
+nothing generated this one. A live engine answered 422. The command resolves the
+id through `_entityMgr` now and sends the zone's *name*, which is what
+`platform.yaml` records as `cloudstack_zone`.
+
+Its unit test had **pinned the bug in place**, asserting
+`body.get("zone_id").getAsLong() == 4L` — the same shape as the `name=my+host`
+signature test. It asserts the name now, and a second test covers a zone id
+CloudStack cannot find.
+
+`GeneratedSurfaceTest` could not have caught it either: it builds every command
+and renders its body, but with no `_entityMgr`, so any command that resolves one
+fails there with a `NullPointerException` rather than an answer. It supplies a
+mocked one now, which also covers the v2 commands that resolve whenever
+`ai.services.v2.enabled` is on.
 
 ## What this does not decide
 

@@ -284,6 +284,30 @@ class EvaluationRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class DeploymentPlacementRecord(Base):
+    """Where a `placement: api` model runs (ADR-0008).
+
+    Placement and nothing else: the spec still owns what the model is.
+    The zone is stored though the model's node pool determines it,
+    because the command sends one and it is checked rather than
+    ignored — a `zoneid` naming a different zone is a caller who
+    believes something untrue, and is refused.
+    """
+
+    __tablename__ = "aisvc_deployment_placement"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    model: Mapped[str] = mapped_column(String(255), index=True)
+    zone: Mapped[str] = mapped_column(String(255), index=True)
+    replicas: Mapped[int] = mapped_column(Integer, default=1)
+    serving_profile: Mapped[str] = mapped_column(String(255), default="")
+    account: Mapped[str] = mapped_column(String(255), default="", index=True)
+    domain: Mapped[str] = mapped_column(String(255), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (UniqueConstraint("model", "zone", name="uq_aisvc_placement_model_zone"),)
+
+
 class ServingProfileRecord(Base):
     """Engine arguments for a deployment (SPEC.md section 6).
 

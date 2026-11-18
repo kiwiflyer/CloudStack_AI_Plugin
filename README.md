@@ -24,14 +24,11 @@ and usage records in the same console they already run their cloud from.
 > simulated — though `deployVirtualMachine` itself has now been shown to
 > work there, so that gap is reachable rather than blocked.
 >
-> **Four of the fifty-eight commands point at engine routes that do not
-> exist yet**: the three deployment commands and `approveAiModel`.
-> Neither is waiting on a route to be written — deployments mean
-> "change `platform.yaml` and commit it", and there is no spec-writing
-> machinery, while what `approveAiModel` should *do* is still an open
-> question in SPEC section 14. They are listed in
-> `tests/contract/test_engine_api_contract.py` as `NOT_YET_SERVED`, a
-> list that may only shrink. [docs/installation.md](docs/installation.md)
+> **One of the fifty-eight commands points at an engine route that does
+> not exist**: `approveAiModel`, and it is not waiting on a route —
+> what approval *does* is still an open question in SPEC section 14.
+> It is listed in `tests/contract/test_engine_api_contract.py` as
+> `NOT_YET_SERVED`, a list that may only shrink. [docs/installation.md](docs/installation.md)
 > ends with an honest list of what has and has not run, and
 > [PROGRESS.md](PROGRESS.md) keeps the long version.
 

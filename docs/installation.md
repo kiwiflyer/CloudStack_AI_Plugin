@@ -657,18 +657,20 @@ into the management server and the engine answering it over mTLS:
   though — a CKS cluster's control node and worker both reached
   `Running` — so `deployVirtualMachine` is exercised even where nothing
   runs inside the guest.
-- **Four commands point at engine routes that do not exist.** The three
-  deployment commands (`deployAiModel`, `updateAiModelDeployment`,
-  `deleteAiModelDeployment`) and `approveAiModel`. CloudStack accepts
-  these calls and the engine answers 404. Neither is waiting on a route
-  to be written: `platform.yaml` is the source of truth for desired
-  state, so a deployment command means changing the spec and committing
-  it, and there is no spec-writing or Git machinery in the engine; what
-  `approveAiModel` should do depends on SPEC section 14's open question
-  about whether reseller domain admins mirror directly or only request
-  it. They are listed as `NOT_YET_SERVED` in
-  `tests/contract/test_engine_api_contract.py`, which fails if the list
-  grows or if one of them quietly starts working.
+- **One command points at an engine route that does not exist.**
+  `approveAiModel`. CloudStack accepts the call and the engine answers
+  404. It is not waiting on a route: what approval *does* depends on
+  SPEC section 14's open question about whether reseller domain admins
+  mirror from Hugging Face directly or only request it. It is listed as
+  `NOT_YET_SERVED` in `tests/contract/test_engine_api_contract.py`,
+  which fails if the list grows or if it quietly starts working.
+- **A model is deployed by `platform.yaml` unless it says otherwise.**
+  `placement: spec` is the default, and the deployment commands refuse
+  such a model by naming the field. Set `placement: api` on a model to
+  hand that decision to `deployAiModel`; it is then catalogued and runs
+  nowhere until a deployment places it ([ADR-0008](adr/0008-api-deployments.md)).
+  A replica count outside the model's declared `min`/`max` is refused,
+  not clamped.
 
 ## Things that will bite you
 

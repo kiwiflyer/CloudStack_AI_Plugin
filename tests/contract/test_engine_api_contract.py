@@ -223,14 +223,6 @@ class TestErrorContract:
 #: after all, but adding a name means admitting a new hole.
 NOT_YET_SERVED = frozenset(
     {
-        # Deployments. Decided by ADR-0008 and not yet built: a spec
-        # model's zone comes from its node pool and its replicas are a
-        # declared range, so there is nothing here for these three to
-        # decide that the spec has not already. They wait on a
-        # `placement: spec | api` field saying who owns placement.
-        "deployAiModel",
-        "updateAiModelDeployment",
-        "deleteAiModelDeployment",
         # the mirror-approval step. Blocked on an open decision, not on
         # a missing route: SPEC section 14 still asks whether reseller
         # domain admins mirror from Hugging Face directly or only

@@ -14,6 +14,9 @@
 // under the License.
 package org.apache.cloudstack.ai.api.command;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -32,6 +35,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import com.cloud.dc.DataCenter;
+import com.cloud.exception.InvalidParameterValueException;
+import com.cloud.utils.db.EntityManager;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -64,25 +70,51 @@ class AiCommandsTest {
         assertEquals("POST", command.engineMethod());
     }
 
-    @Test
-    void deployCarriesTheModelAndZoneInItsBody() throws Exception {
+    /** A command whose zone id resolves to a CloudStack zone by that name. */
+    private static DeployAiModelCmd deployIn(long zoneId, String zoneName) throws Exception {
         DeployAiModelCmd command = new DeployAiModelCmd();
+        set(command, "zoneId", zoneId);
+        DataCenter zone = mock(DataCenter.class);
+        when(zone.getName()).thenReturn(zoneName);
+        EntityManager entities = mock(EntityManager.class);
+        when(entities.findById(DataCenter.class, zoneId)).thenReturn(zone);
+        command._entityMgr = entities;
+        return command;
+    }
+
+    @Test
+    void deployCarriesTheModelAndTheZonesNameInItsBody() throws Exception {
+        // The *name*, not the id. `zoneid` is a CommandType.UUID, which
+        // CloudStack hands back as its internal numeric id, and the
+        // engine knows zones by the name platform.yaml records in
+        // `cloudstack_zone`. Sending the raw Long was answered with a
+        // 422 by a live engine, and this test pinned it in place by
+        // asserting the number.
+        DeployAiModelCmd command = deployIn(4L, "East-1");
         set(command, "modelName", "llama-3.3-70b-instruct");
-        set(command, "zoneId", 4L);
 
         JsonObject body = JsonParser.parseString(command.engineBody()).getAsJsonObject();
 
         assertEquals("llama-3.3-70b-instruct", body.get("model").getAsString());
-        assertEquals(4L, body.get("zone_id").getAsLong());
+        assertEquals("East-1", body.get("zone_id").getAsString());
+    }
+
+    @Test
+    void deployRefusesAZoneCloudStackCannotFind() throws Exception {
+        DeployAiModelCmd command = new DeployAiModelCmd();
+        set(command, "modelName", "m");
+        set(command, "zoneId", 9L);
+        command._entityMgr = mock(EntityManager.class);
+
+        assertThrows(InvalidParameterValueException.class, command::engineBody);
     }
 
     @Test
     void anUnsetReplicaCountIsOmittedRatherThanSentAsZero() throws Exception {
         // Zero would scale the deployment to nothing; absent lets the
         // engine use the model's declared minimum.
-        DeployAiModelCmd command = new DeployAiModelCmd();
+        DeployAiModelCmd command = deployIn(1L, "East-1");
         set(command, "modelName", "m");
-        set(command, "zoneId", 1L);
 
         JsonObject body = JsonParser.parseString(command.engineBody()).getAsJsonObject();
 
@@ -91,9 +123,8 @@ class AiCommandsTest {
 
     @Test
     void anExplicitReplicaCountIsSent() throws Exception {
-        DeployAiModelCmd command = new DeployAiModelCmd();
+        DeployAiModelCmd command = deployIn(1L, "East-1");
         set(command, "modelName", "m");
-        set(command, "zoneId", 1L);
         set(command, "replicas", 3);
 
         JsonObject body = JsonParser.parseString(command.engineBody()).getAsJsonObject();

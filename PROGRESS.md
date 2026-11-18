@@ -5535,3 +5535,81 @@ the commands.
 
 Nothing is built. The ADR carries seven action items, and the one that
 proves the rest is removing the three names from `NOT_YET_SERVED`.
+
+## Building ADR-0008: `placement`, and the zone id that was never a zone
+
+### What was built
+
+`Model` gains `placement: spec | api`, defaulting to `spec`, so a spec
+written before the field behaves exactly as it did. Migration 0010 adds
+`aisvc_deployment_placement`, unique on (model, zone) — a second row
+would make the replica count depend on which one the planner found
+first. `POST`, `PATCH` and `DELETE` on `/v1/deployments` are served,
+async as section 9 declares them.
+
+Two refusals carry the design:
+
+- A `placement: spec` model is refused **by naming the field**:
+  *"llama-3.3-70b-instruct has placement: spec, so platform.yaml
+  decides where it runs… Set placement: api on the model to hand that
+  decision to this command."* An error that says what to change is the
+  whole reason the field exists rather than a mode nobody can see.
+- A replica count outside the model's declared bounds is refused, not
+  clamped. A tenant who asks for fifty and is quietly given eight has
+  been told nothing and will ask again.
+
+The planner branch is three lines and one of them is a `continue`. An
+`api` model with no row for its zone is skipped **and deliberately left
+out of `declared`**, which is what the existing orphan sweep acts on —
+so `deleteAiModelDeployment` works by the row going away, with no new
+teardown path to get wrong.
+
+`aisvc plan` prints `placement: spec` or `placement: api` on every
+deployment action, because two sources feed one reconcile now and a
+plan that does not say which leaves an operator unable to explain why a
+model appeared. The CLI reads the rows only when the catalogue has an
+`api` model, so `plan --no-observe` still needs no database; when there
+is one and the database cannot be read it refuses, exactly as
+`_stored_exposures` already did, because a plan drawn without the rows
+would show every API-placed model being torn down.
+
+### The zone id was never a zone
+
+The first live call answered 422 for both models.
+
+`deployAiModel` takes `zoneid` as a `CommandType.UUID`, which CloudStack
+hands back as its **internal numeric id**, and this hand-written command
+passed it straight into the body. That is precisely the defect the
+generator's `resolve=` exists to prevent — recorded in CLAUDE.md since
+a typed network parameter hit it — and it came back here because
+nothing generates this command. The engine knows zones by the name
+`platform.yaml` records in `cloudstack_zone`, so it was being handed a
+number matching nothing.
+
+It resolves through `_entityMgr` now and sends the zone's name. The
+engine accepts either spelling — the CloudStack name or the spec's own
+zone name — because two callers use two, and refuses anything else as
+not this model's zone.
+
+Two tests had to change, and both are worth naming.
+
+`deployCarriesTheModelAndZoneInItsBody` asserted
+`body.get("zone_id").getAsLong() == 4L`. **It pinned the bug in place**,
+the same shape as the `name=my+host` signature test: a test written
+from the code rather than from what the other side expects will agree
+with the code forever. It asserts the name now, and a second test
+covers a zone id CloudStack cannot find.
+
+`GeneratedSurfaceTest` could not have caught it either. It builds every
+command and renders its body — which is exactly the right idea — but
+with no `_entityMgr`, so any command that resolves a typed parameter
+dies there with a `NullPointerException` rather than producing an
+answer. Only v1 commands are listed while `ai.services.v2.enabled` is
+off, so no command had resolved one until this change. It supplies a
+mocked entity manager now, which also covers the v2 commands that
+resolve whenever the setting is on.
+
+### Measured
+
+2,175 Python tests and 467 JUnit pass, and `approveAiModel` is the only
+command left in `NOT_YET_SERVED`.

@@ -364,6 +364,7 @@ class TestTheMigrationsRunForMariaDb:
             "0007",
             "0008",
             "0009",
+            "0010",
         ]
 
     def test_it_creates_the_tables(self) -> None:

@@ -123,8 +123,8 @@ COMMANDS: tuple[Command, ...] = (
     # -- deployments ------------------------------------------------------
     _c("deployAiModel", "POST", "/v1/deployments", ALL, is_async=True),
     _c("listAiModelDeployments", "GET", "/v1/deployments", ALL),
-    _c("updateAiModelDeployment", "PATCH", "/v1/deployments/{id}", ALL, is_async=True),
-    _c("deleteAiModelDeployment", "DELETE", "/v1/deployments/{id}", ALL, is_async=True),
+    _c("updateAiModelDeployment", "PATCH", "/v1/deployments/{placement_id}", ALL, is_async=True),
+    _c("deleteAiModelDeployment", "DELETE", "/v1/deployments/{placement_id}", ALL, is_async=True),
     _c(
         "promoteAiRollout",
         "POST",

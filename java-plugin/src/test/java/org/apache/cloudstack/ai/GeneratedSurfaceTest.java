@@ -21,6 +21,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import org.mockito.ArgumentMatchers;
+import com.cloud.utils.db.EntityManager;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -124,6 +129,17 @@ class GeneratedSurfaceTest {
     /** Fill every declared @Parameter so paths and bodies are exercised. */
     private static Object populate(Class<?> command) throws Exception {
         Object instance = command.getDeclaredConstructor().newInstance();
+        // A command with a typed entity parameter resolves it through
+        // `_entityMgr` before building its body, so without one every
+        // such command fails here with a NullPointerException that
+        // says nothing about the command. Only v1 commands are listed
+        // while `ai.services.v2.enabled` is off, which is why this was
+        // not needed until a v1 command started resolving.
+        EntityManager entities = mock(EntityManager.class);
+        when(entities.findById(ArgumentMatchers.<Class<?>>any(), any()))
+                .thenAnswer(found -> mock(found.getArgument(0, Class.class)));
+        setEntityManager(instance, entities);
+
         for (Field field : command.getDeclaredFields()) {
             if (field.getAnnotation(Parameter.class) == null) {
                 continue;
@@ -141,6 +157,23 @@ class GeneratedSurfaceTest {
             }
         }
         return instance;
+    }
+
+    /** Set `BaseCmd._entityMgr`, wherever it sits in the hierarchy. */
+    private static void setEntityManager(Object instance, EntityManager entities)
+            throws Exception {
+        for (Class<?> current = instance.getClass();
+                current != null;
+                current = current.getSuperclass()) {
+            try {
+                Field field = current.getDeclaredField("_entityMgr");
+                field.setAccessible(true);
+                field.set(instance, entities);
+                return;
+            } catch (NoSuchFieldException keepLooking) {
+                continue;
+            }
+        }
     }
 
     private static String enginePathOf(Object command) throws Exception {

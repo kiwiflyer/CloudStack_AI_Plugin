@@ -23,6 +23,8 @@ import org.apache.cloudstack.api.ApiConstants;
 import org.apache.cloudstack.api.Parameter;
 import org.apache.cloudstack.api.response.ZoneResponse;
 
+import com.cloud.dc.DataCenter;
+import com.cloud.exception.InvalidParameterValueException;
 import com.google.gson.JsonObject;
 
 /** deployAiModel (SPEC.md section 9). Async: the engine provisions and serves. */
@@ -61,7 +63,23 @@ public class DeployAiModelCmd extends AiServicesAsyncCmd {
     protected String engineBody() {
         JsonObject body = new JsonObject();
         body.addProperty("model", modelName);
-        body.addProperty("zone_id", zoneId);
+        // A CommandType.UUID parameter is handed back as CloudStack's
+        // internal numeric id, so sending it raw gives the engine a
+        // number that matches nothing — the same defect the generator
+        // avoids with `resolve=` (CLAUDE.md). The engine knows zones by
+        // the name `platform.yaml` records in `cloudstack_zone`.
+        // Guarded like every generated resolve: the parameter is
+        // required at the API layer, so a null here means a command
+        // built outside dispatch, and the engine reads an absent zone
+        // as "the model's own".
+        if (zoneId != null) {
+            DataCenter resolvedZone = _entityMgr.findById(DataCenter.class, zoneId);
+            if (resolvedZone == null) {
+                throw new InvalidParameterValueException(
+                        "Unable to find a zone with the given id");
+            }
+            body.addProperty("zone_id", resolvedZone.getName());
+        }
         if (replicas != null) {
             body.addProperty("replicas", replicas);
         }
