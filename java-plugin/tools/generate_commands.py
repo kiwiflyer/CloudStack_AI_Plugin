@@ -395,16 +395,22 @@ RESPONSES: tuple[Response, ...] = (
         " model-scoped and expires in fifteen minutes, so a real\n * key never reaches"
         " the browser.",
         (
+            f("id", "id", "String", "the session key's identifier"),
+            # `apikey`, not `session_key`: the engine names a minted key
+            # the same way everywhere, and reading the wrong name here
+            # dropped the key at the one moment it exists — the same
+            # defect `createAiApiKey` had. The CloudStack-facing name
+            # stays `sessionkey`, which is what it is to a caller.
             f(
                 "sessionKey",
-                "session_key",
+                "apikey",
                 "String",
                 "the short-lived, model-scoped key",
                 "sessionkey",
             ),
             f("model", "model", "String", "the model this session may use"),
             f("baseUrl", "base_url", "String", "the endpoint to call", "baseurl"),
-            f("expires", "expires_at", "String", "when the session key expires"),
+            f("expires", "expires", "String", "when the session key expires"),
         ),
     ),
 )
@@ -1567,6 +1573,15 @@ def render_body(command: Command) -> str:
 """
 
 
+#: Commands whose response carries a credential, so CloudStack knows not
+#: to treat the body as ordinary. `createAiPlaygroundSession` belongs here
+#: for the same reason `createAiApiKey` does — it mints a real key, even
+#: though that key is model-scoped and expires in fifteen minutes. It was
+#: absent while the mapping dropped the key, which made the declaration
+#: accidentally true and is no reason to leave it.
+SECRET_IN_RESPONSE = frozenset({"createAiApiKey", "createAiPlaygroundSession"})
+
+
 def event_methods(command: Command) -> str:
     """The two overrides that let CloudStack record this command.
 
@@ -1706,7 +1721,7 @@ def render_command(command: Command) -> str:
         description = "{command.doc}",
         responseObject = {response_type}.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = {str(command.name == "createAiApiKey").lower()},
+        responseHasSensitiveInfo = {str(command.name in SECRET_IN_RESPONSE).lower()},
         authorized = {{{authorized_roles(command.name)}}})
 public class {cls} extends {extends} {{
 

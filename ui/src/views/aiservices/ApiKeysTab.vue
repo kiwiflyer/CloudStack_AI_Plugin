@@ -32,7 +32,7 @@ under the License.
       </tr>
     </thead>
     <tbody>
-      <tr v-for="key in keys" :key="key.id" data-test="key">
+      <tr v-for="key in rows" :key="key.id" data-test="key">
         <td>{{ key.name }}</td>
         <td>{{ (key.allowedmodels || []).join(', ') || 'any' }}</td>
         <td>{{ key.lastused || 'never' }}</td>
@@ -44,8 +44,35 @@ under the License.
 </template>
 
 <script>
+import { getAPI } from '@/api'
+
 export default {
   name: 'AiApiKeysTab',
-  props: { keys: { type: Array, default: () => [] } }
+  props: {
+    // CloudStack hands a tab its parent `resource`, never a named
+    // array, so a tab that only accepts props renders an empty table
+    // however much the account has. null means "fetch for yourself",
+    // the same arrangement the route screens use; the tests and any
+    // parent holding the data still pass it in.
+    keys: { type: Array, default: null }
+  },
+  data () {
+    return { fetched: [] }
+  },
+  computed: {
+    rows () {
+      return this.keys ?? this.fetched
+    }
+  },
+  mounted () {
+    if (this.keys === null) this.load()
+  },
+  methods: {
+    load () {
+      getAPI('listAiApiKeys', {}).then((json) => {
+        this.fetched = json?.listaiapikeysresponse?.aiapikey ?? []
+      })
+    }
+  }
 }
 </script>

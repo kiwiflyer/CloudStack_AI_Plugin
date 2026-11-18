@@ -30,7 +30,7 @@ import com.google.gson.JsonObject;
         description = "Mints a short-lived, model-scoped key for the playground.",
         responseObject = AiPlaygroundSessionResponse.class,
         requestHasSensitiveInfo = false,
-        responseHasSensitiveInfo = false,
+        responseHasSensitiveInfo = true,
         authorized = {RoleType.Admin, RoleType.DomainAdmin, RoleType.User})
 public class CreateAiPlaygroundSessionCmd extends AiServicesSyncCmd {
 

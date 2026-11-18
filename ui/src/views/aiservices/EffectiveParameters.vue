@@ -20,7 +20,22 @@ under the License.
      source is the whole point: a bare number tells a tenant nothing
      about why it is that or whether they may change it. -->
 <template>
-  <table class="ai-effective">
+  <div class="ai-effective__screen">
+    <!-- A resolved value is meaningless without knowing which
+         deployment it was resolved for, and CloudStack renders this as
+         a route view with no resource — so the screen asks which. It
+         previously took a `parameters` prop nothing supplied and drew
+         an empty table for ever. -->
+    <form class="ai-effective__picker" @submit.prevent="resolve">
+      <select v-model="chosen" data-test="model">
+        <option v-for="name in models" :key="name" :value="name">{{ name }}</option>
+      </select>
+      <button data-test="resolve" type="submit" :disabled="!chosen" @click="resolve">
+        Resolve
+      </button>
+    </form>
+
+    <table class="ai-effective">
     <thead>
       <tr>
         <th>Parameter</th>
@@ -42,21 +57,47 @@ under the License.
           >locked</span>
         </td>
       </tr>
-    </tbody>
-  </table>
+      </tbody>
+    </table>
+  </div>
 </template>
 
 <script>
 import { describeParameter } from '@/utils/profiles'
 
+import { getAPI } from '@/api'
+
 export default {
   name: 'AiEffectiveParameters',
   props: {
-    parameters: { type: Array, default: () => [] }
+    // null means "fetch for yourself"; a parent holding the data, and
+    // the rendering tests, still pass an array in.
+    parameters: { type: Array, default: null }
+  },
+  data () {
+    return { models: [], chosen: '', resolved: [] }
   },
   computed: {
     described () {
-      return this.parameters.map(describeParameter)
+      return (this.parameters ?? this.resolved).map(describeParameter)
+    }
+  },
+  mounted () {
+    if (this.parameters === null) this.loadModels()
+  },
+  methods: {
+    loadModels () {
+      getAPI('listAiModels', {}).then((json) => {
+        this.models = (json?.listaimodelsresponse?.aimodel ?? []).map((m) => m.name)
+        if (!this.chosen && this.models.length) this.chosen = this.models[0]
+      })
+    },
+    resolve () {
+      if (!this.chosen) return
+      getAPI('getAiEffectiveParameters', { model: this.chosen }).then((json) => {
+        this.resolved =
+          json?.getaieffectiveparametersresponse?.aieffectiveparameter ?? []
+      })
     }
   }
 }

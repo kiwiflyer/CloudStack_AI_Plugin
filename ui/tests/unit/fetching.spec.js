@@ -19,6 +19,11 @@ import EvaluationsTab from '@/views/aiservices/EvaluationsTab.vue'
 import FleetHealth from '@/views/aiservices/FleetHealth.vue'
 import GpuCapacity from '@/views/aiservices/GpuCapacity.vue'
 import HuggingFaceBrowser from '@/views/aiservices/HuggingFaceBrowser.vue'
+import ApiKeysTab from '@/views/aiservices/ApiKeysTab.vue'
+import BudgetsTab from '@/views/aiservices/BudgetsTab.vue'
+import EffectiveParameters from '@/views/aiservices/EffectiveParameters.vue'
+import Playground from '@/views/aiservices/Playground.vue'
+import RunActionsTab from '@/views/aiservices/RunActionsTab.vue'
 import SetupWizard from '@/views/aiservices/SetupWizard.vue'
 import { apiCalls, reset } from '../doubles/api.js'
 
@@ -35,6 +40,43 @@ describe('route screens fetch their own data', () => {
     await flushPromises()
 
     expect(apiCalls().map((c) => c.command)).toContain('listAiSetupChecks')
+  })
+
+  it('the playground asks which models it may use', async () => {
+    // It was the one route screen that fetched nothing: it took a
+    // `session` prop CloudStack never passes, so it rendered "Open a
+    // session to try this endpoint." for ever and no request for
+    // createAiPlaygroundSession was ever made.
+    mount(Playground)
+    await flushPromises()
+
+    expect(apiCalls().map((c) => c.command)).toContain('listAiModels')
+  })
+
+  it('the playground does not mint a session on load', async () => {
+    // A session key is a credential. Minting one just because somebody
+    // opened the screen issues a key nobody asked for, and the fifteen
+    // minute expiry starts running against a tenant who may be reading
+    // the page rather than using it.
+    mount(Playground)
+    await flushPromises()
+
+    expect(apiCalls().map((c) => c.command)).not.toContain('createAiPlaygroundSession')
+  })
+
+  it('the playground opens a session for the model it was asked for', async () => {
+    reset({
+      listAiModels: { listaimodelsresponse: { aimodel: [{ name: 'llama-3.3-70b-instruct' }] } }
+    })
+    const wrapper = mount(Playground)
+    await flushPromises()
+
+    await wrapper.find('[data-test="open-session"]').trigger('click')
+    await flushPromises()
+
+    const opened = apiCalls().find((c) => c.command === 'createAiPlaygroundSession')
+    expect(opened).toBeTruthy()
+    expect(opened.params.model).toBe('llama-3.3-70b-instruct')
   })
 
   it('the heatmap asks for capacity', async () => {
@@ -58,6 +100,66 @@ describe('route screens fetch their own data', () => {
     await flushPromises()
 
     expect(apiCalls()).toHaveLength(0)
+  })
+
+  it('the Hugging Face browser searches when asked', async () => {
+    // The pair of the test above, and the one that was missing: a
+    // screen that never searches also passes "does not search until
+    // asked", so that assertion on its own documented a browser that
+    // could not browse.
+    const wrapper = mount(HuggingFaceBrowser)
+    await wrapper.find('[data-test="query"]').setValue('llama')
+    await wrapper.find('[data-test="search"]').trigger('click')
+    await flushPromises()
+
+    const search = apiCalls().find((c) => c.command === 'searchAiHfModels')
+    expect(search).toBeTruthy()
+    expect(search.params.query).toBe('llama')
+  })
+
+  it('effective parameters asks which models it may resolve for', async () => {
+    mount(EffectiveParameters)
+    await flushPromises()
+
+    expect(apiCalls().map((c) => c.command)).toContain('listAiModels')
+  })
+
+  it('effective parameters resolves for the model it was asked about', async () => {
+    reset({
+      listAiModels: { listaimodelsresponse: { aimodel: [{ name: 'llama-3.3-70b-instruct' }] } }
+    })
+    const wrapper = mount(EffectiveParameters)
+    await flushPromises()
+
+    await wrapper.find('[data-test="resolve"]').trigger('click')
+    await flushPromises()
+
+    const asked = apiCalls().find((c) => c.command === 'getAiEffectiveParameters')
+    expect(asked).toBeTruthy()
+    expect(asked.params.model).toBe('llama-3.3-70b-instruct')
+  })
+
+  it('the api keys tab asks for the keys', async () => {
+    // A tab is handed `resource`, never a `keys` array, so one that
+    // only accepts props shows an empty table whatever the account has.
+    mount(ApiKeysTab)
+    await flushPromises()
+
+    expect(apiCalls().map((c) => c.command)).toContain('listAiApiKeys')
+  })
+
+  it('the budgets tab asks for the budgets', async () => {
+    mount(BudgetsTab)
+    await flushPromises()
+
+    expect(apiCalls().map((c) => c.command)).toContain('listAiBudgets')
+  })
+
+  it('the activity tab asks for the reconciler runs', async () => {
+    mount(RunActionsTab)
+    await flushPromises()
+
+    expect(apiCalls().map((c) => c.command)).toContain('listAiReconcilerRuns')
   })
 
   it('a screen given data does not fetch', async () => {

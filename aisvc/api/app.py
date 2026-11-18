@@ -1267,6 +1267,10 @@ def _register_routes(app: FastAPI) -> None:
             "id": minted.key_id,
             "apikey": minted.plaintext,
             "model": body.model,
+            # The endpoint to call. Already computed for the snippets,
+            # and a session without it leaves the caller holding a key
+            # and no address to use it at.
+            "base_url": base_url,
             "expires": (datetime.now(UTC) + SESSION_KEY_TTL).isoformat(),
             "snippets": [
                 {"name": s.name, "language": s.language, "code": s.code}

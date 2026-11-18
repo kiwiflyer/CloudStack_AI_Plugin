@@ -102,10 +102,11 @@
     "task": "sample"
   },
   "AiPlaygroundSessionResponse": {
+    "apikey": "sample",
     "base_url": "sample",
-    "expires_at": "sample",
-    "model": "sample",
-    "session_key": "sample"
+    "expires": "sample",
+    "id": "sample",
+    "model": "sample"
   },
   "AiPrivateEndpointResponse": {
     "account": "sample",

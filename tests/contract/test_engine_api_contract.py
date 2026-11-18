@@ -315,3 +315,66 @@ class TestEveryCommandMapsOntoARoute:
         assert wrong == [], "these are sync commands and must not answer 202: " + ", ".join(
             sorted(wrong)
         )
+
+
+class TestAResponseIsMappedFromTheFieldsTheEngineSends:
+    """What the plugin reads against what the engine returns.
+
+    `createAiPlaygroundSession` answered a live CloudStack with a
+    session carrying nothing but a model name: no key, no expiry, no
+    id. The command worked, the plugin reported success, and the one
+    thing a playground session exists to deliver — a short-lived key —
+    was dropped in the mapping, because `AiPlaygroundSessionResponse`
+    read `session_key`, `base_url` and `expires_at` while the engine
+    sends `apikey`, `base_url` and `expires`.
+
+    **The Java round-trip test could not have caught it.** Its fixture
+    is generated from the same declared field names, so it round-trips
+    whatever the generator believes and agrees with itself. Only the
+    engine can say what the engine sends, which is why this test calls
+    it.
+    """
+
+    def _declared(self, response_name: str) -> set[str]:
+        """The engine field names the Java generator reads for a response."""
+        import importlib.util
+        import sys
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[2] / "java-plugin" / "tools" / "generate_commands.py"
+        )
+        spec = importlib.util.spec_from_file_location("aisvc_java_generator_resp", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        response = next(r for r in module.RESPONSES if r.name == response_name)
+        # `wire` is the engine's JSON field; `api` is the name
+        # CloudStack answers with. Only the first can be wrong
+        # against the engine.
+        return {field.wire for field in response.fields}
+
+    def test_the_playground_session_reads_what_the_engine_sends(self, client: TestClient) -> None:
+        response = client.post(
+            "/v1/playground/sessions",
+            json={"model": "llama-3.3-70b-instruct"},
+            headers=ADMIN,
+        )
+        assert response.status_code == 200, response.text
+        sent = set(response.json())
+
+        unread = self._declared("AiPlaygroundSessionResponse") - sent
+        assert unread == set(), (
+            "AiPlaygroundSessionResponse reads fields the engine never sends, "
+            f"so they arrive empty: {sorted(unread)}. The engine sends "
+            f"{sorted(sent)}."
+        )
+
+    def test_the_key_and_its_expiry_survive_the_mapping(self, client: TestClient) -> None:
+        # The two that matter. A session without a key cannot be used,
+        # and one without an expiry cannot be trusted to be short-lived.
+        declared = self._declared("AiPlaygroundSessionResponse")
+
+        assert "apikey" in declared, "the session key is what this command is for"
+        assert "expires" in declared

@@ -33,7 +33,7 @@ under the License.
     </thead>
     <tbody>
       <tr
-        v-for="budget in budgets"
+        v-for="budget in rows"
         :key="budget.account"
         data-test="budget"
         :class="{ 'is-blocked': budget.blocked }"
@@ -50,8 +50,35 @@ under the License.
 </template>
 
 <script>
+import { getAPI } from '@/api'
+
 export default {
   name: 'AiBudgetsTab',
-  props: { budgets: { type: Array, default: () => [] } }
+  props: {
+    // CloudStack hands a tab its parent `resource`, never a named
+    // array, so a tab that only accepts props renders an empty table
+    // however much the account has. null means "fetch for yourself",
+    // the same arrangement the route screens use; the tests and any
+    // parent holding the data still pass it in.
+    budgets: { type: Array, default: null }
+  },
+  data () {
+    return { fetched: [] }
+  },
+  computed: {
+    rows () {
+      return this.budgets ?? this.fetched
+    }
+  },
+  mounted () {
+    if (this.budgets === null) this.load()
+  },
+  methods: {
+    load () {
+      getAPI('listAiBudgets', {}).then((json) => {
+        this.fetched = json?.listaibudgetsresponse?.aibudget ?? []
+      })
+    }
+  }
 }
 </script>

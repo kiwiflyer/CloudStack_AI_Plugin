@@ -31,7 +31,7 @@ under the License.
     </thead>
     <tbody>
       <tr
-        v-for="action in actions"
+        v-for="action in rows"
         :key="action.id"
         data-test="action"
         :class="`is-${action.outcome}`"
@@ -46,8 +46,35 @@ under the License.
 </template>
 
 <script>
+import { getAPI } from '@/api'
+
 export default {
   name: 'AiRunActionsTab',
-  props: { actions: { type: Array, default: () => [] } }
+  props: {
+    // CloudStack hands a tab its parent `resource`, never a named
+    // array, so a tab that only accepts props renders an empty table
+    // however much the account has. null means "fetch for yourself",
+    // the same arrangement the route screens use; the tests and any
+    // parent holding the data still pass it in.
+    actions: { type: Array, default: null }
+  },
+  data () {
+    return { fetched: [] }
+  },
+  computed: {
+    rows () {
+      return this.actions ?? this.fetched
+    }
+  },
+  mounted () {
+    if (this.actions === null) this.load()
+  },
+  methods: {
+    load () {
+      getAPI('listAiReconcilerRuns', {}).then((json) => {
+        this.fetched = json?.listaireconcilerrunsresponse?.aireconcilerrun ?? []
+      })
+    }
+  }
 }
 </script>

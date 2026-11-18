@@ -559,6 +559,54 @@ the `text` parts of a vision content list, `prompt`, `input`, `query` and rerank
 `documents`. Text the scan does not reach is a locked guardrail silently not
 applying, which is the thing a domain admin was sold.
 
+**A screen that only takes props renders empty, for ever — and seven of the
+eleven views were exactly that.** CloudStack renders a section's `component` as
+the route view and **passes it nothing**, and hands a *tab* its parent
+`resource`, never a named array. So a view whose only data source is a
+`keys`/`budgets`/`actions`/`models`/`parameters`/`session` prop can never show
+anything. Only `GpuCapacity`, `FleetHealth`, `SetupWizard` and `EvaluationsTab`
+ever fetched; `GpuCapacity` even says why in a comment, and
+`ui/tests/unit/fetching.spec.js` is named for the rule — it just covered four
+views out of eleven. Six are wired now (`Playground`, `EffectiveParameters`,
+`HuggingFaceBrowser`, `ApiKeysTab`, `BudgetsTab`, `RunActionsTab`), each
+fetching when its prop is null so the rendering tests still pass data in.
+**`SnippetsTab` is still inert**: its comment says "the engine renders these",
+and no endpoint-facing command returns them — exposing them needs a nested
+object-list field that `Response`/`Field` in the generator cannot express, since
+every field there is a scalar.
+
+**A test that says "does not X until asked" is only half a test.**
+`the Hugging Face browser does not search until asked` passed because the
+browser could not search *at all* — it took a `models` prop and called nothing,
+ever. The assertion was true and documented a screen that did not work. Its pair
+now exists: search when asked, and check the query reaches the command.
+
+The playground was the screen the failure was reported on: it
+took a `session` prop nothing supplied, so it showed *"Open a session to try
+this endpoint."* with no control to open one, and **`createAiPlaygroundSession`
+was never called at all** — a browser network log on that screen shows no AI
+request whatever. It fetches `listAiModels` on mount now and mints a session
+only when asked, because minting one on page load issues a credential nobody
+requested and starts its fifteen minutes running against someone who is reading
+the page.
+
+**And when it was called by hand it returned a session with no key.**
+`AiPlaygroundSessionResponse` read `session_key`, `base_url` and `expires_at`;
+the engine sends `apikey`, `expires` and `id`, and did not send `base_url` at
+all — it baked the URL into the snippets. Only `model` matched, so a live
+CloudStack answered `{"aiplaygroundsession": {"model": "..."}}`: the one thing a
+playground session exists to deliver was dropped at the one moment it exists.
+Same family as `createAiApiKey` reading `secret` for `apikey`. The engine sends
+`base_url` now, and **`responseHasSensitiveInfo` is true for this command** —
+it was false, which was accidentally correct only while the key was being lost.
+
+**The Java round-trip test could not have caught any of it.** `render_fixture()`
+builds its fixture from the generator's own declared engine field names, so it
+round-trips whatever the generator believes and agrees with itself. Only the
+engine can say what the engine sends:
+`tests/contract/test_engine_api_contract.py` now calls the route and compares
+the keys it returns against the names the generator reads.
+
 **CloudStack ignores a parameter it does not know, in silence.** The Terraform
 provider sent `allowedmodels`, `cidrs`, `expiresat` and `ratelimitrpm` to
 `createAiApiKey`, which takes `models`, `cidrlist` and `expires` and had no rate

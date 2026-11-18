@@ -140,14 +140,24 @@ class CommandRegistrationTest {
     }
 
     @Test
-    void onlyTheApiKeyCommandReturnsSensitiveInfo() {
-        // A key's secret is shown once; nothing else carries a secret,
-        // and marking more would suppress useful response logging.
+    void onlyTheCommandsThatMintAKeyReturnSensitiveInfo() {
+        // Two, and only two. A key's secret is shown once, and marking
+        // more would suppress response logging that is useful.
+        //
+        // createAiPlaygroundSession was absent from this set, and the
+        // test passed — because the response mapping was dropping the
+        // key it mints, reading `session_key` where the engine sends
+        // `apikey`. The declaration was accidentally true, which is a
+        // bad reason for a test to be green: the command has always
+        // minted a real key, and now that the key survives the mapping
+        // the declaration has to say so.
+        Set<String> mintsAKey = Set.of("createAiApiKey", "createAiPlaygroundSession");
+
         for (Class<?> command : registered) {
             APICommand annotation = command.getAnnotation(APICommand.class);
-            boolean expected = "createAiApiKey".equals(annotation.name());
 
-            assertEquals(expected, annotation.responseHasSensitiveInfo(),
+            assertEquals(mintsAKey.contains(annotation.name()),
+                    annotation.responseHasSensitiveInfo(),
                     annotation.name());
         }
     }

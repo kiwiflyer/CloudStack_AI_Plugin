@@ -25,18 +25,38 @@ under the License.
      screen is a credential in someone's slide deck. -->
 <template>
   <div class="ai-playground">
-    <header v-if="session" class="ai-playground__header">
-      <span class="ai-playground__model">{{ session.model }}</span>
+    <header v-if="active" class="ai-playground__header">
+      <span class="ai-playground__model">{{ active.model }}</span>
       <span class="ai-playground__expiry">
         Session expires {{ expiresAt }}
       </span>
     </header>
 
-    <p v-else class="ai-playground__empty">
-      Open a session to try this endpoint.
-    </p>
+    <div v-else class="ai-playground__empty">
+      <p>Open a session to try this endpoint.</p>
 
-    <div v-if="session" data-test="transcript" class="ai-playground__transcript">
+      <!-- A session is only minted when asked for. Opening one on
+           page load would issue a credential nobody requested and
+           start its fifteen minutes running against a tenant who is
+           only reading the screen. -->
+      <select
+        v-model="chosen"
+        data-test="model"
+        class="ai-playground__model-select"
+      >
+        <option v-for="name in models" :key="name" :value="name">{{ name }}</option>
+      </select>
+      <button
+        data-test="open-session"
+        class="ai-playground__open"
+        :disabled="!chosen"
+        @click="openSession"
+      >
+        Open session
+      </button>
+    </div>
+
+    <div v-if="active" data-test="transcript" class="ai-playground__transcript">
       <div
         v-for="(turn, index) in transcript"
         :key="index"
@@ -53,17 +73,46 @@ under the License.
 </template>
 
 <script>
+import { getAPI, postAPI } from '@/api'
+
 export default {
   name: 'AiPlayground',
   props: {
-    // What createAiPlaygroundSession returned.
+    // What createAiPlaygroundSession returned. CloudStack renders this
+    // as a route view and passes it nothing, so null means "fetch for
+    // yourself" — the same arrangement every other screen in this
+    // section uses. Without it this screen showed its empty state for
+    // ever and never called the command at all.
     session: { type: Object, default: null },
     transcript: { type: Array, default: () => [] }
   },
+  data () {
+    return { models: [], chosen: '', opened: null }
+  },
   computed: {
+    active () {
+      return this.session ?? this.opened
+    },
     expiresAt () {
-      if (!this.session?.expires) return 'shortly'
-      return new Date(this.session.expires).toLocaleTimeString()
+      if (!this.active?.expires) return 'shortly'
+      return new Date(this.active.expires).toLocaleTimeString()
+    }
+  },
+  mounted () {
+    if (this.session === null) this.loadModels()
+  },
+  methods: {
+    loadModels () {
+      getAPI('listAiModels', {}).then((json) => {
+        this.models = (json?.listaimodelsresponse?.aimodel ?? []).map((m) => m.name)
+        if (!this.chosen && this.models.length) this.chosen = this.models[0]
+      })
+    },
+    openSession () {
+      if (!this.chosen) return
+      postAPI('createAiPlaygroundSession', { model: this.chosen }).then((json) => {
+        this.opened = json?.createaiplaygroundsessionresponse?.aiplaygroundsession ?? null
+      })
     }
   }
 }

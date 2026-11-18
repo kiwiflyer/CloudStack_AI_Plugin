@@ -5613,3 +5613,159 @@ resolve whenever the setting is on.
 
 2,175 Python tests and 467 JUnit pass, and `approveAiModel` is the only
 command left in `NOT_YET_SERVED`.
+
+## `createAiPlaygroundSession` failed in the UI, two ways
+
+Reported as the command failing in the UI. It was two independent
+defects, and the first one means the command was never reached.
+
+### The screen never called it
+
+The playground renders *"Open a session to try this endpoint."* and
+nothing else — no control, no request. A network log on that screen,
+filtered to AI commands, says plainly:
+
+```
+No requests matching "Ai".
+```
+
+`Playground.vue` took a `session` prop and did nothing else. CloudStack
+renders a section's `component` as the route view and passes it
+nothing, so the prop was always undefined and the empty state was the
+only state the screen could ever reach.
+
+Every other screen in the section already knew this. `GpuCapacity.vue`
+carries the comment — *"CloudStack renders this as a route view and
+passes it nothing, so null means fetch for yourself"* — and
+`ui/tests/unit/fetching.spec.js` is named **"route screens fetch their
+own data"** and covers the setup wizard, the heatmap, fleet health and
+the Hugging Face browser. The playground was the one screen missing
+from it, and the one screen that did not work.
+
+It now fetches `listAiModels` on mount and opens a session only when
+asked. That second part is deliberate and has its own test: minting on
+page load would issue a credential nobody requested and start its
+fifteen-minute expiry running against a tenant who is only reading the
+screen.
+
+### And the session it would have returned had no key
+
+Called by hand against a live CloudStack, the command *succeeded* — and
+returned this:
+
+```json
+{"aiplaygroundsession": {"model": "llama-3.3-70b-instruct"}}
+```
+
+No key, no expiry, no id. `AiPlaygroundSessionResponse` read
+`session_key`, `base_url` and `expires_at`. The engine sends `apikey`,
+`expires`, `id` and `snippets`, and did not send `base_url` at all — it
+bakes the URL into the snippets instead. Only `model` matched.
+
+So the one thing a playground session exists to deliver was dropped at
+the one moment it exists. That is the same defect `createAiApiKey` had,
+reading `secret` where the engine sends `apikey`, recorded in CLAUDE.md
+at the time.
+
+Fixed on both sides: the mapping reads the names the engine uses and
+gained `id`, and the engine now sends the `base_url` it already
+computes — a caller holding a key and no address to use it at is not
+much better off.
+
+### A third thing, which the fix exposed
+
+`responseHasSensitiveInfo` was `false` for this command. That was
+accidentally correct while the key was being dropped, and wrong the
+moment it was not: the command mints a real key, model-scoped and
+short-lived, but a key. It is `true` now, and the generator takes the
+value from a named set rather than a comparison against one command.
+
+The JUnit test that pinned it was called
+`onlyTheApiKeyCommandReturnsSensitiveInfo` — green for the wrong
+reason. It is `onlyTheCommandsThatMintAKeyReturnSensitiveInfo` now,
+and says why in a comment.
+
+### Why nothing caught it
+
+The Java round-trip test renders every response from a fixture — and
+`render_fixture()` generates that fixture **from the generator's own
+declared engine field names**. It round-trips whatever the generator
+believes, and agrees with itself whatever the engine actually sends.
+
+Only the engine can answer that. `tests/contract/test_engine_api_contract.py`
+now calls the route and compares the keys in the response against the
+names the generator reads, failing with the difference spelled out:
+
+```
+AiPlaygroundSessionResponse reads fields the engine never sends, so they
+arrive empty: ['base_url', 'expires_at', 'session_key']. The engine sends
+['apikey', 'expires', 'id', 'model', 'snippets'].
+```
+
+2,177 Python, 468 JUnit and 109 Vitest tests pass.
+
+### Then the same question, asked of the other ten views
+
+The playground's defect was not that it was special. It was that
+nobody had asked the other screens the same question.
+
+Eleven views, audited for whether they fetch anything at all:
+
+| View | Kind | Fetched before |
+| --- | --- | --- |
+| `GpuCapacity` | screen | yes |
+| `FleetHealth` | screen | yes |
+| `SetupWizard` | screen | yes |
+| `EvaluationsTab` | tab | yes, watches `resource` |
+| `Playground` | screen | **no** |
+| `EffectiveParameters` | screen | **no** |
+| `HuggingFaceBrowser` | screen | **no** |
+| `ApiKeysTab` | tab | **no** |
+| `BudgetsTab` | tab | **no** |
+| `RunActionsTab` | tab | **no** |
+| `SnippetsTab` | tab | **no** |
+
+Seven of eleven could not show anything. CloudStack renders a
+section's `component` as the route view and passes it nothing, and
+hands a tab its parent `resource` — never a named `keys`, `budgets`,
+`actions`, `models` or `parameters` array. Every one of those seven
+took exactly such a prop and had no other source.
+
+They were written as presentational components, tested by passing
+props, and only four were ever wired to the API. The tests were green
+throughout, because a component that renders what it is given renders
+what it is given.
+
+Six are fixed, each following `GpuCapacity`'s existing arrangement —
+fetch in `mounted()` when the prop is null, so the rendering tests keep
+passing data in and stay honest. `HuggingFaceBrowser` fetches on
+demand instead, because a search costs somebody else's rate limit.
+`EffectiveParameters` and `Playground` first ask which models they may
+use, since a resolved value or a session is meaningless without
+knowing which deployment it is for.
+
+`SnippetsTab` is not fixed. Its own comment says "the engine renders
+these; nothing is built here", which is right — and no endpoint-facing
+command returns them. `listAiEndpoints` gives model, baseurl, task and
+price tier. Exposing snippets means a nested object-list field, and
+the response generator's `Field` is scalar-only (`String`, `Integer`,
+`Long`, `Boolean`, `Double`). Building them in JavaScript instead
+would be a second implementation of something the engine already does,
+which is the thing `aisvc.profiles` exists to prevent.
+
+### The test that was green for the wrong reason
+
+```js
+it('the Hugging Face browser does not search until asked', async () => {
+  mount(HuggingFaceBrowser)
+  expect(apiCalls()).toHaveLength(0)
+})
+```
+
+True, and useless: the browser could not search at all. A "does not do
+X until asked" assertion needs its pair, or it documents a feature that
+does not exist. The pair exists now — type a query, click search,
+assert `searchAiHfModels` is called with it — and it failed before the
+screen was wired.
+
+115 Vitest tests pass, up from 109.

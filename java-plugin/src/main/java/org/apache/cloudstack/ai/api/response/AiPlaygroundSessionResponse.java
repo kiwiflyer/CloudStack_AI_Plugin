@@ -30,6 +30,10 @@ import com.google.gson.annotations.SerializedName;
  * key never reaches the browser. */
 public class AiPlaygroundSessionResponse extends BaseResponse {
 
+    @SerializedName("id")
+    @Param(description = "the session key's identifier")
+    private String id;
+
     @SerializedName("sessionkey")
     @Param(description = "the short-lived, model-scoped key")
     private String sessionKey;
@@ -53,11 +57,16 @@ public class AiPlaygroundSessionResponse extends BaseResponse {
         if (body == null) {
             return mapped;
         }
-        mapped.sessionKey = readString(body, "session_key");
+        mapped.id = readString(body, "id");
+        mapped.sessionKey = readString(body, "apikey");
         mapped.model = readString(body, "model");
         mapped.baseUrl = readString(body, "base_url");
-        mapped.expires = readString(body, "expires_at");
+        mapped.expires = readString(body, "expires");
         return mapped;
+    }
+
+    public String getId() {
+        return id;
     }
 
     public String getSessionKey() {

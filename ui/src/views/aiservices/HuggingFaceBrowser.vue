@@ -22,9 +22,30 @@ under the License.
      that cannot be mirrored says why here, before anyone tries. -->
 <template>
   <div class="ai-hf">
+    <!-- Searching on mount would hit the Hub for every operator who
+         opened the screen, and the results would mean nothing. So the
+         screen waits — but it has to be able to search when asked,
+         which it could not: it took a `models` prop CloudStack never
+         passes and called nothing at all. -->
+    <form class="ai-hf__search" @submit.prevent="search">
+      <input
+        v-model="query"
+        data-test="query"
+        type="search"
+        placeholder="Search the Hugging Face Hub"
+      >
+      <!-- @click as well as the form's submit: a submit button's
+           click does not submit a form under jsdom, so binding only
+           the form would leave the test green against a button that
+           does nothing in a browser, or vice versa. -->
+      <button data-test="search" type="submit" :disabled="!query" @click="search">
+        Search
+      </button>
+    </form>
+
     <ul class="ai-hf__results">
-      <li v-for="model in models" :key="model.repo" data-test="result">
-        <strong>{{ model.repo }}</strong>
+      <li v-for="model in rows" :key="model.repoid || model.repo" data-test="result">
+        <strong>{{ model.repoid || model.repo }}</strong>
         <span class="ai-hf__meta">
           {{ model.task }} · {{ model.license }} · {{ model.downloads }} downloads
         </span>
@@ -38,8 +59,32 @@ under the License.
 </template>
 
 <script>
+import { getAPI } from '@/api'
+
 export default {
   name: 'AiHuggingFaceBrowser',
-  props: { models: { type: Array, default: () => [] } }
+  props: {
+    // null means "fetch for yourself" — CloudStack renders this as a
+    // route view and passes nothing. Unlike the other screens this one
+    // fetches on demand rather than on mount, because a search costs
+    // somebody else's rate limit.
+    models: { type: Array, default: null }
+  },
+  data () {
+    return { query: '', results: [] }
+  },
+  computed: {
+    rows () {
+      return this.models ?? this.results
+    }
+  },
+  methods: {
+    search () {
+      if (!this.query) return
+      getAPI('searchAiHfModels', { query: this.query }).then((json) => {
+        this.results = json?.searchaihfmodelsresponse?.aihfmodel ?? []
+      })
+    }
+  }
 }
 </script>
