@@ -53,8 +53,38 @@ public abstract class AiServicesSyncCmd extends BaseCmd {
     /** Build this command's response from the engine's answer. */
     protected abstract void onSuccess(JsonObject body);
 
+    /**
+     * The event this command records, or null if it records none.
+     *
+     * A read is not an event, and a list command inherits this null —
+     * which is the whole gate: {@link #execute()} records nothing
+     * unless a command names a type here. The generator emits an
+     * override for every write that declares one in the command map.
+     */
+    public String getEventType() {
+        return null;
+    }
+
+    /** What an operator should read in the event log. */
+    public String getEventDescription() {
+        return null;
+    }
+
     @Override
     public void execute() throws ServerApiException {
+        String eventType = getEventType();
+        if (eventType == null) {
+            doExecute();
+            return;
+        }
+        // Through the manager, because that is the only object Spring
+        // proxies — see AiServicesService.recordEvent. The work has to
+        // happen *inside* this call for a failure to be recorded as
+        // Failed rather than leaving the command's event unfinished.
+        aiServices.recordEvent(eventType, getEventDescription(), this::doExecute);
+    }
+
+    private void doExecute() {
         JsonObject body = callEngine();
         onSuccess(body);
     }

@@ -57,4 +57,14 @@ public class DeleteAiAdapterCmd extends AiServicesSyncCmd {
         response.setSuccess(true);
         setResponseObject(response);
     }
+
+    @Override
+    public String getEventType() {
+        return AiServicesEvents.ADAPTER_DELETE;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "deleting adapter " + adapterId;
+    }
 }

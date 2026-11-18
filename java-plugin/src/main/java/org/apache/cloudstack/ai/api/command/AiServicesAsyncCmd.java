@@ -60,8 +60,16 @@ public abstract class AiServicesAsyncCmd extends BaseAsyncCmd {
 
     @Override
     public void execute() throws ServerApiException {
-        EngineJob job = runAndAwait();
-        onSuccess(job);
+        // Through the manager, because that is the only object Spring
+        // proxies — see AiServicesService.recordEvent. ApiServer has
+        // already written this command's Scheduled event; what the
+        // recorder adds is the Completed or Failed that closes it, and
+        // the whole poll has to sit inside the call for a job that
+        // fails after being accepted to be recorded as Failed.
+        aiServices.recordEvent(getEventType(), getEventDescription(), () -> {
+            EngineJob job = runAndAwait();
+            onSuccess(job);
+        });
     }
 
     /**

@@ -17,6 +17,9 @@ package org.apache.cloudstack.ai.api.command;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -84,6 +87,15 @@ class AiServicesAsyncCmdTest {
         AiServicesService service = mock(AiServicesService.class);
         when(service.getEngineClient()).thenReturn(clientReturning(answers));
         when(service.currentCaller()).thenReturn(CALLER);
+        // Every async command now runs its work inside the manager, so
+        // CloudStack records whether it finished; the real one is a
+        // Spring proxy carrying @ActionEvent. Here it only has to let
+        // the work through — EventRecordingTest is what checks that
+        // the command routes through it at all.
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(2)).run();
+            return null;
+        }).when(service).recordEvent(anyString(), anyString(), any(Runnable.class));
 
         Field field = AiServicesAsyncCmd.class.getDeclaredField("aiServices");
         field.setAccessible(true);

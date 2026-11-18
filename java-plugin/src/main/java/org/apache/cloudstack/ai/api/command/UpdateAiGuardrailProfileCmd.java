@@ -70,4 +70,14 @@ public class UpdateAiGuardrailProfileCmd extends AiServicesSyncCmd {
         response.setResponseName(getCommandName());
         setResponseObject(response);
     }
+
+    @Override
+    public String getEventType() {
+        return AiServicesEvents.PROFILE_UPDATE;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "updating guardrail profile " + profileId;
+    }
 }

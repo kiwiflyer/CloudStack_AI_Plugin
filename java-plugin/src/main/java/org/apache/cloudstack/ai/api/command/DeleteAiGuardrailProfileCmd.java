@@ -57,4 +57,14 @@ public class DeleteAiGuardrailProfileCmd extends AiServicesSyncCmd {
         response.setSuccess(true);
         setResponseObject(response);
     }
+
+    @Override
+    public String getEventType() {
+        return AiServicesEvents.PROFILE_UPDATE;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "deleting guardrail profile " + profileId;
+    }
 }

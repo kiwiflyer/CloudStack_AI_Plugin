@@ -87,4 +87,14 @@ public class CreateAiGuardrailProfileCmd extends AiServicesSyncCmd {
         response.setResponseName(getCommandName());
         setResponseObject(response);
     }
+
+    @Override
+    public String getEventType() {
+        return AiServicesEvents.PROFILE_UPDATE;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "creating guardrail profile " + name;
+    }
 }

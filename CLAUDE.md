@@ -625,28 +625,60 @@ client in a field, so every `ai.services.engine.*` key is declared dynamic
 (`true`) and none of them takes effect without a management-server restart; and
 `isEnabledInZone` has no callers, so `ai.services.enabled` gates nothing.
 
-**Every AI event stops at `Scheduled`, and `@ActionEvent` on a command cannot fix
-it.** A live `listEvents` shows six AI rows and all six read `Scheduled` — an
-operator sees work being scheduled and never whether it finished. The obvious
-patch is to annotate `AiServicesAsyncCmd.execute()`, and it was written, built,
-deployed and measured: still six, still all `Scheduled`. Two reasons, both
-checked against 4.23.0.0's own source rather than guessed. The interceptor is a
-Spring AOP advisor — `execution(* *(..)) && @annotation(ActionEvent)` in
+**An `@ActionEvent` on a command records nothing — it has to be on a bean.**
+Every AI row in a live `listEvents` read `Scheduled` and nothing followed it, so an
+operator saw work start and never learned whether it finished. The obvious patch is
+to annotate `AiServicesAsyncCmd.execute()`; it was written, built, deployed and
+measured, and changed nothing. Two reasons, both read out of 4.23.0.0's source.
+The interceptor is a Spring AOP advisor —
+`execution(* *(..)) && @annotation(ActionEvent)` in
 `spring-core-system-context-inheritable.xml` — so it only wraps *beans*, and a
-command is not one: `ApiDispatcher` builds it with `ComponentContext.inject`,
-which calls `autowireBean` and returns **the same instance**, never a proxy. That
-is why CloudStack's own commands carry no such annotation and the *manager*
-method does — visible in a CKS stack trace, where `ActionEventInterceptor.invoke`
-sits under `$Proxy608.startKubernetesCluster` and above nothing, with
-`CreateKubernetesClusterCmd.execute` calling in from outside the proxy. And even
-on a proxied method `eventType = ""` records nothing: `interceptComplete` returns
-early on an empty type, and the fallback it would use — `ctx.getEventType()` — is
-never set, because **nothing in the API path calls `CallContext.setEventType`**.
-So the fix is a method on `AiServicesManagerImpl` that both base classes route
-the engine call through, with the command setting `CallContext`'s event type and
-description first. Sync write commands need an event type of their own before
-they can record anything at all; today they declare none, so `createAiGuardrailProfile`
-produces no event in either direction. Nothing is committed for this.
+command is not one: `ApiDispatcher` builds it with `ComponentContext.inject`, which
+calls `autowireBean` and returns **the same instance**, never a proxy. That is why
+CloudStack's own commands carry no such annotation and the *manager* method does,
+visible in a CKS stack trace where `ActionEventInterceptor.invoke` sits under
+`$Proxy608.startKubernetesCluster` with `CreateKubernetesClusterCmd.execute`
+calling in from outside. And even on a proxied method `eventType = ""` records
+nothing: `interceptComplete` returns early on an empty type, and the fallback it
+would use — `ctx.getEventType()` — **is never set, because nothing in the API path
+calls `CallContext.setEventType`**.
+
+So `AiServicesService.recordEvent(type, description, work)` is a method on the
+manager, carrying the annotation, and both base classes run their work inside it;
+the manager stamps the `CallContext` first, which is what gives
+`interceptComplete` and `interceptException` a type to record against. Measured
+live: a sync write now records `AI.PROFILE.UPDATE Completed INFO "Successfully
+completed creating guardrail profile …"`, and a refused one
+`AI.PROFILE.UPDATE Completed ERROR "Error while creating guardrail profile …"` —
+note that **a failure is not a `Failed` state**; CloudStack closes the event as
+`Completed` and carries the outcome in `level`, so anything reading these rows
+must read the level, not the state. An async command now shows both its
+`Scheduled` row and the row that closes it. `async = false` is deliberate — `ApiServer` has already written the Scheduled event for an
+async command, and `interceptStart` would add a second opener against one close.
+**Whether anything is recorded is simply whether the command declares an event
+type**: `AiServicesSyncCmd.getEventType()` returns null by default, every list
+command inherits that, and reads stay out of the log for free. Fourteen write
+commands declared none and so completed in silence; they do now, which needed five
+new constants (`BUDGET_UPDATE` beside the existing threshold alert,
+`PLAYGROUND_SESSION`, and three for certificates). `AiServicesEvents.all()` had
+also never listed the four v2 events, so nothing that walks it ever checked them.
+`tests/unit/test_commands.py` now fails on a write with no event, a read with one,
+and an event a command names that `all()` does not list.
+
+**Eleven of the sixteen async commands cannot succeed, and fixing the events is
+what made it visible.** `AiServicesAsyncCmd` requires a 202 — a 200 is refused as
+"did not accept", deliberately, because treating it as success would report work
+no job ever did. Only five engine routes return one (`/models/mirror`,
+`/setup/selftest`, both rollout routes and `/nodes/{id}/drain`). Six more exist
+and return 200 (`uploadAiAdapter`, `createAiBatch`, `cancelAiBatch`,
+`runAiModelEvaluation`, `createAiPrivateEndpoint`, `deleteAiPrivateEndpoint`), so
+the plugin rejects every one of them; five have no engine route at all
+(`updateAiModelDeployment`, and all four serving-profile and tuning-profile
+commands). Measured, not inferred: `runAiModelEvaluation` returns *"did not accept
+AI.MODEL.UPDATE: HTTP 200"* and `createAiServingProfile` *"HTTP 404"*. These all
+used to fail into silence — an operator saw `Scheduled` and nothing more, which is
+exactly how it went unnoticed; now each one writes an ERROR row naming itself.
+Decide per command which side moves, the engine's status or the plugin's contract.
 
 **Default role access is `@APICommand(authorized = ...)`, not a schema seed.**
 `DynamicRoleBasedAPIAccessChecker.start()` walks every `PluggableService`'s

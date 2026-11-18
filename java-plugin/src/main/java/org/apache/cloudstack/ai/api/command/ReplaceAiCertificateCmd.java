@@ -18,6 +18,7 @@
 package org.apache.cloudstack.ai.api.command;
 
 import org.apache.cloudstack.acl.RoleType;
+import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiCertificateResponse;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
@@ -75,5 +76,15 @@ public class ReplaceAiCertificateCmd extends AiServicesSyncCmd {
         AiCertificateResponse response = AiCertificateResponse.from(body);
         response.setResponseName(getCommandName());
         setResponseObject(response);
+    }
+
+    @Override
+    public String getEventType() {
+        return AiServicesEvents.CERTIFICATE_REPLACE;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "replacing certificate for " + certificateId;
     }
 }

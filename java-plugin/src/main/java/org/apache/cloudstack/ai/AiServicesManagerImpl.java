@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import javax.inject.Inject;
+import com.cloud.event.ActionEvent;
 import com.cloud.host.HostVO;
 import com.cloud.host.dao.HostDao;
 import com.cloud.vm.VMInstanceVO;
@@ -354,6 +355,47 @@ public class AiServicesManagerImpl extends ManagerBase
             return 0;
         }
         return deploymentDao.removeByAccount(accountId);
+    }
+
+    /**
+     * Run a command's work so CloudStack records how it ended.
+     *
+     * <p>Two things have to be true for an event to appear, and both
+     * were learned from a server that recorded none.
+     *
+     * <p>First, this method has to be on a bean. The advisor in
+     * {@code spring-core-system-context-inheritable.xml} is
+     * {@code execution(* *(..)) && @annotation(ActionEvent)}, so it
+     * wraps beans and nothing else; a command carrying the same
+     * annotation is never proxied and never intercepted. The manager
+     * is a bean, so a call through the injected {@code AiServicesService}
+     * interface goes through the proxy and the interceptor sees it.
+     *
+     * <p>Second, the event type has to reach the interceptor through
+     * the {@link CallContext}. {@code interceptComplete} returns early
+     * when the annotation's {@code eventType} is empty, and the
+     * fallback it would otherwise use, {@code ctx.getEventType()}, is
+     * never populated — nothing in CloudStack's API path calls
+     * {@code setEventType}. So the context is stamped here, inside the
+     * proxied call, before the work runs: {@code interceptComplete} and
+     * {@code interceptException} both read it afterwards and record
+     * Completed or Failed against the command's own type.
+     *
+     * <p>{@code async = false} is deliberate. The interceptor's
+     * {@code interceptStart} publishes a Started event only when the
+     * annotation says async, and for an async command {@code ApiServer}
+     * has already written the Scheduled event before the job began;
+     * asking for a second one would put two openers against one close.
+     */
+    @Override
+    @ActionEvent(eventType = "", eventDescription = "", async = false)
+    public void recordEvent(String eventType, String eventDescription, Runnable work) {
+        CallContext ctx = CallContext.current();
+        if (ctx != null) {
+            ctx.setEventType(eventType);
+            ctx.setEventDescription(eventDescription);
+        }
+        work.run();
     }
 
     /**

@@ -979,3 +979,80 @@ class TestTheTerraformProviderSendsRealParameters:
                 )
 
         assert not ignored, "\n".join(ignored)
+
+
+class TestEveryWriteRecordsAnEvent:
+    """A write CloudStack cannot report on is a write nobody can audit.
+
+    Until the event path was fixed, every AI event in `listEvents` read
+    `Scheduled` and nothing followed it — the interceptor that writes
+    Completed and Failed is a Spring AOP advisor, so it never saw the
+    `@ActionEvent` on a command's own `execute()`. The commands now
+    route their work through `AiServicesService.recordEvent`, which is
+    a method on a bean, and the gate on whether anything is recorded is
+    simply whether the command declares an event type.
+
+    So that declaration is the thing worth guarding: a new write added
+    without one would compile, deploy, work, and quietly leave no trace.
+    """
+
+    def _table(self) -> list[Any]:
+        # `generator_commands` already imports it the one way that
+        # works: its dataclasses resolve annotations through
+        # sys.modules, so a loader that skips that registration fails
+        # inside `dataclasses` rather than here.
+        return list(generator_commands().values())
+
+    def test_every_write_command_names_an_event(self) -> None:
+        table = self._table()
+        silent = sorted(
+            command.name
+            for command in table
+            if command.method in ("POST", "PATCH", "DELETE") and not command.event
+        )
+
+        assert silent == [], (
+            "these write commands would complete without recording anything: " + ", ".join(silent)
+        )
+
+    def test_no_read_command_names_an_event(self) -> None:
+        # A read is not an action. `getEventType()` returning null is
+        # what keeps list commands out of the operator's log, so an
+        # event name on a GET would put them in it.
+        table = self._table()
+        noisy = sorted(
+            command.name for command in table if command.method == "GET" and command.event
+        )
+
+        assert noisy == []
+
+    def test_every_event_a_command_names_is_defined_and_listed(self) -> None:
+        # `AiServicesEvents.all()` is what the convention and
+        # uniqueness checks walk, so a constant missing from it is a
+        # constant nothing verifies.
+        table = self._table()
+        source = (
+            Path(__file__).resolve().parents[2]
+            / "java-plugin"
+            / "src"
+            / "main"
+            / "java"
+            / "org"
+            / "apache"
+            / "cloudstack"
+            / "ai"
+            / "AiServicesEvents.java"
+        ).read_text(encoding="utf-8")
+
+        declared = set(re.findall(r"String (\w+) = \"AI\.", source))
+        listed = set(re.findall(r"\b([A-Z][A-Z_]+)\b", source.split("return new String[]")[1]))
+
+        for command in table:
+            if not command.event:
+                continue
+            assert command.event in declared, (
+                f"{command.name} names {command.event}, which AiServicesEvents does not define"
+            )
+            assert command.event in listed, (
+                f"{command.event} is defined but missing from AiServicesEvents.all()"
+            )

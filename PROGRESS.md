@@ -5091,12 +5091,12 @@ Two independent reasons, both read out of 4.23.0.0's own source:
   tree disproved it.
 
 So the fix is a method on `AiServicesManagerImpl` that both base classes
-route the engine call through, carrying `@ActionEvent`, with the command
-setting `CallContext`'s event type and description first. Sync write
+route the engine call through, carrying `@ActionEvent`, with the
+`CallContext`'s event type and description stamped inside it. Sync write
 commands additionally declare no event type at all — `createAiGuardrailProfile`
 succeeded live and produced no event in either direction — so they need
-one before they can record anything. The dead patch was reverted; nothing
-is committed for this.
+one before they can record anything. The dead patch was reverted, and the
+real one is below.
 
 Two things did work on the way through. The engine's explanation reached
 the caller — `createAiGuardrailProfile` with a bad preset returned *"the
@@ -5142,3 +5142,102 @@ there is none". The missing cluster is still missing — but
 `deployVirtualMachine` is not the thing blocking it. It works here, end
 to end, including network creation and address assignment. The largest
 untested area in the project is reachable from this harness.
+
+### The event path, fixed and measured
+
+`AiServicesService.recordEvent(type, description, work)` is a method on
+`AiServicesManagerImpl` carrying `@ActionEvent(eventType = "",
+eventDescription = "", async = false)`, and both base commands run
+their work inside it. The manager stamps the `CallContext`'s event type
+and description first, inside the proxied call, which is what gives
+`interceptComplete` and `interceptException` something to record
+against — the annotation's own empty `eventType` would make both
+return early.
+
+`async = false` matters: `interceptStart` publishes a Started event only
+when the annotation says async, and `ApiServer` has already written the
+Scheduled row before an async job begins. Asking for a second would put
+two openers against one close.
+
+Whether anything is recorded at all is simply whether the command
+declares an event type. `AiServicesSyncCmd.getEventType()` returns null
+by default and every list command inherits it, so reads stay out of the
+operator's log without a special case.
+
+Fourteen write commands declared no event type and so completed in
+silence; they declare one now. That needed five new constants —
+`BUDGET_UPDATE` beside the existing `BUDGET_THRESHOLD`, which is an
+alert raised by spend rather than the operator action that set the
+limit; `PLAYGROUND_SESSION`, because a key that expires in fifteen
+minutes is still a credential issued to someone; and three for
+certificates, `REPLACE` separate from `UPLOAD` because replacing one
+replaces the proxy VM and takes the endpoint down with it.
+`AiServicesEvents.all()` had also never listed the four v2 events, so
+the convention and uniqueness checks had never walked them.
+
+Measured on the live management server, after deploying the rebuilt
+classes and restarting:
+
+```
+sync write, succeeded
+    AI.PROFILE.UPDATE  Completed  INFO   Successfully completed creating
+                                         guardrail profile evt-ok-…
+sync write, refused by the engine
+    AI.PROFILE.UPDATE  Completed  ERROR  Error while creating guardrail
+                                         profile evt-bad-…
+async write
+    AI.PROFILE.UPDATE  Scheduled  INFO   creating serving profile evt-async-…
+    AI.PROFILE.UPDATE  Completed  ERROR  Error while creating serving
+                                         profile evt-async-…
+```
+
+Note the shape: **a failure is not a `Failed` state.** CloudStack closes
+the event as `Completed` either way and carries the outcome in `level`,
+so anything reading these rows — a UI column, an alert, a report — has
+to read the level and not the state.
+
+467 Java unit tests and 2,022 Python ones are green. `EventRecordingTest`
+pins the arrangement from the side that failed before: that the
+annotation is on the manager's method and not a command's, that it is
+not async, that a sync write and an async command both route through the
+recorder, that a list command does not, and — the one that matters most —
+that a *failure* happens inside the recorded call, since
+`interceptException` is the only thing that writes the ERROR row.
+`tests/unit/test_commands.py` fails on a write with no event name, a
+read with one, and an event a command names that `all()` does not list.
+
+### What the fix exposed: eleven async commands that cannot succeed
+
+With the events closing, the failures became readable, and most of them
+are the same failure.
+
+`AiServicesAsyncCmd` requires a 202. A 200 is refused as "did not
+accept", and deliberately so: treating it as success would report work
+that no job ever did. But only five engine routes return one —
+`/models/mirror`, `/setup/selftest`, the two rollout routes and
+`/nodes/{id}/drain`.
+
+Of the other eleven async commands, six reach a route that returns 200
+and are refused by the plugin:
+
+```
+uploadAiAdapter  createAiBatch  cancelAiBatch
+runAiModelEvaluation  createAiPrivateEndpoint  deleteAiPrivateEndpoint
+```
+
+and five have no engine route at all: `updateAiModelDeployment`, and
+all four of the serving-profile and tuning-profile commands.
+
+Measured rather than inferred. `runAiModelEvaluation` returns
+
+```
+the AI Services engine did not accept AI.MODEL.UPDATE: HTTP 200
+```
+
+and `createAiServingProfile` returns `HTTP 404`.
+
+This is why the old `Scheduled`-only events hid so much: an operator
+saw work start and nothing after it, and every one of these commands
+failed into that gap. They now each write an ERROR row naming
+themselves. Which side moves is a decision per command — the engine's
+status code or the plugin's contract — and nothing here has made it.

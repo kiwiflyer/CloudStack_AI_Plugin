@@ -42,4 +42,27 @@ public interface AiServicesService extends PluggableService {
      * @return how many ownership rows were removed.
      */
     int cleanupAccount(long accountId);
+
+    /**
+     * Run a command's work so CloudStack records how it ended.
+     *
+     * Every write command calls this instead of doing its work inline,
+     * because `ActionEventInterceptor` is a Spring AOP advisor and so
+     * only sees methods on *beans*. A command is not one — CloudStack
+     * builds it with `ComponentContext.inject`, which autowires the
+     * instance and returns it unproxied — so `@ActionEvent` on a
+     * command's own `execute()` is never consulted, however correctly
+     * it is written. The manager is a bean, which is why CloudStack's
+     * own commands delegate to a manager for exactly this.
+     *
+     * The work is a `Runnable` rather than a value-returning call
+     * because the interceptor only needs to know whether it threw:
+     * returning normally records Completed, throwing records Failed,
+     * and the command keeps its own result through its own fields.
+     *
+     * @param eventType        one of {@link AiServicesEvents}.
+     * @param eventDescription what the operator should read.
+     * @param work             the command's work; exceptions propagate.
+     */
+    void recordEvent(String eventType, String eventDescription, Runnable work);
 }

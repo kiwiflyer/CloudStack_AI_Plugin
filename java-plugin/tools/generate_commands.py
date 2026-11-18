@@ -61,10 +61,10 @@ GENERATED = """
 
 @dataclass(frozen=True)
 class Field:
-    java: str          # Java field name
-    wire: str          # engine JSON field
-    api: str           # CloudStack response field
-    type: str          # String | Integer | Long | Boolean | Double
+    java: str  # Java field name
+    wire: str  # engine JSON field
+    api: str  # CloudStack response field
+    type: str  # String | Integer | Long | Boolean | Double
     doc: str
 
 
@@ -82,14 +82,20 @@ def f(java: str, wire: str, type_: str, doc: str, api: str | None = None) -> Fie
 
 RESPONSES: tuple[Response, ...] = (
     Response(
-        "AiAdapterResponse", "aiadapter",
+        "AiAdapterResponse",
+        "aiadapter",
         "A tenant's LoRA adapter (SPEC.md section 8).",
         (
             f("id", "id", "String", "the adapter's id"),
             f("name", "name", "String", "the adapter's name"),
             f("baseModel", "basemodel", "String", "the base it is served on", "basemodel"),
-            f("servedModelName", "servedmodelname", "String",
-              "what to address it as at the gateway", "servedmodelname"),
+            f(
+                "servedModelName",
+                "servedmodelname",
+                "String",
+                "what to address it as at the gateway",
+                "servedmodelname",
+            ),
             f("rank", "rank", "Integer", "its LoRA rank"),
             f("sizeBytes", "sizebytes", "Long", "its size on disk", "sizebytes"),
             f("account", "account", "String", "the owning account"),
@@ -97,22 +103,33 @@ RESPONSES: tuple[Response, ...] = (
         ),
     ),
     Response(
-        "AiBatchResponse", "aibatch",
+        "AiBatchResponse",
+        "aibatch",
         "A batch inference job (SPEC.md section 8).",
         (
             f("id", "id", "String", "the batch's id"),
             f("model", "model", "String", "the model it runs against"),
-            f("status", "status", "String",
-              "validating, in_progress, completed, failed, expired or cancelled"),
-            f("requestCount", "requestcount", "Integer",
-              "how many requests it holds", "requestcount"),
+            f(
+                "status",
+                "status",
+                "String",
+                "validating, in_progress, completed, failed, expired or cancelled",
+            ),
+            f(
+                "requestCount",
+                "requestcount",
+                "Integer",
+                "how many requests it holds",
+                "requestcount",
+            ),
             f("account", "account", "String", "the owning account"),
             f("created", "created", "String", "when it was submitted"),
             f("finished", "finished", "String", "when it finished, if it has"),
         ),
     ),
     Response(
-        "AiGuardrailProfileResponse", "aiguardrailprofile",
+        "AiGuardrailProfileResponse",
+        "aiguardrailprofile",
         "A guardrail profile and where it is bound (SPEC.md sections 6, 8).",
         (
             f("id", "id", "String", "the profile's id"),
@@ -122,35 +139,40 @@ RESPONSES: tuple[Response, ...] = (
         ),
     ),
     Response(
-        "AiEvaluationResponse", "aievaluation",
+        "AiEvaluationResponse",
+        "aievaluation",
         "A pre-publish evaluation verdict (SPEC.md section 8).",
         (
             f("id", "id", "String", "the evaluation's id"),
             f("model", "model", "String", "the model evaluated"),
             f("revision", "revision", "String", "the revision evaluated"),
             f("passed", "passed", "Boolean", "whether publishing is allowed"),
-            f("overridden", "overridden", "Boolean",
-              "whether a root admin forced it through"),
+            f("overridden", "overridden", "Boolean", "whether a root admin forced it through"),
             f("summary", "summary", "String", "what the gate concluded"),
         ),
     ),
     Response(
-        "AiCertificateResponse", "aicertificate",
+        "AiCertificateResponse",
+        "aicertificate",
         "An uploaded TLS certificate. Never carries the key or the "
         "certificate body (SPEC.md section 8).",
         (
             f("id", "id", "String", "the certificate's id"),
-            f("customDomain", "customdomain", "String",
-              "the domain it covers", "customdomain"),
+            f("customDomain", "customdomain", "String", "the domain it covers", "customdomain"),
             f("fingerprint", "fingerprint", "String", "its SHA-256 fingerprint"),
             f("expires", "expires", "String", "when it expires"),
-            f("serial", "serial", "Integer",
-              "bumped on each replacement; a proxy built from an older one is stale"),
+            f(
+                "serial",
+                "serial",
+                "Integer",
+                "bumped on each replacement; a proxy built from an older one is stale",
+            ),
             f("account", "account", "String", "the owning account"),
         ),
     ),
     Response(
-        "AiPrivateEndpointResponse", "aiprivateendpoint",
+        "AiPrivateEndpointResponse",
+        "aiprivateendpoint",
         "How a deployment is exposed (SPEC.md section 8).",
         (
             f("id", "id", "String", "the exposure's id"),
@@ -164,20 +186,25 @@ RESPONSES: tuple[Response, ...] = (
             f("account", "account", "String", "the owning account"),
         ),
     ),
-
     Response(
-        "AiHfModelResponse", "aihfmodel",
+        "AiHfModelResponse",
+        "aihfmodel",
         "One Hugging Face repo from a search (SPEC.md section 5).",
         (
             f("repoId", "repo_id", "String", "the Hugging Face repository id", "repoid"),
             f("license", "license", "String", "the repo's declared licence"),
             f("task", "task", "String", "the repo's pipeline task"),
-            f("gated", "gated", "Boolean",
-              "whether the licence must be accepted on Hugging Face first"),
+            f(
+                "gated",
+                "gated",
+                "Boolean",
+                "whether the licence must be accepted on Hugging Face first",
+            ),
         ),
     ),
     Response(
-        "AiHfCheckResponse", "aihfcheck",
+        "AiHfCheckResponse",
+        "aihfcheck",
         "A model compatibility report (SPEC.md section 5, step 2).",
         (
             f("repoId", "repo_id", "String", "the repository checked", "repoid"),
@@ -186,15 +213,26 @@ RESPONSES: tuple[Response, ...] = (
             f("architecture", "architecture", "String", "the architecture from config.json"),
             f("license", "license", "String", "the declared licence"),
             f("downloadBytes", "download_bytes", "Long", "bytes to mirror", "downloadbytes"),
-            f("contextLength", "context_length", "Integer",
-              "the model's maximum context length", "contextlength"),
+            f(
+                "contextLength",
+                "context_length",
+                "Integer",
+                "the model's maximum context length",
+                "contextlength",
+            ),
             f("gated", "gated", "Boolean", "whether the repo is gated"),
-            f("requiresRemoteCode", "requires_remote_code", "Boolean",
-              "whether the repo ships its own modelling code", "requiresremotecode"),
+            f(
+                "requiresRemoteCode",
+                "requires_remote_code",
+                "Boolean",
+                "whether the repo ships its own modelling code",
+                "requiresremotecode",
+            ),
         ),
     ),
     Response(
-        "AiEndpointResponse", "aiendpoint",
+        "AiEndpointResponse",
+        "aiendpoint",
         "One OpenAI-compatible endpoint (SPEC.md section 7).",
         (
             f("model", "model", "String", "the model this endpoint serves"),
@@ -204,7 +242,8 @@ RESPONSES: tuple[Response, ...] = (
         ),
     ),
     Response(
-        "AiApiKeyResponse", "aiapikey",
+        "AiApiKeyResponse",
+        "aiapikey",
         "A scoped API key (SPEC.md section 7).\n *\n * The secret appears once, on creation,"
         " and never again: keys are stored\n * as salted hashes.",
         (
@@ -215,20 +254,31 @@ RESPONSES: tuple[Response, ...] = (
             # the engine's body for `secret`, which it never sends, so
             # the one moment a key's secret existed it was dropped —
             # on CloudMonkey, Terraform and the UI alike.
-            f("apiKey", "apikey", "String",
-              "the key itself, returned only when it is created", "apikey"),
+            f(
+                "apiKey",
+                "apikey",
+                "String",
+                "the key itself, returned only when it is created",
+                "apikey",
+            ),
             # `listAiApiKeys` sends these already lowercase-concatenated
             # while `createAiApiKey` sends snake_case, so reading the
             # snake_case names left every listed key with nothing but
             # an id and a name.
-            f("allowedModels", "allowedmodels", "String",
-              "models this key may use", "allowedmodels"),
+            f(
+                "allowedModels",
+                "allowedmodels",
+                "String",
+                "models this key may use",
+                "allowedmodels",
+            ),
             f("expires", "expires", "String", "when the key expires"),
             f("lastUsed", "lastused", "String", "when the key was last used", "lastused"),
         ),
     ),
     Response(
-        "AiProfileResponse", "aiprofile",
+        "AiProfileResponse",
+        "aiprofile",
         "A tuning profile (SPEC.md section 6).",
         (
             f("id", "id", "String", "the profile's identifier"),
@@ -239,22 +289,27 @@ RESPONSES: tuple[Response, ...] = (
         ),
     ),
     Response(
-        "AiEffectiveParameterResponse", "aieffectiveparameter",
-        "One resolved generation parameter and where it came from\n"
-        " * (SPEC.md section 6).",
+        "AiEffectiveParameterResponse",
+        "aieffectiveparameter",
+        "One resolved generation parameter and where it came from\n * (SPEC.md section 6).",
         (
             f("name", "name", "String", "the parameter"),
             f("value", "value", "String", "the value that will be applied"),
-            f("source", "source", "String",
-              "the precedence level that set it: platform, model, domain,"
-              " account, deployment, key or request"),
+            f(
+                "source",
+                "source",
+                "String",
+                "the precedence level that set it: platform, model, domain,"
+                " account, deployment, key or request",
+            ),
             f("policy", "policy", "String", "default, clamp or locked"),
             f("locked", "locked", "Boolean", "whether a lower level may override it"),
             f("lockedAt", "locked_at", "String", "the level that locked it", "lockedat"),
         ),
     ),
     Response(
-        "AiUsageResponse", "aiusage",
+        "AiUsageResponse",
+        "aiusage",
         "Metered usage for one tenant and model (SPEC.md section 7).",
         (
             f("account", "account", "String", "the account billed"),
@@ -267,7 +322,8 @@ RESPONSES: tuple[Response, ...] = (
         ),
     ),
     Response(
-        "AiBudgetResponse", "aibudget",
+        "AiBudgetResponse",
+        "aibudget",
         "A monthly budget and where it stands (SPEC.md section 7).",
         (
             f("id", "id", "String", "the budget's identifier"),
@@ -276,26 +332,31 @@ RESPONSES: tuple[Response, ...] = (
             f("monthly", "monthly", "Double", "the monthly limit"),
             f("currency", "currency", "String", "the currency of the limit"),
             f("spent", "spent", "Double", "spend so far this month"),
-            f("onExceed", "on_exceed", "String",
-              "what happens at 100%: alert or block", "onexceed"),
+            f(
+                "onExceed",
+                "on_exceed",
+                "String",
+                "what happens at 100%: alert or block",
+                "onexceed",
+            ),
         ),
     ),
     Response(
-        "AiGpuCapacityResponse", "aigpucapacity",
+        "AiGpuCapacityResponse",
+        "aigpucapacity",
         "GPU capacity for one class in one zone (SPEC.md section 4).",
         (
             f("zone", "zone", "String", "the zone"),
             f("gpuClass", "gpu_class", "String", "the GPU class", "gpuclass"),
             f("gpusTotal", "gpus_total", "Integer", "GPUs discovered", "gpustotal"),
             f("gpusFree", "gpus_free", "Integer", "GPUs not allocated", "gpusfree"),
-            f("nodesTotal", "nodes_total", "Integer", "hosts carrying the class tag",
-              "nodestotal"),
-            f("nodesHealthy", "nodes_healthy", "Integer", "hosts up and enabled",
-              "nodeshealthy"),
+            f("nodesTotal", "nodes_total", "Integer", "hosts carrying the class tag", "nodestotal"),
+            f("nodesHealthy", "nodes_healthy", "Integer", "hosts up and enabled", "nodeshealthy"),
         ),
     ),
     Response(
-        "AiReconcilerRunResponse", "aireconcilerrun",
+        "AiReconcilerRunResponse",
+        "aireconcilerrun",
         "One reconciler run (SPEC.md section 4).",
         (
             f("id", "id", "String", "the run's identifier"),
@@ -307,34 +368,40 @@ RESPONSES: tuple[Response, ...] = (
         ),
     ),
     Response(
-        "AiSetupCheckResponse", "aisetupcheck",
+        "AiSetupCheckResponse",
+        "aisetupcheck",
         "One preflight check from the setup wizard (SPEC.md section 7).",
         (
             f("name", "name", "String", "what was checked"),
             f("status", "status", "String", "pass, warn, fail or skipped"),
             f("detail", "detail", "String", "what was found"),
-            f("remedy", "remedy", "String",
-              "what to do about it, where the check did not pass"),
+            f("remedy", "remedy", "String", "what to do about it, where the check did not pass"),
         ),
     ),
     Response(
-        "AiGpuClassProposalResponse", "aigpuclassproposal",
+        "AiGpuClassProposalResponse",
+        "aigpuclassproposal",
         "A GPU class the wizard proposes from CloudStack's host tags.",
         (
             f("hostTag", "host_tag", "String", "the host tag seen", "hosttag"),
             f("hosts", "hosts", "Integer", "healthy hosts carrying it"),
-            f("suggestedName", "suggested_name", "String",
-              "a name for the class", "suggestedname"),
+            f("suggestedName", "suggested_name", "String", "a name for the class", "suggestedname"),
         ),
     ),
     Response(
-        "AiPlaygroundSessionResponse", "aiplaygroundsession",
+        "AiPlaygroundSessionResponse",
+        "aiplaygroundsession",
         "An ephemeral playground session (SPEC.md section 7).\n *\n * The key is"
         " model-scoped and expires in fifteen minutes, so a real\n * key never reaches"
         " the browser.",
         (
-            f("sessionKey", "session_key", "String",
-              "the short-lived, model-scoped key", "sessionkey"),
+            f(
+                "sessionKey",
+                "session_key",
+                "String",
+                "the short-lived, model-scoped key",
+                "sessionkey",
+            ),
             f("model", "model", "String", "the model this session may use"),
             f("baseUrl", "base_url", "String", "the endpoint to call", "baseurl"),
             f("expires", "expires_at", "String", "when the session key expires"),
@@ -360,14 +427,14 @@ def render_response(response: Response) -> str:
         for fl in response.fields
     )
     reads = "\n".join(
-        f'        mapped.{fl.java} = read{fl.type}(body, "{fl.wire}");'
-        for fl in response.fields
+        f'        mapped.{fl.java} = read{fl.type}(body, "{fl.wire}");' for fl in response.fields
     )
     getters = "\n\n".join(
         f"    public {fl.type} get{fl.java[0].upper()}{fl.java[1:]}() {{\n"
         f"        return {fl.java};\n    }}"
         for fl in response.fields
     )
+
     def reader_for(t: str, reader: str) -> str:
         if t != "String":
             return (
@@ -446,9 +513,9 @@ public class {response.name} extends BaseResponse {{
 
 @dataclass(frozen=True)
 class Param:
-    name: str          # API parameter name
-    java: str          # Java field
-    type: str          # STRING | INTEGER | LONG | BOOLEAN | UUID
+    name: str  # API parameter name
+    java: str  # Java field
+    type: str  # STRING | INTEGER | LONG | BOOLEAN | UUID
     doc: str
     required: bool = False
     #: Fully-qualified response class for `entityType`. Giving one makes
@@ -488,15 +555,15 @@ class Param:
 class Command:
     name: str
     doc: str
-    path: str                      # may contain {java-field} placeholders
+    path: str  # may contain {java-field} placeholders
     method: str = "GET"
     is_async: bool = False
     response: str = ""
-    items_key: str | None = None   # set for list commands
+    items_key: str | None = None  # set for list commands
     event: str | None = None
     event_doing: str = ""
     params: tuple[Param, ...] = ()
-    query: tuple[str, ...] = ()    # java fields appended as query parameters
+    query: tuple[str, ...] = ()  # java fields appended as query parameters
     success_response: bool = False
     #: "v1" ships in GA; "v2" is generated but registered only when
     #: ai.services.v2.enabled is on, so the release boundary in
@@ -504,16 +571,29 @@ class Command:
     release: str = "v1"
 
 
-def p(name, java, type_, doc, required=False, entity=None, wire=None,
-      resolve=None, length=None, is_list=False) -> Param:
+def p(
+    name,
+    java,
+    type_,
+    doc,
+    required=False,
+    entity=None,
+    wire=None,
+    resolve=None,
+    length=None,
+    is_list=False,
+) -> Param:
     return Param(name, java, type_, doc, required, entity, resolve, wire, length, is_list)
 
 
 COMMANDS: tuple[Command, ...] = (
     # -- sourcing ---------------------------------------------------------
     Command(
-        "searchAiHfModels", "Searches the Hugging Face Hub for models.",
-        "/v1/hf/search", response="AiHfModelResponse", items_key="models",
+        "searchAiHfModels",
+        "Searches the Hugging Face Hub for models.",
+        "/v1/hf/search",
+        response="AiHfModelResponse",
+        items_key="models",
         params=(
             p("query", "query", "STRING", "text to search for", required=True),
             p("limit", "limit", "INTEGER", "how many results to return"),
@@ -521,126 +601,231 @@ COMMANDS: tuple[Command, ...] = (
         query=("query", "limit"),
     ),
     Command(
-        "checkAiHfModel", "Reports whether a Hugging Face model can be served.",
-        "/v1/hf/check", response="AiHfCheckResponse",
+        "checkAiHfModel",
+        "Reports whether a Hugging Face model can be served.",
+        "/v1/hf/check",
+        response="AiHfCheckResponse",
         params=(
-            p("repoid", "repoId", "STRING", "the repository to check", required=True,
-              wire="repo_id"),
+            p(
+                "repoid",
+                "repoId",
+                "STRING",
+                "the repository to check",
+                required=True,
+                wire="repo_id",
+            ),
             p("revision", "revision", "STRING", "the commit to check", required=True),
         ),
         query=("repoId", "revision"),
     ),
     Command(
-        "mirrorAiModel", "Mirrors a pinned model revision into the registry.",
-        "/v1/models/mirror", method="POST", is_async=True,
-        response="AiModelResponse", event="MODEL_MIRROR", event_doing="mirroring model",
+        "mirrorAiModel",
+        "Mirrors a pinned model revision into the registry.",
+        "/v1/models/mirror",
+        method="POST",
+        is_async=True,
+        response="AiModelResponse",
+        event="MODEL_MIRROR",
+        event_doing="mirroring model",
         params=(
-            p("repoid", "repoId", "STRING", "the repository to mirror", required=True,
-              wire="repo_id"),
+            p(
+                "repoid",
+                "repoId",
+                "STRING",
+                "the repository to mirror",
+                required=True,
+                wire="repo_id",
+            ),
             p("revision", "revision", "STRING", "the commit to pin", required=True),
         ),
         query=("repoId", "revision"),
     ),
     Command(
-        "approveAiModel", "Approves a mirror request.",
-        "/v1/models/{modelId}/approve", method="POST", response="AiModelResponse",
+        "approveAiModel",
+        "Approves a mirror request.",
+        "/v1/models/{modelId}/approve",
+        method="POST",
+        response="AiModelResponse",
+        event="MODEL_PUBLISH",
+        event_doing="approving model",
         params=(p("id", "modelId", "STRING", "the model to approve", required=True),),
     ),
     Command(
-        "publishAiModel", "Publishes a mirrored model to the catalog.",
-        "/v1/models/{modelId}/publish", method="POST", response="AiModelResponse",
+        "publishAiModel",
+        "Publishes a mirrored model to the catalog.",
+        "/v1/models/{modelId}/publish",
+        method="POST",
+        response="AiModelResponse",
+        event="MODEL_PUBLISH",
+        event_doing="publishing model",
         params=(
             p("id", "modelId", "STRING", "the model to publish", required=True),
-            p("visibility", "visibility", "STRING",
-              "domains or accounts to publish to", wire="visibility"),
+            p(
+                "visibility",
+                "visibility",
+                "STRING",
+                "domains or accounts to publish to",
+                wire="visibility",
+            ),
             p("pricetier", "priceTier", "STRING", "the price tier", wire="price_tier"),
         ),
     ),
     Command(
-        "listAiModels", "Lists AI models published to the caller.",
-        "/v1/models", response="AiModelResponse", items_key="models",
+        "listAiModels",
+        "Lists AI models published to the caller.",
+        "/v1/models",
+        response="AiModelResponse",
+        items_key="models",
     ),
     # -- deployments ------------------------------------------------------
     Command(
-        "listAiModelDeployments", "Lists AI model deployments.",
-        "/v1/deployments", response="AiDeploymentResponse", items_key="deployments",
+        "listAiModelDeployments",
+        "Lists AI model deployments.",
+        "/v1/deployments",
+        response="AiDeploymentResponse",
+        items_key="deployments",
     ),
     Command(
-        "updateAiModelDeployment", "Updates an AI model deployment.",
-        "/v1/deployments/{deploymentId}", method="PATCH", is_async=True,
-        response="AiDeploymentResponse", event="MODEL_UPDATE",
+        "updateAiModelDeployment",
+        "Updates an AI model deployment.",
+        "/v1/deployments/{deploymentId}",
+        method="PATCH",
+        is_async=True,
+        response="AiDeploymentResponse",
+        event="MODEL_UPDATE",
         event_doing="updating AI deployment",
         params=(
             p("id", "deploymentId", "STRING", "the deployment to update", required=True),
             p("replicas", "replicas", "INTEGER", "replicas to run", wire="replicas"),
-            p("servingprofile", "servingProfile", "STRING",
-              "the serving profile to apply", wire="serving_profile"),
+            p(
+                "servingprofile",
+                "servingProfile",
+                "STRING",
+                "the serving profile to apply",
+                wire="serving_profile",
+            ),
         ),
     ),
     Command(
-        "promoteAiRollout", "Promotes the canary of a blue/green rollout.",
-        "/v1/deployments/{deploymentId}/rollout/promote", method="POST", is_async=True,
-        response="AiDeploymentResponse", event="ROLLOUT_PROMOTE",
+        "promoteAiRollout",
+        "Promotes the canary of a blue/green rollout.",
+        "/v1/deployments/{deploymentId}/rollout/promote",
+        method="POST",
+        is_async=True,
+        response="AiDeploymentResponse",
+        event="ROLLOUT_PROMOTE",
         event_doing="promoting rollout of",
         params=(p("id", "deploymentId", "STRING", "the deployment", required=True),),
     ),
     Command(
-        "rollbackAiRollout", "Rolls a blue/green rollout back.",
-        "/v1/deployments/{deploymentId}/rollout/rollback", method="POST", is_async=True,
-        response="AiDeploymentResponse", event="ROLLOUT_ROLLBACK",
+        "rollbackAiRollout",
+        "Rolls a blue/green rollout back.",
+        "/v1/deployments/{deploymentId}/rollout/rollback",
+        method="POST",
+        is_async=True,
+        response="AiDeploymentResponse",
+        event="ROLLOUT_ROLLBACK",
         event_doing="rolling back rollout of",
         params=(p("id", "deploymentId", "STRING", "the deployment", required=True),),
     ),
     Command(
-        "listAiEndpoints", "Lists the endpoints the caller may use.",
-        "/v1/endpoints", response="AiEndpointResponse", items_key="endpoints",
+        "listAiEndpoints",
+        "Lists the endpoints the caller may use.",
+        "/v1/endpoints",
+        response="AiEndpointResponse",
+        items_key="endpoints",
     ),
     # -- keys -------------------------------------------------------------
     Command(
-        "createAiApiKey", "Creates a scoped API key. The secret is shown once.",
-        "/v1/keys", method="POST", response="AiApiKeyResponse",
+        "createAiApiKey",
+        "Creates a scoped API key. The secret is shown once.",
+        "/v1/keys",
+        method="POST",
+        response="AiApiKeyResponse",
+        event="KEY_CREATE",
+        event_doing="creating API key",
         params=(
             p("name", "name", "STRING", "a name for the key", required=True, wire="name"),
-            p("models", "models", "STRING",
-              "models this key may use; all if unset", wire="allowed_models",
-              is_list=True),
-            p("cidrlist", "cidrList", "STRING",
-              "CIDRs the key may be used from", wire="cidrs", is_list=True),
-            p("expires", "expires", "STRING", "when the key should expire",
-              wire="expires_at"),
-            p("ratelimitrpm", "rateLimitRpm", "INTEGER",
-              "requests per minute this key may make", wire="rate_limit_rpm"),
+            p(
+                "models",
+                "models",
+                "STRING",
+                "models this key may use; all if unset",
+                wire="allowed_models",
+                is_list=True,
+            ),
+            p(
+                "cidrlist",
+                "cidrList",
+                "STRING",
+                "CIDRs the key may be used from",
+                wire="cidrs",
+                is_list=True,
+            ),
+            p("expires", "expires", "STRING", "when the key should expire", wire="expires_at"),
+            p(
+                "ratelimitrpm",
+                "rateLimitRpm",
+                "INTEGER",
+                "requests per minute this key may make",
+                wire="rate_limit_rpm",
+            ),
         ),
     ),
     Command(
-        "listAiApiKeys", "Lists the caller's scoped API keys.",
-        "/v1/keys", response="AiApiKeyResponse", items_key="keys",
+        "listAiApiKeys",
+        "Lists the caller's scoped API keys.",
+        "/v1/keys",
+        response="AiApiKeyResponse",
+        items_key="keys",
     ),
     Command(
-        "revokeAiApiKey", "Revokes an API key.",
-        "/v1/keys/{keyId}", method="DELETE", success_response=True,
+        "revokeAiApiKey",
+        "Revokes an API key.",
+        "/v1/keys/{keyId}",
+        method="DELETE",
+        success_response=True,
+        event="KEY_REVOKE",
+        event_doing="revoking API key",
         params=(p("id", "keyId", "STRING", "the key to revoke", required=True),),
     ),
     # -- profiles ---------------------------------------------------------
     Command(
-        "listAiServingProfiles", "Lists serving profiles.",
-        "/v1/profiles/serving", response="AiProfileResponse", items_key="profiles",
+        "listAiServingProfiles",
+        "Lists serving profiles.",
+        "/v1/profiles/serving",
+        response="AiProfileResponse",
+        items_key="profiles",
     ),
     Command(
-        "createAiServingProfile", "Creates a serving profile.",
-        "/v1/profiles/serving", method="POST", is_async=True,
-        response="AiProfileResponse", event="PROFILE_UPDATE",
+        "createAiServingProfile",
+        "Creates a serving profile.",
+        "/v1/profiles/serving",
+        method="POST",
+        is_async=True,
+        response="AiProfileResponse",
+        event="PROFILE_UPDATE",
         event_doing="creating serving profile",
         params=(
             p("name", "name", "STRING", "the profile name", required=True, wire="name"),
-            p("params", "params", "STRING",
-              "engine parameters as JSON", required=True, wire="params"),
+            p(
+                "params",
+                "params",
+                "STRING",
+                "engine parameters as JSON",
+                required=True,
+                wire="params",
+            ),
         ),
     ),
     Command(
-        "updateAiServingProfile", "Updates a serving profile, rolling it out.",
-        "/v1/profiles/serving/{profileId}", method="PATCH", is_async=True,
-        response="AiProfileResponse", event="PROFILE_UPDATE",
+        "updateAiServingProfile",
+        "Updates a serving profile, rolling it out.",
+        "/v1/profiles/serving/{profileId}",
+        method="PATCH",
+        is_async=True,
+        response="AiProfileResponse",
+        event="PROFILE_UPDATE",
         event_doing="updating serving profile",
         params=(
             p("id", "profileId", "STRING", "the profile to update", required=True),
@@ -648,69 +833,111 @@ COMMANDS: tuple[Command, ...] = (
         ),
     ),
     Command(
-        "deleteAiServingProfile", "Deletes a serving profile.",
-        "/v1/profiles/serving/{profileId}", method="DELETE", is_async=True,
-        response="AiProfileResponse", event="PROFILE_UPDATE",
+        "deleteAiServingProfile",
+        "Deletes a serving profile.",
+        "/v1/profiles/serving/{profileId}",
+        method="DELETE",
+        is_async=True,
+        response="AiProfileResponse",
+        event="PROFILE_UPDATE",
         event_doing="deleting serving profile",
         params=(p("id", "profileId", "STRING", "the profile to delete", required=True),),
     ),
     Command(
-        "listAiGenerationProfiles", "Lists generation profiles.",
-        "/v1/profiles/generation", response="AiProfileResponse", items_key="profiles",
+        "listAiGenerationProfiles",
+        "Lists generation profiles.",
+        "/v1/profiles/generation",
+        response="AiProfileResponse",
+        items_key="profiles",
     ),
     Command(
-        "createAiGenerationProfile", "Creates a generation profile.",
-        "/v1/profiles/generation", method="POST", response="AiProfileResponse",
+        "createAiGenerationProfile",
+        "Creates a generation profile.",
+        "/v1/profiles/generation",
+        method="POST",
+        response="AiProfileResponse",
+        event="PROFILE_UPDATE",
+        event_doing="creating generation profile",
         params=(
             p("name", "name", "STRING", "the profile name", required=True, wire="name"),
-            p("params", "params", "STRING",
-              "parameters and policies as JSON", required=True, wire="params"),
+            p(
+                "params",
+                "params",
+                "STRING",
+                "parameters and policies as JSON",
+                required=True,
+                wire="params",
+            ),
         ),
     ),
     Command(
-        "updateAiGenerationProfile", "Updates a generation profile.",
-        "/v1/profiles/generation/{profileId}", method="PATCH",
+        "updateAiGenerationProfile",
+        "Updates a generation profile.",
+        "/v1/profiles/generation/{profileId}",
+        method="PATCH",
+        event="PROFILE_UPDATE",
+        event_doing="updating generation profile",
         response="AiProfileResponse",
         params=(
             p("id", "profileId", "STRING", "the profile to update", required=True),
-            p("params", "params", "STRING",
-              "parameters and policies as JSON", wire="params"),
+            p("params", "params", "STRING", "parameters and policies as JSON", wire="params"),
         ),
     ),
     Command(
-        "deleteAiGenerationProfile", "Deletes a generation profile.",
-        "/v1/profiles/generation/{profileId}", method="DELETE", success_response=True,
+        "deleteAiGenerationProfile",
+        "Deletes a generation profile.",
+        "/v1/profiles/generation/{profileId}",
+        method="DELETE",
+        success_response=True,
+        event="PROFILE_UPDATE",
+        event_doing="deleting generation profile",
         params=(p("id", "profileId", "STRING", "the profile to delete", required=True),),
     ),
     Command(
-        "assignAiTuningProfile", "Assigns a tuning profile at a scope.",
-        "/v1/profiles/assignments", method="POST", is_async=True,
-        response="AiProfileResponse", event="PROFILE_UPDATE",
+        "assignAiTuningProfile",
+        "Assigns a tuning profile at a scope.",
+        "/v1/profiles/assignments",
+        method="POST",
+        is_async=True,
+        response="AiProfileResponse",
+        event="PROFILE_UPDATE",
         event_doing="assigning tuning profile",
         params=(
-            p("scope", "scope", "STRING",
-              "domain, account, deployment or key", required=True, wire="scope"),
-            p("target", "target", "STRING",
-              "what to assign it to", required=True, wire="target"),
-            p("profile", "profile", "STRING",
-              "the profile to assign", required=True, wire="profile"),
+            p(
+                "scope",
+                "scope",
+                "STRING",
+                "domain, account, deployment or key",
+                required=True,
+                wire="scope",
+            ),
+            p("target", "target", "STRING", "what to assign it to", required=True, wire="target"),
+            p(
+                "profile",
+                "profile",
+                "STRING",
+                "the profile to assign",
+                required=True,
+                wire="profile",
+            ),
         ),
     ),
     Command(
         "getAiEffectiveParameters",
         "Reports every resolved parameter and the level that set it.",
-        "/v1/profiles/effective", response="AiEffectiveParameterResponse",
+        "/v1/profiles/effective",
+        response="AiEffectiveParameterResponse",
         items_key="parameters",
-        params=(
-            p("model", "model", "STRING",
-              "the deployment to resolve for", required=True),
-        ),
+        params=(p("model", "model", "STRING", "the deployment to resolve for", required=True),),
         query=("model",),
     ),
     # -- usage and budgets ------------------------------------------------
     Command(
-        "listAiUsage", "Lists metered usage.",
-        "/v1/usage", response="AiUsageResponse", items_key="usage",
+        "listAiUsage",
+        "Lists metered usage.",
+        "/v1/usage",
+        response="AiUsageResponse",
+        items_key="usage",
         params=(
             p("startdate", "startDate", "STRING", "start of the period", wire="start_date"),
             p("enddate", "endDate", "STRING", "end of the period", wire="end_date"),
@@ -718,158 +945,258 @@ COMMANDS: tuple[Command, ...] = (
         query=("startDate", "endDate"),
     ),
     Command(
-        "listAiBudgets", "Lists budgets.",
-        "/v1/budgets", response="AiBudgetResponse", items_key="budgets",
+        "listAiBudgets",
+        "Lists budgets.",
+        "/v1/budgets",
+        response="AiBudgetResponse",
+        items_key="budgets",
     ),
     Command(
-        "createAiBudget", "Creates a monthly budget.",
-        "/v1/budgets", method="POST", response="AiBudgetResponse",
+        "createAiBudget",
+        "Creates a monthly budget.",
+        "/v1/budgets",
+        method="POST",
+        response="AiBudgetResponse",
+        event="BUDGET_UPDATE",
+        event_doing="creating budget for",
         params=(
-            p("account", "account", "STRING",
-              "the account the budget applies to", required=True, wire="account"),
+            p(
+                "account",
+                "account",
+                "STRING",
+                "the account the budget applies to",
+                required=True,
+                wire="account",
+            ),
             # Required with the account: a CloudStack account name is
             # unique only within its domain, so the two together are
             # what names a budget.
-            p("domain", "domainPath", "STRING",
-              "the domain path that account is in", required=True, wire="domain"),
-            p("monthly", "monthly", "STRING",
-              "the monthly limit", required=True, wire="monthly"),
+            p(
+                "domain",
+                "domainPath",
+                "STRING",
+                "the domain path that account is in",
+                required=True,
+                wire="domain",
+            ),
+            p("monthly", "monthly", "STRING", "the monthly limit", required=True, wire="monthly"),
             p("currency", "currency", "STRING", "the currency", wire="currency"),
-            p("onexceed", "onExceed", "STRING",
-              "alert or block at 100%", wire="on_exceed"),
+            p("onexceed", "onExceed", "STRING", "alert or block at 100%", wire="on_exceed"),
         ),
     ),
     Command(
-        "updateAiBudget", "Updates a budget.",
-        "/v1/budgets/{budgetId}", method="PATCH", response="AiBudgetResponse",
+        "updateAiBudget",
+        "Updates a budget.",
+        "/v1/budgets/{budgetId}",
+        method="PATCH",
+        response="AiBudgetResponse",
+        event="BUDGET_UPDATE",
+        event_doing="updating budget for",
         params=(
             p("id", "budgetId", "STRING", "the budget to update", required=True),
             p("monthly", "monthly", "STRING", "the monthly limit", wire="monthly"),
-            p("onexceed", "onExceed", "STRING",
-              "alert or block at 100%", wire="on_exceed"),
+            p("onexceed", "onExceed", "STRING", "alert or block at 100%", wire="on_exceed"),
         ),
     ),
     Command(
-        "deleteAiBudget", "Deletes a budget.",
-        "/v1/budgets/{budgetId}", method="DELETE", success_response=True,
+        "deleteAiBudget",
+        "Deletes a budget.",
+        "/v1/budgets/{budgetId}",
+        method="DELETE",
+        success_response=True,
+        event="BUDGET_UPDATE",
+        event_doing="deleting budget for",
         params=(p("id", "budgetId", "STRING", "the budget to delete", required=True),),
     ),
     # -- tenant experience ------------------------------------------------
     Command(
         "createAiPlaygroundSession",
         "Mints a short-lived, model-scoped key for the playground.",
-        "/v1/playground/sessions", method="POST",
+        "/v1/playground/sessions",
+        method="POST",
+        event="PLAYGROUND_SESSION",
+        event_doing="opening a playground session for",
         response="AiPlaygroundSessionResponse",
         params=(
-            p("model", "model", "STRING",
-              "the model to open a session against", required=True, wire="model"),
+            p(
+                "model",
+                "model",
+                "STRING",
+                "the model to open a session against",
+                required=True,
+                wire="model",
+            ),
         ),
     ),
     # -- operations -------------------------------------------------------
     Command(
-        "listAiSetupChecks", "Runs the setup wizard's preflight checks.",
-        "/v1/setup/preflight", response="AiSetupCheckResponse", items_key="checks",
+        "listAiSetupChecks",
+        "Runs the setup wizard's preflight checks.",
+        "/v1/setup/preflight",
+        response="AiSetupCheckResponse",
+        items_key="checks",
     ),
     Command(
-        "discoverAiGpuClasses", "Proposes GPU classes from the tags on healthy hosts.",
-        "/v1/setup/gpu-discovery", response="AiGpuClassProposalResponse",
+        "discoverAiGpuClasses",
+        "Proposes GPU classes from the tags on healthy hosts.",
+        "/v1/setup/gpu-discovery",
+        response="AiGpuClassProposalResponse",
         items_key="classes",
     ),
     Command(
-        "runAiSetupSelfTest", "Runs the setup self-test for a zone.",
-        "/v1/setup/selftest", method="POST", is_async=True,
-        response="AiReconcilerRunResponse", event="MODEL_DEPLOY",
+        "runAiSetupSelfTest",
+        "Runs the setup self-test for a zone.",
+        "/v1/setup/selftest",
+        method="POST",
+        is_async=True,
+        response="AiReconcilerRunResponse",
+        event="MODEL_DEPLOY",
         event_doing="running the AI Services self-test for",
-        params=(p("zoneid", "zoneId", "STRING", "the zone to test", required=True,
-                  wire="zone"),),
+        params=(p("zoneid", "zoneId", "STRING", "the zone to test", required=True, wire="zone"),),
     ),
     Command(
-        "listAiGpuCapacity", "Lists GPU capacity per zone and class.",
-        "/v1/capacity", response="AiGpuCapacityResponse", items_key="classes",
+        "listAiGpuCapacity",
+        "Lists GPU capacity per zone and class.",
+        "/v1/capacity",
+        response="AiGpuCapacityResponse",
+        items_key="classes",
     ),
     Command(
-        "drainAiNode", "Drains a GPU node before maintenance.",
-        "/v1/nodes/{nodeId}/drain", method="POST", is_async=True,
-        response="AiReconcilerRunResponse", event="NODE_DRAIN",
+        "drainAiNode",
+        "Drains a GPU node before maintenance.",
+        "/v1/nodes/{nodeId}/drain",
+        method="POST",
+        is_async=True,
+        response="AiReconcilerRunResponse",
+        event="NODE_DRAIN",
         event_doing="draining GPU node",
         params=(p("id", "nodeId", "STRING", "the node to drain", required=True),),
     ),
     Command(
-        "listAiReconcilerRuns", "Lists reconciler runs.",
-        "/v1/runs", response="AiReconcilerRunResponse", items_key="runs",
+        "listAiReconcilerRuns",
+        "Lists reconciler runs.",
+        "/v1/runs",
+        response="AiReconcilerRunResponse",
+        items_key="runs",
     ),
     # -- tier 2 (SPEC.md section 8) ---------------------------------------
     # Generated, but registered only when ai.services.v2.enabled is on:
     # the release boundary in aisvc/api/commands.py holds here too.
     Command(
-        "listAiAdapters", "Lists the LoRA adapters this account may use.",
-        "/v1/adapters", response="AiAdapterResponse", items_key="adapters",
+        "listAiAdapters",
+        "Lists the LoRA adapters this account may use.",
+        "/v1/adapters",
+        response="AiAdapterResponse",
+        items_key="adapters",
         release="v2",
     ),
     Command(
-        "uploadAiAdapter", "Registers a LoRA adapter.",
-        "/v1/adapters", method="POST", is_async=True,
-        response="AiAdapterResponse", event="ADAPTER_UPLOAD",
-        event_doing="registering adapter", release="v2",
+        "uploadAiAdapter",
+        "Registers a LoRA adapter.",
+        "/v1/adapters",
+        method="POST",
+        is_async=True,
+        response="AiAdapterResponse",
+        event="ADAPTER_UPLOAD",
+        event_doing="registering adapter",
+        release="v2",
         params=(
             p("name", "name", "STRING", "a name for the adapter", required=True),
-            p("basemodel", "baseModel", "STRING", "the base it serves on",
-              required=True, wire="base_model"),
+            p(
+                "basemodel",
+                "baseModel",
+                "STRING",
+                "the base it serves on",
+                required=True,
+                wire="base_model",
+            ),
             p("rank", "rank", "INTEGER", "its LoRA rank", required=True),
             # Required because the engine checks it against
             # MAX_ADAPTER_BYTES. Defaulting it would turn that limit
             # off; the caller declares it until artefacts are fetched
             # and it can be measured instead.
-            p("sizebytes", "sizeBytes", "INTEGER", "size of the adapter in bytes",
-              required=True, wire="size_bytes"),
+            p(
+                "sizebytes",
+                "sizeBytes",
+                "INTEGER",
+                "size of the adapter in bytes",
+                required=True,
+                wire="size_bytes",
+            ),
             p("uri", "uri", "STRING", "where its artefacts are"),
         ),
     ),
     Command(
-        "deleteAiAdapter", "Deletes a LoRA adapter.",
-        "/v1/adapters/{adapterId}", method="DELETE", success_response=True,
-        event="ADAPTER_DELETE", event_doing="deleting adapter", release="v2",
+        "deleteAiAdapter",
+        "Deletes a LoRA adapter.",
+        "/v1/adapters/{adapterId}",
+        method="DELETE",
+        success_response=True,
+        event="ADAPTER_DELETE",
+        event_doing="deleting adapter",
+        release="v2",
         params=(p("id", "adapterId", "STRING", "the adapter to delete", required=True),),
     ),
     Command(
-        "createAiBatch", "Submits a batch inference job.",
-        "/v1/batches", method="POST", is_async=True,
-        response="AiBatchResponse", event="BATCH_CREATE",
-        event_doing="submitting batch", release="v2",
+        "createAiBatch",
+        "Submits a batch inference job.",
+        "/v1/batches",
+        method="POST",
+        is_async=True,
+        response="AiBatchResponse",
+        event="BATCH_CREATE",
+        event_doing="submitting batch",
+        release="v2",
         params=(
             p("model", "model", "STRING", "the model to run against", required=True),
-            p("inputuri", "inputUri", "STRING", "where the JSONL input is",
-              wire="input_uri"),
+            p("inputuri", "inputUri", "STRING", "where the JSONL input is", wire="input_uri"),
         ),
     ),
     Command(
-        "listAiBatches", "Lists batch jobs.",
-        "/v1/batches", response="AiBatchResponse", items_key="batches",
+        "listAiBatches",
+        "Lists batch jobs.",
+        "/v1/batches",
+        response="AiBatchResponse",
+        items_key="batches",
         release="v2",
     ),
     Command(
-        "cancelAiBatch", "Cancels a batch job.",
-        "/v1/batches/{batchId}/cancel", method="POST", is_async=True,
-        response="AiBatchResponse", event="BATCH_CANCEL",
-        event_doing="cancelling batch", release="v2",
+        "cancelAiBatch",
+        "Cancels a batch job.",
+        "/v1/batches/{batchId}/cancel",
+        method="POST",
+        is_async=True,
+        response="AiBatchResponse",
+        event="BATCH_CANCEL",
+        event_doing="cancelling batch",
+        release="v2",
         params=(p("id", "batchId", "STRING", "the batch to cancel", required=True),),
     ),
     Command(
-        "getAiBatchResults", "Downloads a batch job's results.",
-        "/v1/batches/{batchId}/results", response="AiBatchResponse",
+        "getAiBatchResults",
+        "Downloads a batch job's results.",
+        "/v1/batches/{batchId}/results",
+        response="AiBatchResponse",
         release="v2",
         params=(p("id", "batchId", "STRING", "the batch to read", required=True),),
     ),
     Command(
-        "listAiGuardrailProfiles", "Lists guardrail profiles.",
-        "/v1/profiles/guardrail", response="AiGuardrailProfileResponse",
-        items_key="profiles", release="v2",
+        "listAiGuardrailProfiles",
+        "Lists guardrail profiles.",
+        "/v1/profiles/guardrail",
+        response="AiGuardrailProfileResponse",
+        items_key="profiles",
+        release="v2",
     ),
     Command(
-        "createAiGuardrailProfile", "Creates a guardrail profile.",
-        "/v1/profiles/guardrail", method="POST",
-        response="AiGuardrailProfileResponse", event="PROFILE_UPDATE",
-        event_doing="creating guardrail profile", release="v2",
+        "createAiGuardrailProfile",
+        "Creates a guardrail profile.",
+        "/v1/profiles/guardrail",
+        method="POST",
+        response="AiGuardrailProfileResponse",
+        event="PROFILE_UPDATE",
+        event_doing="creating guardrail profile",
+        release="v2",
         params=(
             p("name", "name", "STRING", "a name for the profile", required=True),
             p("scope", "scope", "STRING", "the level to bind it at"),
@@ -878,77 +1205,139 @@ COMMANDS: tuple[Command, ...] = (
         ),
     ),
     Command(
-        "updateAiGuardrailProfile", "Updates a guardrail profile.",
-        "/v1/profiles/guardrail/{profileId}", method="PATCH",
-        response="AiGuardrailProfileResponse", event="PROFILE_UPDATE",
-        event_doing="updating guardrail profile", release="v2",
+        "updateAiGuardrailProfile",
+        "Updates a guardrail profile.",
+        "/v1/profiles/guardrail/{profileId}",
+        method="PATCH",
+        response="AiGuardrailProfileResponse",
+        event="PROFILE_UPDATE",
+        event_doing="updating guardrail profile",
+        release="v2",
         params=(
             p("id", "profileId", "STRING", "the profile to update", required=True),
             p("target", "target", "STRING", "the scope to bind it to"),
         ),
     ),
     Command(
-        "deleteAiGuardrailProfile", "Deletes a guardrail profile.",
-        "/v1/profiles/guardrail/{profileId}", method="DELETE",
-        success_response=True, event="PROFILE_UPDATE",
-        event_doing="deleting guardrail profile", release="v2",
+        "deleteAiGuardrailProfile",
+        "Deletes a guardrail profile.",
+        "/v1/profiles/guardrail/{profileId}",
+        method="DELETE",
+        success_response=True,
+        event="PROFILE_UPDATE",
+        event_doing="deleting guardrail profile",
+        release="v2",
         params=(p("id", "profileId", "STRING", "the profile to delete", required=True),),
     ),
     Command(
-        "runAiModelEvaluation", "Records a pre-publish evaluation.",
-        "/v1/models/{modelName}/evaluations", method="POST", is_async=True,
-        response="AiEvaluationResponse", event="MODEL_UPDATE",
-        event_doing="evaluating model", release="v2",
+        "runAiModelEvaluation",
+        "Records a pre-publish evaluation.",
+        "/v1/models/{modelName}/evaluations",
+        method="POST",
+        is_async=True,
+        response="AiEvaluationResponse",
+        event="MODEL_UPDATE",
+        event_doing="evaluating model",
+        release="v2",
         params=(
             p("model", "modelName", "STRING", "the model evaluated", required=True),
             p("revision", "revision", "STRING", "the revision evaluated", required=True),
         ),
     ),
     Command(
-        "listAiEvaluations", "Lists a model's evaluations.",
-        "/v1/models/{modelName}/evaluations", response="AiEvaluationResponse",
-        items_key="evaluations", release="v2",
+        "listAiEvaluations",
+        "Lists a model's evaluations.",
+        "/v1/models/{modelName}/evaluations",
+        response="AiEvaluationResponse",
+        items_key="evaluations",
+        release="v2",
         params=(p("model", "modelName", "STRING", "the model to list", required=True),),
     ),
     Command(
-        "uploadAiCertificate", "Uploads a TLS certificate for a custom domain.",
-        "/v1/certificates", method="POST", response="AiCertificateResponse",
+        "uploadAiCertificate",
+        "Uploads a TLS certificate for a custom domain.",
+        "/v1/certificates",
+        method="POST",
+        response="AiCertificateResponse",
+        event="CERTIFICATE_UPLOAD",
+        event_doing="uploading certificate for",
         release="v2",
         params=(
-            p("customdomain", "customDomain", "STRING", "the domain it covers",
-              required=True, wire="custom_domain"),
-            p("certificate", "certificate", "STRING", "the PEM certificate",
-              required=True, length=65535),
-            p("privatekey", "privateKey", "STRING", "the PEM private key",
-              required=True, wire="private_key", length=65535),
+            p(
+                "customdomain",
+                "customDomain",
+                "STRING",
+                "the domain it covers",
+                required=True,
+                wire="custom_domain",
+            ),
+            p(
+                "certificate",
+                "certificate",
+                "STRING",
+                "the PEM certificate",
+                required=True,
+                length=65535,
+            ),
+            p(
+                "privatekey",
+                "privateKey",
+                "STRING",
+                "the PEM private key",
+                required=True,
+                wire="private_key",
+                length=65535,
+            ),
         ),
     ),
     Command(
-        "listAiCertificates", "Lists uploaded certificates.",
-        "/v1/certificates", response="AiCertificateResponse",
-        items_key="certificates", release="v2",
+        "listAiCertificates",
+        "Lists uploaded certificates.",
+        "/v1/certificates",
+        response="AiCertificateResponse",
+        items_key="certificates",
+        release="v2",
     ),
     Command(
-        "replaceAiCertificate", "Replaces a certificate, keeping its id.",
-        "/v1/certificates/{certificateId}", method="PATCH",
-        response="AiCertificateResponse", release="v2",
-        params=(
-            p("id", "certificateId", "STRING", "the certificate to replace",
-              required=True),
-            p("certificate", "certificate", "STRING", "the PEM certificate",
-              required=True, length=65535),
-            p("privatekey", "privateKey", "STRING", "the PEM private key",
-              required=True, wire="private_key", length=65535),
-        ),
-    ),
-    Command(
-        "deleteAiCertificate", "Deletes a certificate.",
-        "/v1/certificates/{certificateId}", method="DELETE", success_response=True,
+        "replaceAiCertificate",
+        "Replaces a certificate, keeping its id.",
+        "/v1/certificates/{certificateId}",
+        method="PATCH",
+        event="CERTIFICATE_REPLACE",
+        event_doing="replacing certificate for",
+        response="AiCertificateResponse",
         release="v2",
         params=(
-            p("id", "certificateId", "STRING", "the certificate to delete",
-              required=True),
+            p("id", "certificateId", "STRING", "the certificate to replace", required=True),
+            p(
+                "certificate",
+                "certificate",
+                "STRING",
+                "the PEM certificate",
+                required=True,
+                length=65535,
+            ),
+            p(
+                "privatekey",
+                "privateKey",
+                "STRING",
+                "the PEM private key",
+                required=True,
+                wire="private_key",
+                length=65535,
+            ),
         ),
+    ),
+    Command(
+        "deleteAiCertificate",
+        "Deletes a certificate.",
+        "/v1/certificates/{certificateId}",
+        method="DELETE",
+        success_response=True,
+        event="CERTIFICATE_DELETE",
+        event_doing="deleting certificate for",
+        release="v2",
+        params=(p("id", "certificateId", "STRING", "the certificate to delete", required=True),),
     ),
     Command(
         "listAiPrivateEndpoints",
@@ -959,34 +1348,55 @@ COMMANDS: tuple[Command, ...] = (
         release="v2",
     ),
     Command(
-        "createAiPrivateEndpoint", "Attaches an endpoint to a tenant network.",
-        "/v1/endpoints/private", method="POST", is_async=True,
-        response="AiPrivateEndpointResponse", event="MODEL_UPDATE",
-        event_doing="attaching private endpoint", release="v2",
+        "createAiPrivateEndpoint",
+        "Attaches an endpoint to a tenant network.",
+        "/v1/endpoints/private",
+        method="POST",
+        is_async=True,
+        response="AiPrivateEndpointResponse",
+        event="MODEL_UPDATE",
+        event_doing="attaching private endpoint",
+        release="v2",
         params=(
-            p("deployment", "deployment", "STRING", "the deployment to front",
-              required=True),
-            p("networkid", "networkId", "UUID", "the VPC tier to attach to",
-              entity="org.apache.cloudstack.api.response.NetworkResponse",
-              resolve="com.cloud.network.Network", wire="network_id"),
-            p("publicenabled", "publicEnabled", "BOOLEAN",
-              "whether the public endpoint stays on", wire="public_enabled"),
-            p("customdomain", "customDomain", "STRING", "a custom domain",
-              wire="custom_domain"),
-            p("certificateid", "certificateId", "STRING",
-              "an uploaded certificate for it", wire="certificate_id"),
+            p("deployment", "deployment", "STRING", "the deployment to front", required=True),
+            p(
+                "networkid",
+                "networkId",
+                "UUID",
+                "the VPC tier to attach to",
+                entity="org.apache.cloudstack.api.response.NetworkResponse",
+                resolve="com.cloud.network.Network",
+                wire="network_id",
+            ),
+            p(
+                "publicenabled",
+                "publicEnabled",
+                "BOOLEAN",
+                "whether the public endpoint stays on",
+                wire="public_enabled",
+            ),
+            p("customdomain", "customDomain", "STRING", "a custom domain", wire="custom_domain"),
+            p(
+                "certificateid",
+                "certificateId",
+                "STRING",
+                "an uploaded certificate for it",
+                wire="certificate_id",
+            ),
         ),
     ),
     Command(
-        "deleteAiPrivateEndpoint", "Removes a private endpoint.",
-        "/v1/endpoints/private/{exposureId}", method="DELETE", is_async=True,
-        response="AiPrivateEndpointResponse", event="MODEL_UPDATE",
-        event_doing="removing private endpoint", release="v2",
-        params=(
-            p("id", "exposureId", "STRING", "the exposure to remove", required=True),
-        ),
+        "deleteAiPrivateEndpoint",
+        "Removes a private endpoint.",
+        "/v1/endpoints/private/{exposureId}",
+        method="DELETE",
+        is_async=True,
+        response="AiPrivateEndpointResponse",
+        event="MODEL_UPDATE",
+        event_doing="removing private endpoint",
+        release="v2",
+        params=(p("id", "exposureId", "STRING", "the exposure to remove", required=True),),
     ),
-
 )
 
 
@@ -1003,16 +1413,18 @@ def render_params(params: tuple[Param, ...]) -> str:
     out = []
     for param in params:
         entity = (
-            f",\n            entityType = {_simple(param.entity)}.class"
-            if param.entity else ""
+            f",\n            entityType = {_simple(param.entity)}.class" if param.entity else ""
         )
         required = ", required = true" if param.required else ""
         # @Parameter caps a STRING at 255 unless told otherwise, which
         # no PEM or other blob can meet.
         length = f", length = {param.length}" if param.length else ""
         java_type = {
-            "STRING": "String", "INTEGER": "Integer", "LONG": "Long",
-            "BOOLEAN": "Boolean", "UUID": "Long",
+            "STRING": "String",
+            "INTEGER": "Integer",
+            "LONG": "Long",
+            "BOOLEAN": "Boolean",
+            "UUID": "Long",
         }[param.type]
         out.append(
             f'    @Parameter(name = "{param.name}", type = CommandType.{param.type}{entity}'
@@ -1105,9 +1517,11 @@ def wire_name(param: Param) -> str:
 
 
 def render_body(command: Command) -> str:
-    body_params = [param for param in command.params
-                   if "{" + param.java + "}" not in command.path and
-                   param.java not in command.query]
+    body_params = [
+        param
+        for param in command.params
+        if "{" + param.java + "}" not in command.path and param.java not in command.query
+    ]
     if not body_params:
         return ""
     lines = "\n".join(_body_lines(param) for param in body_params)
@@ -1121,6 +1535,29 @@ def render_body(command: Command) -> str:
 """
 
 
+def event_methods(command: Command) -> str:
+    """The two overrides that let CloudStack record this command.
+
+    A command with no event name records nothing, which is how reads
+    stay out of the operator's log: `AiServicesSyncCmd.getEventType`
+    returns null by default and every list command inherits it.
+
+    Both base classes route their work through
+    `AiServicesService.recordEvent` when a type is present, because the
+    interceptor that writes Completed and Failed is a Spring AOP
+    advisor and only sees methods on beans — never a command's own
+    `execute()`, which CloudStack builds unproxied.
+    """
+    if not command.event:
+        return ""
+    return (
+        "\n\n    @Override\n    public String getEventType() {\n"
+        f"        return AiServicesEvents.{command.event};\n    }}\n\n"
+        "    @Override\n    public String getEventDescription() {\n"
+        f'        return "{command.event_doing} " + {_subject(command)};\n    }}'
+    )
+
+
 def render_command(command: Command) -> str:
     cls = class_name(command.name)
     imports = [
@@ -1132,8 +1569,7 @@ def render_command(command: Command) -> str:
         imports.append("org.apache.cloudstack.api.response.SuccessResponse")
         response_type = "SuccessResponse"
     else:
-        imports.append(
-            f"org.apache.cloudstack.ai.api.response.{command.response}")
+        imports.append(f"org.apache.cloudstack.ai.api.response.{command.response}")
         response_type = command.response
 
     has_body = bool(render_body(command))
@@ -1161,22 +1597,24 @@ def render_command(command: Command) -> str:
         imports.append("com.google.gson.JsonObject")
 
     import_block = "\n".join(
-        f"import {i};" for i in sorted(set(imports)) if not i.startswith("com.google"))
+        f"import {i};" for i in sorted(set(imports)) if not i.startswith("com.google")
+    )
     gson_block = "\n".join(
-        f"import {i};" for i in sorted(set(imports)) if i.startswith("com.google"))
+        f"import {i};" for i in sorted(set(imports)) if i.startswith("com.google")
+    )
     if gson_block:
         import_block += "\n\n" + gson_block
 
     naming = f'    public static final String APINAME = "{command.name}";'
     params = render_params(command.params)
     path_method = (
-        "    @Override\n    protected String enginePath() {\n"
-        + render_path(command) + "\n    }"
+        "    @Override\n    protected String enginePath() {\n" + render_path(command) + "\n    }"
     )
     method_override = (
-        f'\n    @Override\n    protected String engineMethod() {{\n'
+        f"\n    @Override\n    protected String engineMethod() {{\n"
         f'        return "{command.method}";\n    }}\n'
-        if command.method != ("POST" if command.is_async else "GET") else ""
+        if command.method != ("POST" if command.is_async else "GET")
+        else ""
     )
 
     if command.is_async:
@@ -1185,11 +1623,7 @@ def render_command(command: Command) -> str:
             "    @Override\n    protected void onSuccess(EngineJob job) {\n"
             f"        {response_type} response = {response_type}.from(job.getResult());\n"
             "        response.setResponseName(getCommandName());\n"
-            "        setResponseObject(response);\n    }\n\n"
-            "    @Override\n    public String getEventType() {\n"
-            f"        return AiServicesEvents.{command.event};\n    }}\n\n"
-            "    @Override\n    public String getEventDescription() {\n"
-            f'        return "{command.event_doing} " + {_subject(command)};\n    }}'
+            "        setResponseObject(response);\n    }" + event_methods(command)
         )
     elif command.items_key:
         extends = f"AiServicesListCmd<{response_type}>"
@@ -1216,6 +1650,11 @@ def render_command(command: Command) -> str:
                 "        response.setResponseName(getCommandName());\n"
                 "        setResponseObject(response);\n    }"
             )
+        # A sync write records its outcome too. Only the async half
+        # used to carry these, so every synchronous write — budgets,
+        # keys, certificates, guardrail profiles — completed in
+        # silence.
+        success += event_methods(command)
 
     sections = [naming]
     if params:
@@ -1295,9 +1734,7 @@ def render_fixture() -> str:
     import json
 
     fixture = {
-        response.name: {
-            fl.wire: SAMPLE_VALUES[fl.type] for fl in response.fields
-        }
+        response.name: {fl.wire: SAMPLE_VALUES[fl.type] for fl in response.fields}
         for response in RESPONSES
     }
     return json.dumps(fixture, indent=2, sort_keys=True) + "\n"
@@ -1321,20 +1758,14 @@ def main() -> int:
 
     print(f"generated {len(written)} files")
     registration = "\n".join(
-        f"        commands.add({class_name(c.name)}.class);"
-        for c in COMMANDS
-        if c.release == "v1"
+        f"        commands.add({class_name(c.name)}.class);" for c in COMMANDS if c.release == "v1"
     )
     registration += "\n\n// v2, registered only when ai.services.v2.enabled:\n"
     registration += "\n".join(
-        f"        commands.add({class_name(c.name)}.class);"
-        for c in COMMANDS
-        if c.release == "v2"
+        f"        commands.add({class_name(c.name)}.class);" for c in COMMANDS if c.release == "v2"
     )
-    (ROOT / "target" / "generated-registration.txt").parent.mkdir(
-        parents=True, exist_ok=True)
-    (ROOT / "target" / "generated-registration.txt").write_text(
-        registration, encoding="utf-8")
+    (ROOT / "target" / "generated-registration.txt").parent.mkdir(parents=True, exist_ok=True)
+    (ROOT / "target" / "generated-registration.txt").write_text(registration, encoding="utf-8")
     print("registration snippet written to target/generated-registration.txt")
     return 0
 

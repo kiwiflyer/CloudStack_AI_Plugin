@@ -18,6 +18,7 @@
 package org.apache.cloudstack.ai.api.command;
 
 import org.apache.cloudstack.acl.RoleType;
+import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiPlaygroundSessionResponse;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
@@ -64,5 +65,15 @@ public class CreateAiPlaygroundSessionCmd extends AiServicesSyncCmd {
         AiPlaygroundSessionResponse response = AiPlaygroundSessionResponse.from(body);
         response.setResponseName(getCommandName());
         setResponseObject(response);
+    }
+
+    @Override
+    public String getEventType() {
+        return AiServicesEvents.PLAYGROUND_SESSION;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "opening a playground session for " + model;
     }
 }

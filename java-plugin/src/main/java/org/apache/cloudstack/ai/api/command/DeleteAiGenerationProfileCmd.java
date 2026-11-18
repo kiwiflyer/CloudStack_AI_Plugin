@@ -18,6 +18,7 @@
 package org.apache.cloudstack.ai.api.command;
 
 import org.apache.cloudstack.acl.RoleType;
+import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
 import org.apache.cloudstack.api.response.SuccessResponse;
@@ -55,5 +56,15 @@ public class DeleteAiGenerationProfileCmd extends AiServicesSyncCmd {
         SuccessResponse response = new SuccessResponse(getCommandName());
         response.setSuccess(true);
         setResponseObject(response);
+    }
+
+    @Override
+    public String getEventType() {
+        return AiServicesEvents.PROFILE_UPDATE;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "deleting generation profile " + profileId;
     }
 }

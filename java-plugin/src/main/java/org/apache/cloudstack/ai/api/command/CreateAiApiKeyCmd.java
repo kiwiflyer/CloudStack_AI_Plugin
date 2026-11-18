@@ -18,6 +18,7 @@
 package org.apache.cloudstack.ai.api.command;
 
 import org.apache.cloudstack.acl.RoleType;
+import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiApiKeyResponse;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
@@ -107,5 +108,15 @@ public class CreateAiApiKeyCmd extends AiServicesSyncCmd {
         AiApiKeyResponse response = AiApiKeyResponse.from(body);
         response.setResponseName(getCommandName());
         setResponseObject(response);
+    }
+
+    @Override
+    public String getEventType() {
+        return AiServicesEvents.KEY_CREATE;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "creating API key " + name;
     }
 }

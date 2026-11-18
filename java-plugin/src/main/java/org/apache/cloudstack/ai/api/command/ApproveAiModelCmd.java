@@ -18,6 +18,7 @@
 package org.apache.cloudstack.ai.api.command;
 
 import org.apache.cloudstack.acl.RoleType;
+import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiModelResponse;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
@@ -55,5 +56,15 @@ public class ApproveAiModelCmd extends AiServicesSyncCmd {
         AiModelResponse response = AiModelResponse.from(body);
         response.setResponseName(getCommandName());
         setResponseObject(response);
+    }
+
+    @Override
+    public String getEventType() {
+        return AiServicesEvents.MODEL_PUBLISH;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "approving model " + modelId;
     }
 }

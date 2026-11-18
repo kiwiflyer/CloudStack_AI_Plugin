@@ -18,6 +18,7 @@
 package org.apache.cloudstack.ai.api.command;
 
 import org.apache.cloudstack.acl.RoleType;
+import org.apache.cloudstack.ai.AiServicesEvents;
 import org.apache.cloudstack.ai.api.response.AiProfileResponse;
 import org.apache.cloudstack.api.APICommand;
 import org.apache.cloudstack.api.Parameter;
@@ -71,5 +72,15 @@ public class CreateAiGenerationProfileCmd extends AiServicesSyncCmd {
         AiProfileResponse response = AiProfileResponse.from(body);
         response.setResponseName(getCommandName());
         setResponseObject(response);
+    }
+
+    @Override
+    public String getEventType() {
+        return AiServicesEvents.PROFILE_UPDATE;
+    }
+
+    @Override
+    public String getEventDescription() {
+        return "creating generation profile " + name;
     }
 }
