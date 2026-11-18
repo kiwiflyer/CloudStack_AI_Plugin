@@ -57,6 +57,10 @@ public class CreateAiPrivateEndpointCmd extends AiServicesAsyncCmd {
             description = "a custom domain")
     private String customDomain;
 
+    @Parameter(name = "tls", type = CommandType.STRING,
+            description = "where its certificate comes from: none, acme or uploaded")
+    private String tls;
+
     @Parameter(name = "certificateid", type = CommandType.STRING,
             description = "an uploaded certificate for it")
     private String certificateId;
@@ -86,6 +90,9 @@ public class CreateAiPrivateEndpointCmd extends AiServicesAsyncCmd {
         }
         if (customDomain != null) {
             body.addProperty("custom_domain", customDomain);
+        }
+        if (tls != null) {
+            body.addProperty("tls", tls);
         }
         if (certificateId != null) {
             body.addProperty("certificate_id", certificateId);

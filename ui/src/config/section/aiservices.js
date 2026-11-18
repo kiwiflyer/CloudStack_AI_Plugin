@@ -149,7 +149,7 @@ export default {
           label: 'label.ai.create.api.key',
           dataView: true,
           popup: true,
-          args: ['name', 'allowedmodels', 'cidrs', 'expiresat', 'ratelimitrpm']
+          args: ['name', 'models', 'cidrlist', 'expires', 'ratelimitrpm']
         },
         {
           api: 'deleteAiModelDeployment',
@@ -191,7 +191,7 @@ export default {
           label: 'label.ai.create.generation.profile',
           listView: true,
           popup: true,
-          args: ['name', 'description', 'temperature', 'topp', 'maxtokens', 'policy']
+          args: ['name', 'params']
         },
         {
           api: 'updateAiGenerationProfile',
@@ -199,7 +199,7 @@ export default {
           label: 'label.ai.update.generation.profile',
           dataView: true,
           popup: true,
-          args: ['temperature', 'topp', 'maxtokens', 'policy']
+          args: ['params']
         },
         {
           api: 'assignAiTuningProfile',
@@ -207,7 +207,7 @@ export default {
           label: 'label.ai.assign.profile',
           dataView: true,
           popup: true,
-          args: ['scope', 'domainid', 'account', 'deploymentid']
+          args: ['profile', 'scope', 'target']
         },
         {
           api: 'deleteAiGenerationProfile',
@@ -573,7 +573,7 @@ export default {
           label: 'label.ai.run.self.test',
           listView: true,
           popup: true,
-          args: ['zone']
+          args: ['zoneid']
         },
         {
           api: 'discoverAiGpuClasses',
@@ -611,7 +611,7 @@ export default {
           label: 'label.ai.check.compatibility',
           dataView: true,
           popup: true,
-          args: ['repo', 'revision']
+          args: ['repoid', 'revision']
         },
         {
           api: 'mirrorAiModel',
@@ -619,7 +619,7 @@ export default {
           label: 'label.ai.mirror.model',
           dataView: true,
           popup: true,
-          args: ['repo', 'revision']
+          args: ['repoid', 'revision']
         },
         {
           api: 'approveAiModel',
@@ -671,7 +671,7 @@ export default {
           label: 'label.ai.publish.model',
           dataView: true,
           popup: true,
-          args: ['pricetier', 'domainid']
+          args: ['pricetier', 'visibility']
         },
         {
           api: 'runAiModelEvaluation',
@@ -806,10 +806,7 @@ export default {
           label: 'label.ai.create.serving.profile',
           listView: true,
           popup: true,
-          args: [
-            'name', 'description', 'maxnumseqs', 'gpumemoryutilization',
-            'maxmodellen', 'tensorparallel'
-          ]
+          args: ['name', 'params']
         },
         {
           api: 'updateAiServingProfile',
@@ -817,7 +814,7 @@ export default {
           label: 'label.ai.update.serving.profile',
           dataView: true,
           popup: true,
-          args: ['maxnumseqs', 'gpumemoryutilization', 'maxmodellen']
+          args: ['params']
         },
         {
           api: 'deleteAiServingProfile',

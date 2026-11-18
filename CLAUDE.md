@@ -578,6 +578,28 @@ JSON array — so `listAiEndpoints` delivers four snippets with each endpoint an
 the tab reads them off `resource`. Before that every `Field` was a scalar, and a
 response that cannot hold a list silently drops one.
 
+**And the mirror image, in the UI: thirteen actions offered a field the command
+does not take.** CloudStack drops an unknown parameter in silence, so a dialog
+can collect a value that goes nowhere. **`createAiApiKey` was the Terraform
+`allowedmodels` bug exactly** — same three names, `allowedmodels`, `cidrs` and
+`expiresat`, against a command taking `models`, `cidrlist` and `expires` — so a
+tenant who restricted a key to two models and a CIDR got a key with neither,
+and no expiry. The profile dialogs offered `temperature`, `topp` and the rest
+individually while the command takes a single `params` map, so every field was
+dropped and the profile was created empty; `runAiSetupSelfTest` sent `zone` for
+`zoneid`, and both Hugging Face actions `repo` for `repoid`. Three were the
+command's fault instead, because the engine accepts what the dialog offered:
+**`createAiPrivateEndpoint` had no `tls` parameter at all**, so every private
+endpoint was created with the engine's default of `none` and the
+`certificateid` beside it could never mean anything — a TLS-terminated private
+endpoint could not be made through CloudStack; `updateAiBudget` had no
+`currency`, which `BudgetPatch` takes, so a budget's currency could be set once
+and never corrected; and `drainAiNode` had no `force`, the query parameter that
+is the whole reason to drain a tight zone.
+`TestEveryUiActionSendsParametersItsCommandTakes` compares every action's `args`
+against its command, the way `test_commands.py` already did for the Terraform
+provider — the same test, pointed at the other caller.
+
 **A field the engine sends that no Java response declares is dropped in
 silence, and ten were.** The contract test asked only the other question — does
 the Java read a field the engine never sends, which arrives empty — so this

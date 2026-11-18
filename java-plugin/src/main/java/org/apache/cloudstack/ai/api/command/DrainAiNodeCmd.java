@@ -39,9 +39,14 @@ public class DrainAiNodeCmd extends AiServicesAsyncCmd {
             description = "the node to drain")
     private String nodeId;
 
+    @Parameter(name = "force", type = CommandType.BOOLEAN,
+            description = "drain even with no room for the replicas elsewhere")
+    private Boolean force;
+
     @Override
     protected String enginePath() {
         String path = "/v1/nodes/" + nodeId + "/drain";
+        path = withQuery(path, "force", force);
         return path;
     }
 

@@ -44,6 +44,10 @@ public class UpdateAiBudgetCmd extends AiServicesSyncCmd {
             description = "the monthly limit")
     private String monthly;
 
+    @Parameter(name = "currency", type = CommandType.STRING,
+            description = "the currency of the limit")
+    private String currency;
+
     @Parameter(name = "onexceed", type = CommandType.STRING,
             description = "alert or block at 100%")
     private String onExceed;
@@ -64,6 +68,9 @@ public class UpdateAiBudgetCmd extends AiServicesSyncCmd {
         JsonObject body = new JsonObject();
         if (monthly != null) {
             body.addProperty("monthly", monthly);
+        }
+        if (currency != null) {
+            body.addProperty("currency", currency);
         }
         if (onExceed != null) {
             body.addProperty("on_exceed", onExceed);

@@ -1283,3 +1283,49 @@ class TestGeneratedCommandsImportOnlyWhatTheyUse:
                     unused.append(f"{command.name}: imports {simple} and never uses it")
 
         assert not unused, "\n".join(unused)
+
+
+# ---------------------------------------------------------------------------
+# A UI action names the command's parameters. CloudStack drops a parameter it
+# does not know, in silence — the same thing that let the Terraform provider
+# send `allowedmodels` to a command taking `models`, so every key was created
+# unrestricted while the plan said otherwise.
+#
+# The section had thirteen of them. `createAiApiKey` was the Terraform bug
+# exactly, in the UI: the dialog offered a model allow-list, a CIDR list and an
+# expiry under names the command does not take, so a tenant who restricted a
+# key got one that was unrestricted and never expired.
+
+
+class TestEveryUiActionSendsParametersItsCommandTakes:
+    def test_no_action_offers_a_field_the_command_would_drop(self) -> None:
+        module = generator_module()
+        commands = {c.name: c for c in module.COMMANDS}
+
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "ui" / "src" / "config" / "section" / "aiservices.js").read_text()
+
+        wrong = []
+        for block in re.finditer(r"\{\s*\n\s*api: '([A-Za-z]+)',(.*?)\n        \}", source, re.S):
+            name, body = block.group(1), block.group(2)
+            args = re.search(r"args: \[([^\]]*)\]", body)
+            if not args:
+                continue
+            command = commands.get(name)
+            if command is None:
+                continue  # hand-written; its own test covers it
+            declared = {p.name for p in command.params}
+            for arg in re.findall(r"'([a-z0-9]+)'", args.group(1)):
+                if arg not in declared:
+                    wrong.append(
+                        f"the {name} action offers '{arg}', which the command does not "
+                        f"declare, so CloudStack drops it: it takes {sorted(declared)}"
+                    )
+
+        assert not wrong, "\n".join(wrong)
+
+    def test_the_actions_are_actually_being_read(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "ui" / "src" / "config" / "section" / "aiservices.js").read_text()
+        found = len(re.findall(r"args: \[", source))
+        assert found >= 10, f"only {found} action argument lists found in the section"

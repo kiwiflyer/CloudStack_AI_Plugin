@@ -1211,6 +1211,10 @@ COMMANDS: tuple[Command, ...] = (
         params=(
             p("id", "budgetId", "STRING", "the budget to update", required=True),
             p("monthly", "monthly", "STRING", "the monthly limit", wire="monthly"),
+            # The engine's BudgetPatch takes one and the command never
+            # offered it, so a budget's currency could be set at creation
+            # and never corrected.
+            p("currency", "currency", "STRING", "the currency of the limit", wire="currency"),
             p("onexceed", "onExceed", "STRING", "alert or block at 100%", wire="on_exceed"),
         ),
     ),
@@ -1286,7 +1290,14 @@ COMMANDS: tuple[Command, ...] = (
         response="AiReconcilerRunResponse",
         event="NODE_DRAIN",
         event_doing="draining GPU node",
-        params=(p("id", "nodeId", "STRING", "the node to drain", required=True),),
+        params=(
+            p("id", "nodeId", "STRING", "the node to drain", required=True),
+            # A query parameter on the engine, and the reason an operator
+            # drains at all when a zone is tight: without it a drain is
+            # refused where the replicas have nowhere else to go.
+            p("force", "force", "BOOLEAN", "drain even with no room for the replicas elsewhere"),
+        ),
+        query=("force",),
     ),
     Command(
         "listAiReconcilerRuns",
@@ -1624,6 +1635,16 @@ COMMANDS: tuple[Command, ...] = (
                 wire="public_enabled",
             ),
             p("customdomain", "customDomain", "STRING", "a custom domain", wire="custom_domain"),
+            # Without this every private endpoint was created with the
+            # engine's default, `tls: none` — so `certificateid` below
+            # could never mean anything, and a TLS-terminated private
+            # endpoint could not be made through CloudStack at all.
+            p(
+                "tls",
+                "tls",
+                "STRING",
+                "where its certificate comes from: none, acme or uploaded",
+            ),
             p(
                 "certificateid",
                 "certificateId",
