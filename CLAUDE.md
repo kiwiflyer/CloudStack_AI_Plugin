@@ -133,6 +133,23 @@ server that trims the field a zero-capacity platform, which is exactly how the
 `managedstate` bug failed. **Whenever CloudStack reports two fields about one
 thing, read both.**
 
+**The harness container is run by supervisord, so never restart anything in
+it by hand.** `supervisorctl status` lists `cloudstack`, `cloudstack-ui` and
+`mysqld`, and the `cloudstack` program's command is exactly
+`mvn -pl client jetty:run -Dsimulator -Dorg.eclipse.jetty.annotations.maxWait=120`.
+A `pkill -f jetty:run` followed by launching that line yourself does not replace
+the server — supervisord restarts its own copy, so **two management servers run
+at once**, each loading CloudStack under emulation. The container has about
+7.7 GiB; two servers plus the UI dev server reach 83% and it is
+**OOM-killed** (`docker inspect --format '{{.State.OOMKilled}}'` reports it),
+which surfaces as `configurationDaoImpl` failing with an
+`ExceptionInInitializerError` on a refused JDBC connection and
+`Failed startup of context /client` — a database fault that is not one. Use
+`supervisorctl restart cloudstack`, and
+`supervisorctl stop cloudstack-ui` first when memory is tight: the dev server
+costs 1.25 GiB and supervisord respawns it within seconds of a `kill`, so only
+`supervisorctl` actually stops it. One supervised server alone peaks near 45%.
+
 **What has actually run against a real CloudStack 4.23.0.0** (`make stack-up`):
 request signing, `take_snapshot` reading GPU capacity from tagged hosts, the
 capacity planner and its warnings on that observed data, `listKubernetesClusters`,
