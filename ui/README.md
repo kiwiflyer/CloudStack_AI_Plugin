@@ -84,10 +84,18 @@ in a hover tooltip. Both facts were already written down, and `table.js`
 exports `rowLink` and `action` for exactly them; the specs simply did not
 use them. They do now.
 
-One is `test.fixme`, and the product is what is wrong there: a key's
-secret is returned by `createAiApiKey` and CloudStack's dialog closes
-without showing it. The hooks that would show it are inside `$pollJob`,
-so they fire for an async command only. See the comment on the spec.
+One of them was `test.fixme` for a while, because the product was what
+was wrong: `createAiApiKey` returns the secret and CloudStack's dialog
+closed without showing it, and the hooks that would have shown it are
+inside `$pollJob`, so they fire for an async command only. The API keys
+tab mints the key itself now, so the spec asserts the real thing again
+and nothing is skipped for being unbuilt.
+
+**The counts above were last measured before that change.** The suite
+has not been re-run since, because Docker's port forwarding went down
+on this machine — every published port on every container, not just
+this harness — so nothing could reach the management server. Re-run it
+before trusting the numbers.
 
 ### Pointing them at a real CloudStack
 

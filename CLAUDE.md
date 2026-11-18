@@ -595,16 +595,19 @@ JSON array — so `listAiEndpoints` delivers four snippets with each endpoint an
 the tab reads them off `resource`. Before that every `Field` was a scalar, and a
 response that cannot hold a list silently drops one.
 
-**A key created in the UI cannot be used, because its secret is never
-shown.** `createAiApiKey` returns it — measured live, `apikey` is a
-66-character `aisvc-…` string — and CloudStack's dialog closes without
-displaying it, so a salted-hash-only key is gone the moment it is made. The
-two hooks that would show it, `action.response` and `successMethod`, are both
+**Nothing in a section's config can display a sync command's response**, so
+anything returning a credential must be minted from its own view. The two
+hooks that would show one — `action.response` and `successMethod` — are both
 inside `$pollJob` in `AutogenView.vue`, so they fire for an **async** command
-only and this one is sync. **Nothing in a section's config can display a sync
-command's response**, so the fix is to mint the key from the API keys tab the
-way the playground mints a session. Marked `test.fixme` and recorded as
-·not built, not quietly dropped.
+only. `createAiApiKey` is sync, so CloudStack's dialog closed without
+displaying the secret it had just returned — measured live, `apikey` is a
+66-character `aisvc-…` string — and because the engine stores a salted hash, a
+key created in the UI could never be used by anyone. `ApiKeysTab.vue` posts the
+command itself now and shows the secret once in a dismissable panel, the way
+`Playground.vue` mints a session; the autogen action is gone, so there is one
+path rather than two with one of them broken. **Removing an action orphans its
+argument keys** — `label.ai.create.api.key` and the three bare ones that only
+that dialog used — and `i18n.spec.js` catches exactly that.
 
 **A dialog field's label is `$t('label.' + the command's parameter name)` and
 nothing overrides it.** `AutogenView.vue` renders `:title="$t('label.' +
@@ -623,8 +626,11 @@ the section names as strings, and an argument's key is named nowhere.
 wrong. They clicked `getByRole('row').nth(1)`, and **clicking a row does
 nothing**; one looked for a button by its words, and **an action button is
 icon-only**. Both facts were already in this file, and `tests/e2e/table.js`
-exports `rowLink` and `action` for exactly them. The whole suite now passes,
-39 with 8 skipped.
+exports `rowLink` and `action` for exactly them. The whole suite passed at
+39 with 8 skipped when that landed; it has **not been re-run since the API
+keys tab started minting its own key**, because Docker's port forwarding went
+down on this machine — every published port on every container — so nothing
+could reach the management server.
 
 **Every detail view in the section showed the first record in its list.**
 CloudStack opens one by calling the *same list command* with `id=<the row's

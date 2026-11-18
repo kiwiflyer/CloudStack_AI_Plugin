@@ -543,3 +543,117 @@ describe('a tab reads the names CloudStack sends, not the engine\'s', () => {
     expect(rows[0].text()).toContain('succeeded')
   })
 })
+
+describe('minting an API key', () => {
+  // The secret exists for one moment. createAiApiKey returns it, keys are
+  // stored as salted hashes, and CloudStack's autogen dialog closed without
+  // showing it — so a key made in the UI could never be used. The two hooks
+  // that would have shown it live inside $pollJob and fire for an async
+  // command only. So the tab mints the key itself, the way the playground
+  // mints a session.
+  beforeEach(() => reset())
+
+  const created = {
+    createaiapikeyresponse: {
+      aiapikey: { id: 'k1', name: 'ci', apikey: 'aisvc-0123456789abcdef-secret' }
+    }
+  }
+
+  it('does not mint a key just because the tab was opened', async () => {
+    // A key is a credential. The playground learned this the same way.
+    mount(ApiKeysTab)
+    await flushPromises()
+
+    expect(apiCalls().map((c) => c.command)).not.toContain('createAiApiKey')
+  })
+
+  it('sends the parameter names the command actually takes', async () => {
+    // `allowedmodels`, `cidrs` and `expiresat` are what the Terraform
+    // provider sent and what the autogen action sent, and CloudStack drops
+    // an unknown parameter in silence — so a key restricted to two models
+    // and a CIDR was created with neither.
+    reset({ createAiApiKey: created })
+    const wrapper = mount(ApiKeysTab)
+    await flushPromises()
+
+    await wrapper.find('[data-test="new-name"]').setValue('ci')
+    await wrapper.find('[data-test="new-models"]').setValue('llama-3.3-70b-instruct')
+    await wrapper.find('[data-test="new-cidrs"]').setValue('10.0.0.0/8')
+    await wrapper.find('[data-test="create"]').trigger('click')
+    await flushPromises()
+
+    const call = apiCalls().find((c) => c.command === 'createAiApiKey')
+    expect(call).toBeTruthy()
+    expect(Object.keys(call.params).sort()).toEqual(['cidrlist', 'models', 'name'])
+    expect(call.params.name).toBe('ci')
+  })
+
+  it('shows the secret, and says it is shown once', async () => {
+    reset({ createAiApiKey: created })
+    const wrapper = mount(ApiKeysTab)
+    await flushPromises()
+
+    await wrapper.find('[data-test="new-name"]').setValue('ci')
+    await wrapper.find('[data-test="create"]').trigger('click')
+    await flushPromises()
+
+    const shown = wrapper.find('[data-test="new-secret"]')
+    expect(shown.exists()).toBe(true)
+    expect(shown.text()).toContain('aisvc-0123456789abcdef-secret')
+    expect(wrapper.text()).toMatch(/shown once/i)
+  })
+
+  it('does not keep the secret on screen once it is dismissed', async () => {
+    // It gets demonstrated and screenshotted, as the playground does.
+    reset({ createAiApiKey: created })
+    const wrapper = mount(ApiKeysTab)
+    await flushPromises()
+
+    await wrapper.find('[data-test="new-name"]').setValue('ci')
+    await wrapper.find('[data-test="create"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="dismiss-secret"]').trigger('click')
+
+    expect(wrapper.find('[data-test="new-secret"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('aisvc-0123456789abcdef-secret')
+  })
+
+  it('says why a key could not be made', async () => {
+    reset({ createAiApiKey: refusal('createAiApiKey', 'that name is already taken', 530) })
+    const wrapper = mount(ApiKeysTab)
+    await flushPromises()
+
+    await wrapper.find('[data-test="new-name"]').setValue('ci')
+    await wrapper.find('[data-test="create"]').trigger('click')
+    await flushPromises()
+
+    const failed = wrapper.find('[data-test="create-failed"]')
+    expect(failed.exists()).toBe(true)
+    expect(failed.text()).toContain('that name is already taken')
+    expect(failed.text()).not.toContain('status code')
+  })
+
+  it('will not mint a key with no name', async () => {
+    reset({ createAiApiKey: created })
+    const wrapper = mount(ApiKeysTab)
+    await flushPromises()
+
+    await wrapper.find('[data-test="create"]').trigger('click')
+    await flushPromises()
+
+    expect(apiCalls().map((c) => c.command)).not.toContain('createAiApiKey')
+  })
+
+  it('lists the new key once it exists', async () => {
+    reset({ createAiApiKey: created })
+    const wrapper = mount(ApiKeysTab)
+    await flushPromises()
+
+    await wrapper.find('[data-test="new-name"]').setValue('ci')
+    await wrapper.find('[data-test="create"]').trigger('click')
+    await flushPromises()
+
+    const reads = apiCalls().filter((c) => c.command === 'listAiApiKeys')
+    expect(reads.length).toBeGreaterThan(1)
+  })
+})

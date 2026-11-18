@@ -16,10 +16,17 @@ under the License.
 -->
 <!-- Scoped API keys for an endpoint (SPEC.md section 7).
 
-     A key's secret is shown once, by the dialog that creates it, and
-     never again — so this list carries metadata only. `lastused` is
-     here because it is how a tenant decides whether an old key is
-     still in use before revoking it. -->
+     A key's secret exists for one moment: the engine returns it from
+     createAiApiKey and stores a salted hash, so it can never be read
+     back. This tab mints the key itself rather than leaving it to
+     CloudStack's autogen dialog, which closed without showing the
+     secret — the hooks that would have shown it, `action.response`
+     and `successMethod`, are inside $pollJob and fire for an async
+     command only. A key made that way could not be used by anyone.
+
+     The list below carries metadata only. `lastused` is there because
+     it is how a tenant decides whether an old key is still in use
+     before revoking it. -->
 <template>
   <div class="ai-keys__panel">
     <!-- Three states, kept apart on purpose. Emptying the list on a
@@ -32,6 +39,55 @@ under the License.
     </p>
     <p v-else-if="!rows.length" data-test="empty" class="ai-keys__empty">
       No API keys have been created for this account yet.
+    </p>
+
+    <!-- Shown once, and said so. This screen gets demonstrated and
+         screenshotted, so the secret is dismissable and nothing holds
+         it afterwards. -->
+    <section v-if="secret" class="ai-keys__secret">
+      <h4>Copy this key now — it is shown once and cannot be read back.</h4>
+      <code data-test="new-secret" class="ai-keys__secret-value">{{ secret }}</code>
+      <button data-test="dismiss-secret" class="ai-keys__dismiss" @click="secret = ''">
+        Done
+      </button>
+    </section>
+
+    <form class="ai-keys__new" @submit.prevent="create">
+      <input
+        v-model="draft.name"
+        data-test="new-name"
+        type="text"
+        placeholder="a name for the key"
+      >
+      <input
+        v-model="draft.models"
+        data-test="new-models"
+        type="text"
+        placeholder="models this key may use; all if unset"
+      >
+      <input
+        v-model="draft.cidrs"
+        data-test="new-cidrs"
+        type="text"
+        placeholder="CIDRs the key may be used from"
+      >
+      <input
+        v-model="draft.expires"
+        data-test="new-expires"
+        type="text"
+        placeholder="when the key should expire"
+      >
+      <!-- @click as well as submit: a submit button's click does not
+           submit a form under jsdom, so binding only the form would
+           leave the test green against a button that does nothing in a
+           browser, or the other way round. -->
+      <button data-test="create" type="submit" :disabled="!draft.name" @click="create">
+        Create key
+      </button>
+    </form>
+
+    <p v-if="createFailed" data-test="create-failed" class="ai-keys__create-failed">
+      Could not create the key — {{ createFailed }}
     </p>
 
     <table class="ai-keys">
@@ -58,7 +114,7 @@ under the License.
 </template>
 
 <script>
-import { getAPI } from '@/api'
+import { getAPI, postAPI } from '@/api'
 
 import { engineReason } from '@/utils/errors'
 
@@ -73,7 +129,13 @@ export default {
     keys: { type: Array, default: null }
   },
   data () {
-    return { fetched: [], failed: '' }
+    return {
+      fetched: [],
+      failed: '',
+      secret: '',
+      createFailed: '',
+      draft: { name: '', models: '', cidrs: '', expires: '' }
+    }
   },
   computed: {
     rows () {
@@ -94,6 +156,36 @@ export default {
         // reason only in the browser console, where nobody looks.
         this.failed = engineReason(problem)
         this.fetched = []
+      })
+    },
+    /** A comma-separated field as the list the command expects. */
+    listOf (value) {
+      return value.split(',').map((item) => item.trim()).filter(Boolean)
+    },
+    create () {
+      if (!this.draft.name) return
+
+      // `models`, `cidrlist` and `expires` are the command's own
+      // parameter names. The Terraform provider and the autogen action
+      // both sent `allowedmodels`, `cidrs` and `expiresat`, which
+      // CloudStack drops in silence — so a key restricted to two models
+      // and a CIDR was created with neither.
+      const params = { name: this.draft.name }
+      const models = this.listOf(this.draft.models)
+      const cidrs = this.listOf(this.draft.cidrs)
+      if (models.length) params.models = models
+      if (cidrs.length) params.cidrlist = cidrs
+      if (this.draft.expires) params.expires = this.draft.expires
+
+      postAPI('createAiApiKey', params).then((json) => {
+        const made = json?.createaiapikeyresponse?.aiapikey ??
+          json?.createaiapikeyresponse ?? {}
+        this.secret = made.apikey ?? ''
+        this.createFailed = ''
+        this.draft = { name: '', models: '', cidrs: '', expires: '' }
+        this.load()
+      }).catch((problem) => {
+        this.createFailed = engineReason(problem)
       })
     }
   }

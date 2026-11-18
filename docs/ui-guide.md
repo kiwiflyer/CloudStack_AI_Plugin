@@ -65,15 +65,21 @@ The OpenAI-compatible base URL per model, with an **API keys** tab and a
 Keys are scoped: a key may name the models it may use, the CIDRs it may
 be called from, and when it expires.
 
-**The secret is not shown · not built.** Keys are stored as salted
-hashes, so creation is the only moment the secret exists —
-`createAiApiKey` returns it, and CloudStack's dialog closes without
-displaying it. The hooks that would (`action.response`,
-`successMethod`) live inside `$pollJob` and fire for an async command
-only, and this one is sync, so there is nothing for the section config
-to hang a warning on. Until the key is minted from the tab itself, the
-way the playground mints a session, a key created in the UI cannot be
-used. CloudMonkey and Terraform return it correctly.
+**The key is minted on this tab, and its secret is shown once.** Keys
+are stored as salted hashes, so creation is the only moment the secret
+exists: the tab posts `createAiApiKey` itself and renders what comes
+back, with the warning that it cannot be read again and a control to
+dismiss it. The screen gets demonstrated and screenshotted, so nothing
+holds the secret once it is dismissed.
+
+It is minted here rather than through a standard action because
+**nothing in a section's config can display a sync command's
+response**. The two hooks that would — `action.response` and
+`successMethod` — are inside `$pollJob` in `AutogenView.vue` and fire
+for an async command only. `createAiApiKey` is sync, so its dialog
+closed and the secret was lost at the one moment it existed. Anything
+that returns a credential has to be minted from its own view, the way
+the playground mints a session.
 
 ![The code snippets tab](images/ui/endpoint-snippets.jpg)
 

@@ -53,26 +53,22 @@ test.describe('a tenant going from catalog to a working endpoint', () => {
   // down and both silent: clicking a row does nothing, because the link
   // is on the first column; and an action button is icon-only, with its
   // words in a hover tooltip, so its accessible name is the icon.
-  // Not built, and the test is right to ask for it. `createAiApiKey`
-  // returns the secret — measured live, `apikey` is a 66-character
-  // `aisvc-…` string — and CloudStack's dialog closes without showing
-  // it. The hooks that would (`action.response`, `successMethod`) are
-  // both inside $pollJob, so they fire for an async command only, and
-  // this one is sync. Keys are stored as salted hashes, so a secret
-  // nobody saw is gone: the UI cannot currently produce a usable key.
-  //
-  // The fix is to mint it from the API keys tab the way the playground
-  // mints a session, rather than through an autogen action.
-  test.fixme('creating a key shows the secret once, with a warning', async ({ page }) => {
+  // The secret exists for one moment, so the tab mints the key itself.
+  // CloudStack's autogen dialog closed without showing it — the hooks
+  // that would have are inside $pollJob and fire for an async command
+  // only — and a key nobody saw the secret of cannot be used, because
+  // the engine stores a salted hash.
+  test('creating a key shows the secret once, with a warning', async ({ page }) => {
     await page.goto('/client/#/aiendpoint')
     await rowLink(page, /./).first().click()
-    await action(page, 'key').first().click()
-    await page.getByLabel('Name').fill('playwright')
-    await page.getByRole('button', { name: /^ok$/i }).click()
+    await page.getByRole('tab', { name: /api keys/i }).click()
+    await page.getByPlaceholder('a name for the key').fill(`playwright-${Date.now()}`)
+    await page.getByRole('button', { name: /create key/i }).click()
 
     // Shown once is the whole contract; a tenant who misses it has to
     // make another key.
     await expect(page.getByText(/shown once/i)).toBeVisible()
+    await expect(page.getByText(/aisvc-/)).toBeVisible()
   })
 
   test('the key list never shows a secret', async ({ page }) => {

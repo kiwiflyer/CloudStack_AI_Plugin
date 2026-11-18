@@ -144,14 +144,6 @@ export default {
           args: ['replicas', 'servingprofile']
         },
         {
-          api: 'createAiApiKey',
-          icon: 'key-outlined',
-          label: 'label.ai.create.api.key',
-          dataView: true,
-          popup: true,
-          args: ['name', 'models', 'cidrlist', 'expires', 'ratelimitrpm']
-        },
-        {
           api: 'deleteAiModelDeployment',
           icon: 'delete-outlined',
           label: 'label.ai.delete.deployment',
