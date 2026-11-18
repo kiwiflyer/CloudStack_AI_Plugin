@@ -657,13 +657,16 @@ into the management server and the engine answering it over mTLS:
   though — a CKS cluster's control node and worker both reached
   `Running` — so `deployVirtualMachine` is exercised even where nothing
   runs inside the guest.
-- **Thirteen commands point at engine routes that do not exist.** The
-  three deployment commands (`deployAiModel`, `updateAiModelDeployment`,
-  `deleteAiModelDeployment`), all nine serving- and generation-profile
-  commands, and `approveAiModel`. Deployments are created by the
-  reconciler rather than through the API today, and section 6's profiles
-  have no storage model at all. CloudStack will accept these calls and
-  the engine will answer 404. They are listed as `NOT_YET_SERVED` in
+- **Four commands point at engine routes that do not exist.** The three
+  deployment commands (`deployAiModel`, `updateAiModelDeployment`,
+  `deleteAiModelDeployment`) and `approveAiModel`. CloudStack accepts
+  these calls and the engine answers 404. Neither is waiting on a route
+  to be written: `platform.yaml` is the source of truth for desired
+  state, so a deployment command means changing the spec and committing
+  it, and there is no spec-writing or Git machinery in the engine; what
+  `approveAiModel` should do depends on SPEC section 14's open question
+  about whether reseller domain admins mirror directly or only request
+  it. They are listed as `NOT_YET_SERVED` in
   `tests/contract/test_engine_api_contract.py`, which fails if the list
   grows or if one of them quietly starts working.
 

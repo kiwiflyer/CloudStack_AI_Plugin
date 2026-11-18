@@ -222,18 +222,33 @@ class TestAgainstTheEngine:
     def test_the_unimplemented_commands_are_known(self) -> None:
         """Fails when an endpoint lands without the count being updated.
 
-        Milestone 7 added rollouts, drain, usage and budgets; milestone 8
-        added the setup wizard, scoped keys, budget writing and the
-        playground; milestone 9 added the whole v2 surface. What is
-        left is milestone 3's: mirroring, approval, and writing serving
-        and generation profiles through the API rather than the spec.
+        This counts *paths*, so a command whose path is served by a
+        sibling verb counts as implemented — the method-aware check in
+        `TestTheGuardIsMethodAware` is the one that catches a missing
+        PATCH or DELETE. Both are kept: this one notices a whole
+        resource arriving, that one notices a verb.
+
+        Four remain, and neither is waiting on a route to be written.
+        The three deployment commands mean "change `platform.yaml` and
+        commit it", and there is no spec-writing machinery in the
+        engine; a Postgres overlay would be a second source of desired
+        state, which is the thing the spec exists to avoid.
+        `approveAiModel` waits on SPEC section 14's open question about
+        whether reseller domain admins mirror directly or only request
+        it — what approval *means* depends on the answer.
         """
         paths = self.engine_paths()
         missing = sorted(c.name for c in V1 if c.path not in paths)
 
-        assert len(missing) == 12, (
-            f"{len(missing)} v1 commands still have no engine route: {missing}"
-        )
+        # `deployAiModel` is absent from this list and still unserved:
+        # its path is `/v1/deployments`, which GET answers, so a check
+        # that counts paths cannot see that POST is missing. The
+        # method-aware contract test is what holds that one.
+        assert missing == [
+            "approveAiModel",
+            "deleteAiModelDeployment",
+            "updateAiModelDeployment",
+        ], f"v1 commands with no engine route: {missing}"
 
 
 class TestGeneratedArtifacts:

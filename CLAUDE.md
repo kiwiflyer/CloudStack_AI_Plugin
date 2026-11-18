@@ -702,13 +702,42 @@ refused with "the batch input file has no requests". Both are declared now, the
 batch's with `length = 65535`. **Still broken, and recorded rather than fixed:**
 the engine never reads `input_uri`, so a batch can only be submitted inline.
 
-**Thirteen commands point at engine routes that do not exist** — the three
-deployment commands, all nine serving- and generation-profile commands, and
-`approveAiModel`. Deployments are created by the reconciler rather than through
-the API, and section 6's profiles have no storage model at all. This is a
-feature gap, not a routing mistake. `tests/contract/test_engine_api_contract.py`
-lists them as `NOT_YET_SERVED` and fails if the list grows *or* if one starts
-working without leaving it.
+**Section 6's profiles are served now, and the shape of the thing they feed was
+wrong.** Nine commands had no engine route because there was no table: the
+precedence logic in `aisvc/profiles/` could only ever read a profile out of
+`platform.yaml`. Migration 0009 adds three tables — a serving profile, a
+generation profile, and the assignment that binds one — three and not two
+because the spec separates a profile from its binding and the same profile may
+bind at more than one scope, which `aisvc_guardrail_profile` collapsing them
+cannot express. `_layers_for` merges spec and stored assignments into one chain,
+stored last so a tenant tightening their own account beats the operator's
+baseline at the same level, and stored params are validated back into the spec's
+own `GenerationValue` because `resolve()` asks each value for `.min` and
+`.policy`. **Authority is checked at the assignment, not at creation** — the
+same `aisvc/guardrails/authority.py` rules, because the question is identical:
+describing parameters imposes nothing, binding them does.
+
+**`getAiEffectiveParameters` returned an empty body every time**, and had since
+it was written. `EffectiveParams.describe()` returned a mapping keyed by
+parameter name, which reads naturally; section 9 declares the command a *list*
+command, so the plugin reads `parameters` as an array, and
+`ui/src/utils/profiles.js` asks each entry for `parameter.name`. Three consumers
+expected a list and the engine was the one that disagreed. `describe()` returns
+a list now, each entry naming itself, with `count` beside it; `by_name()` is the
+keyed form, kept for the metering record, which is looked up rather than
+iterated.
+
+**Four commands still point at engine routes that do not exist** — the three
+deployment commands and `approveAiModel` — and neither is waiting on a route.
+`platform.yaml` is the source of truth for desired state and the reconciler
+diffs against it, so a deployment command means changing the spec and committing
+it; there is no spec-writing or Git machinery in the engine, and a Postgres
+overlay would be a second source of desired state, which is the thing the spec
+exists to avoid. What `approveAiModel` should do depends on SPEC section 14's
+open question about whether reseller domain admins mirror directly or only
+request it. `tests/contract/test_engine_api_contract.py` lists them as
+`NOT_YET_SERVED` and fails if the list grows *or* if one starts working without
+leaving it.
 
 **That whole class of bug existed because the contract test checked one path.**
 `test_async_commands_declare_202` asserted it of `/v1/models/mirror` and nothing

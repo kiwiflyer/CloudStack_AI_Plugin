@@ -25,6 +25,7 @@ with a job id the plugin polls at `/v1/jobs/{id}`.
 from __future__ import annotations
 
 import inspect
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -55,6 +56,11 @@ from aisvc.certificates.bootstrap import BootstrapRejected, BootstrapTokens
 from aisvc.cloudstack.clusters import ClusterState
 from aisvc.cloudstack.gpus import GpuCardCatalogue
 from aisvc.db import BudgetRecord, KeyStore, RunLog, UsageStore
+from aisvc.db.profiles import (
+    AssignmentStore,
+    GenerationProfileStore,
+    ServingProfileStore,
+)
 from aisvc.db.tier2 import (
     TERMINAL_BATCH_STATES,
     AdapterStore,
@@ -198,6 +204,43 @@ class BatchBody(BaseModel):
     #: The JSONL itself. Large files arrive by reference instead.
     input: str = ""
     input_uri: str = ""
+
+
+class ServingProfileBody(BaseModel):
+    """A serving profile being created (SPEC.md section 6)."""
+
+    name: str = Field(min_length=1, max_length=255)
+    #: The CloudStack command declares this a STRING, so it arrives as
+    #: JSON text. A dict is accepted as well, because curl and the CLI
+    #: have no reason to stringify an object they already have.
+    params: dict[str, Any] | str = Field(default_factory=dict)
+
+
+class ProfileUpdateBody(BaseModel):
+    """New parameters for an existing profile."""
+
+    params: dict[str, Any] | str = Field(default_factory=dict)
+
+
+class GenerationProfileBody(BaseModel):
+    """A generation profile being created (SPEC.md section 6)."""
+
+    name: str = Field(min_length=1, max_length=255)
+    params: dict[str, Any] | str = Field(default_factory=dict)
+
+
+class AssignmentBody(BaseModel):
+    """Where a profile binds (SPEC.md section 6).
+
+    One `profile` rather than one field per kind, because that is what
+    `assignAiTuningProfile` sends. Which kind it is comes from looking
+    the name up, so a caller cannot bind a serving profile into the
+    generation slot by mislabelling it.
+    """
+
+    scope: str = Field(min_length=1)
+    target: str = ""
+    profile: str = Field(min_length=1)
 
 
 class GuardrailBody(BaseModel):
@@ -1921,6 +1964,252 @@ def _register_routes(app: FastAPI) -> None:
     # -- profiles ---------------------------------------------------------
 
     @app.get(
+        f"{PREFIX}/profiles/serving",
+        tags=["profiles"],
+        summary="List serving profiles",
+    )
+    async def list_serving_profiles(_: AdminDep, session: SessionDep) -> dict[str, Any]:
+        """Root admin's alone: these are the engine's own arguments."""
+        rows = [_serving_profile_row(r) for r in ServingProfileStore(session).all()]
+        return {"count": len(rows), "profiles": rows}
+
+    @app.post(
+        f"{PREFIX}/profiles/serving",
+        tags=["profiles"],
+        summary="Create a serving profile",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def create_serving_profile(
+        caller: AdminDep,
+        session: SessionDep,
+        jobs: JobsDep,
+        response: Response,
+        body: ServingProfileBody,
+    ) -> dict[str, Any]:
+        """Engine arguments, platform-wide (SPEC.md section 6).
+
+        Admin-only because a serving profile is vLLM's own
+        configuration: a tenant setting `gpu_memory_utilization` could
+        take a host down for everyone sharing it. Generation profiles
+        are the tenant-facing half.
+        """
+        params = _profile_params(body.params)
+        store = ServingProfileStore(session)
+        _refuse_duplicate_profile(store.by_name(body.name), body.name)
+
+        job = jobs.create("createAiServingProfile", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            record = store.add(name=body.name, params=params)
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(job, _serving_profile_row(record))
+        return {"jobid": job.id}
+
+    @app.patch(
+        f"{PREFIX}/profiles/serving/{{profile_id}}",
+        tags=["profiles"],
+        summary="Update a serving profile",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def update_serving_profile(
+        profile_id: str,
+        caller: AdminDep,
+        session: SessionDep,
+        jobs: JobsDep,
+        response: Response,
+        body: ProfileUpdateBody,
+    ) -> dict[str, Any]:
+        params = _profile_params(body.params)
+        store = ServingProfileStore(session)
+        record = store.get(profile_id)
+        if record is None:
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such serving profile: {profile_id}",
+                code="profile_not_found",
+            )
+
+        job = jobs.create("updateAiServingProfile", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            store.update(record, params=params)
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(job, _serving_profile_row(record))
+        return {"jobid": job.id}
+
+    @app.delete(
+        f"{PREFIX}/profiles/serving/{{profile_id}}",
+        tags=["profiles"],
+        summary="Delete a serving profile",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def delete_serving_profile(
+        profile_id: str,
+        caller: AdminDep,
+        session: SessionDep,
+        jobs: JobsDep,
+        response: Response,
+    ) -> dict[str, Any]:
+        store = ServingProfileStore(session)
+        record = store.get(profile_id)
+        if record is None:
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such serving profile: {profile_id}",
+                code="profile_not_found",
+            )
+
+        name = record.name
+        job = jobs.create("deleteAiServingProfile", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            AssignmentStore(session).drop_profile(serving_profile=name)
+            store.delete(record)
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(job, {"id": profile_id, "deleted": True})
+        return {"jobid": job.id}
+
+    @app.get(
+        f"{PREFIX}/profiles/generation",
+        tags=["profiles"],
+        summary="List generation profiles",
+    )
+    async def list_generation_profiles(caller: CallerDep, session: SessionDep) -> dict[str, Any]:
+        """Filtered by caller, like any other tenant-owned row."""
+        rows = [
+            _generation_profile_row(record)
+            for record in GenerationProfileStore(session).all()
+            if caller.may_see(account=record.account, domain_path=record.domain)
+        ]
+        return {"count": len(rows), "profiles": rows}
+
+    @app.post(
+        f"{PREFIX}/profiles/generation",
+        tags=["profiles"],
+        summary="Create a generation profile",
+    )
+    async def create_generation_profile(
+        caller: CallerDep, session: SessionDep, body: GenerationProfileBody
+    ) -> dict[str, Any]:
+        """A tenant's own tuning (SPEC.md section 6).
+
+        Creating one binds nothing: an assignment does that, and it is
+        the assignment the authority rules are checked against. So a
+        tenant may describe any parameters they like here and still
+        not be able to impose them on anybody.
+        """
+        params = _generation_params(body.params)
+        store = GenerationProfileStore(session)
+        _refuse_duplicate_profile(store.by_name(body.name), body.name)
+
+        record = store.add(
+            name=body.name,
+            params=params,
+            account=caller.account,
+            domain=caller.domain_path,
+        )
+        return _generation_profile_row(record)
+
+    @app.patch(
+        f"{PREFIX}/profiles/generation/{{profile_id}}",
+        tags=["profiles"],
+        summary="Update a generation profile",
+    )
+    async def update_generation_profile(
+        profile_id: str,
+        caller: CallerDep,
+        session: SessionDep,
+        body: ProfileUpdateBody,
+    ) -> dict[str, Any]:
+        params = _generation_params(body.params)
+        store = GenerationProfileStore(session)
+        record = _own_generation_profile(store, caller, profile_id)
+        store.update(record, params=params)
+        return _generation_profile_row(record)
+
+    @app.delete(
+        f"{PREFIX}/profiles/generation/{{profile_id}}",
+        tags=["profiles"],
+        summary="Delete a generation profile",
+    )
+    async def delete_generation_profile(
+        profile_id: str, caller: CallerDep, session: SessionDep
+    ) -> dict[str, Any]:
+        store = GenerationProfileStore(session)
+        record = _own_generation_profile(store, caller, profile_id)
+        AssignmentStore(session).drop_profile(generation_profile=record.name)
+        store.delete(record)
+        return {"id": profile_id, "deleted": True}
+
+    @app.post(
+        f"{PREFIX}/profiles/assignments",
+        tags=["profiles"],
+        summary="Assign a tuning profile",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def assign_tuning_profile(
+        caller: CallerDep,
+        session: SessionDep,
+        jobs: JobsDep,
+        response: Response,
+        body: AssignmentBody,
+    ) -> dict[str, Any]:
+        """Bind a profile at a scope (SPEC.md section 6).
+
+        This is where authority is checked, not at creation: the rules
+        are the same ones guardrail profiles are written under — a
+        caller binds at their own level and no higher — because the
+        question is identical. Binding is what imposes something on
+        somebody.
+        """
+        from aisvc.guardrails.authority import GuardrailRejected, check_may_author
+
+        serving = ServingProfileStore(session).by_name(body.profile)
+        generation = GenerationProfileStore(session).by_name(body.profile)
+        if serving is None and generation is None:
+            # An assignment naming nothing resolves to nothing, so the
+            # operator would see a binding that does not bind.
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND,
+                f"no such tuning profile: {body.profile}",
+                code="profile_not_found",
+            )
+
+        try:
+            check_may_author(caller, scope=body.scope, target=body.target)
+        except GuardrailRejected as exc:
+            raise ApiError(exc.status_code, exc.detail, code=exc.reason) from exc
+
+        if serving is not None and not caller.role.is_admin:
+            raise ApiError(
+                status.HTTP_403_FORBIDDEN,
+                "a serving profile is the engine's own configuration and is "
+                "bound by root admin only",
+                code="not_permitted",
+            )
+
+        job = jobs.create("assignAiTuningProfile", caller)
+        response.headers["Location"] = f"{PREFIX}/jobs/{job.id}"
+        try:
+            record = AssignmentStore(session).add(
+                scope=body.scope,
+                target=body.target,
+                serving_profile=serving.name if serving is not None else "",
+                generation_profile=generation.name if generation is not None else "",
+            )
+        except Exception as exc:
+            jobs.fail(job, str(exc))
+        else:
+            jobs.succeed(job, _assignment_row(record))
+        return {"jobid": job.id}
+
+    @app.get(
         f"{PREFIX}/profiles/effective",
         tags=["profiles"],
         summary="Effective parameters",
@@ -1928,6 +2217,7 @@ def _register_routes(app: FastAPI) -> None:
     async def effective_parameters(
         caller: CallerDep,
         services: ServicesDep,
+        session: SessionDep,
         model: str = Query(description="Deployment to resolve parameters for"),
     ) -> dict[str, Any]:
         """Every parameter's resolved value and the level that set it.
@@ -1940,8 +2230,11 @@ def _register_routes(app: FastAPI) -> None:
         if found is None or not _model_visible(found, caller):
             raise ApiError(status.HTTP_404_NOT_FOUND, f"no model {model!r}", code="not_found")
 
-        layers = _layers_for(services, caller, model)
-        return {"model": model, "parameters": resolve(layers).describe()}
+        layers = _layers_for(services, caller, model, session)
+        described = resolve(layers).describe()
+        # `count` beside the list, like every other list response, so
+        # the plugin's list mapping has the shape it expects.
+        return {"model": model, "count": len(described), "parameters": described}
 
     # -- Hugging Face -----------------------------------------------------
 
@@ -2163,26 +2456,183 @@ def _model_summary(model: Any, services: Services) -> dict[str, Any]:
     }
 
 
-def _layers_for(services: Services, caller: Any, model: str) -> list[ProfileLayer]:
-    """Assemble the precedence chain for this caller and deployment."""
-    profiles = {p.name: p for p in services.spec.document.tuning_profiles.generation}
-    layers: list[ProfileLayer] = []
+def _profile_params(raw: dict[str, Any] | str) -> dict[str, Any]:
+    """The parameters a profile was sent, however they were spelled.
 
+    `createAiServingProfile` declares `params` a STRING, so CloudStack
+    sends JSON text; everything else that talks to this API has a dict
+    already. Both are accepted, and anything that is not an object is
+    refused here rather than stored and misread later.
+    """
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(raw or "{}")
+    except ValueError as exc:
+        raise ApiError(
+            status.HTTP_400_BAD_REQUEST,
+            f"params is not valid JSON: {exc}",
+            code="invalid_params",
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ApiError(
+            status.HTTP_400_BAD_REQUEST,
+            "params must be a JSON object of parameter names to values",
+            code="invalid_params",
+        )
+    return parsed
+
+
+def _generation_params(raw: dict[str, Any] | str) -> dict[str, Any]:
+    """Generation parameters, validated against the spec's own model.
+
+    Every value is a `GenerationValue` — a default, optional bounds and
+    a policy of `default`, `clamp` or `locked`. Validating here rather
+    than at resolution matters: a policy the resolver has no branch for
+    would otherwise be stored happily and then ignored on every single
+    request, which is a locked parameter silently not locking.
+    """
+    from pydantic import ValidationError
+
+    from aisvc.spec.models import GenerationValue
+
+    params = _profile_params(raw)
+    checked: dict[str, Any] = {}
+    for name, value in params.items():
+        try:
+            checked[name] = GenerationValue.model_validate(value).model_dump(exclude_none=True)
+        except ValidationError as exc:
+            raise ApiError(
+                status.HTTP_400_BAD_REQUEST,
+                f"{name} is not a usable generation parameter: {exc.errors()[0]['msg']}",
+                code="invalid_params",
+            ) from exc
+    return checked
+
+
+def _refuse_duplicate_profile(existing: Any, name: str) -> None:
+    """Names are how assignments bind, so they have to be unique.
+
+    Two profiles sharing a name would make a precedence chain whose
+    outcome depends on which row was found first.
+    """
+    if existing is not None:
+        raise ApiError(
+            status.HTTP_409_CONFLICT,
+            f"a tuning profile called {name!r} already exists",
+            code="profile_exists",
+        )
+
+
+def _own_generation_profile(store: Any, caller: Any, profile_id: str) -> Any:
+    """A generation profile this caller may change.
+
+    404 rather than 403 for someone else's: an id they cannot see is
+    an id they should not be able to confirm the existence of.
+    """
+    record = store.get(profile_id)
+    if record is None or not caller.may_see(account=record.account, domain_path=record.domain):
+        raise ApiError(
+            status.HTTP_404_NOT_FOUND,
+            f"no such generation profile: {profile_id}",
+            code="profile_not_found",
+        )
+    return record
+
+
+def _serving_profile_row(record: Any) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "name": record.name,
+        "params": dict(record.params or {}),
+        "created": record.created_at.isoformat() if record.created_at else "",
+    }
+
+
+def _generation_profile_row(record: Any) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "name": record.name,
+        "params": dict(record.params or {}),
+        "account": record.account,
+        "domain": record.domain,
+        "created": record.created_at.isoformat() if record.created_at else "",
+    }
+
+
+def _assignment_row(record: Any) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "scope": record.scope,
+        "target": record.target,
+        "serving_profile": record.serving_profile,
+        "generation_profile": record.generation_profile,
+    }
+
+
+def _layers_for(
+    services: Services, caller: Any, model: str, session: Any = None
+) -> list[ProfileLayer]:
+    """Assemble the precedence chain for this caller and deployment.
+
+    Two sources, one chain. `platform.yaml` declares profiles and
+    assignments, and so does the API — a spec profile was written by
+    whoever edits the spec, a stored one by a tenant — and both have to
+    reach the same `resolve()` the gateway enforces with, or a profile
+    would show in the console and change nothing about a request.
+
+    Stored assignments are appended after the spec's, so at the same
+    level the stored one wins. That is the right way round: the spec is
+    what an operator set as the baseline, and a tenant tightening their
+    own account is the later, more specific statement.
+    """
+    profiles: dict[str, Any] = {
+        p.name: p.params for p in services.spec.document.tuning_profiles.generation
+    }
+    assignments: list[Any] = list(services.spec.document.assignments)
+
+    if session is not None:
+        # Back into the spec's own `GenerationValue`, because that is
+        # what `resolve()` reads — it asks each value for `.min`,
+        # `.policy` and the rest. Stored rows are plain JSON, so a dict
+        # handed straight to the resolver fails on the first bound.
+        from aisvc.spec.models import GenerationValue
+
+        for record in GenerationProfileStore(session).all():
+            if not caller.may_see(account=record.account, domain_path=record.domain):
+                continue
+            profiles[record.name] = {
+                name: GenerationValue.model_validate(value)
+                for name, value in (record.params or {}).items()
+            }
+        assignments.extend(AssignmentStore(session).all())
+
+    layers: list[ProfileLayer] = []
     scope_levels = {
+        "platform": (Level.PLATFORM, ""),
         "domain": (Level.DOMAIN, caller.domain_path),
         "account": (Level.ACCOUNT, caller.account),
         "deployment": (Level.DEPLOYMENT, model),
     }
-    for assignment in services.spec.document.assignments:
+    for assignment in assignments:
         if not assignment.generation_profile:
             continue
         mapped = scope_levels.get(assignment.scope)
         if mapped is None:
             continue
         level, target = mapped
-        if assignment.target != target:
+        if level is Level.DOMAIN:
+            # A domain binds over everything beneath it, so an exact
+            # match would miss /Customers/Acme/Sub under /Customers/Acme.
+            from aisvc.guardrails.authority import domain_contains
+
+            if not domain_contains(assignment.target, caller.domain_path):
+                continue
+        elif level is not Level.PLATFORM and assignment.target != target:
             continue
-        profile = profiles.get(assignment.generation_profile)
-        if profile is not None:
-            layers.append(ProfileLayer(level=level, name=profile.name, params=profile.params))
+        params = profiles.get(assignment.generation_profile)
+        if params is not None:
+            layers.append(
+                ProfileLayer(level=level, name=assignment.generation_profile, params=params)
+            )
     return layers

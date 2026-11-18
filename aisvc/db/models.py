@@ -284,6 +284,62 @@ class EvaluationRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ServingProfileRecord(Base):
+    """Engine arguments for a deployment (SPEC.md section 6).
+
+    Platform-level and root admin's alone, because these are vLLM's own
+    arguments: a tenant able to set `gpu_memory_utilization` could take
+    a host down for everyone sharing it. There is no scope or target
+    column for that reason — a serving profile is bound by an
+    assignment, never by itself.
+    """
+
+    __tablename__ = "aisvc_serving_profile"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    params: Mapped[dict[str, object]] = mapped_column(JsonColumn, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GenerationProfileRecord(Base):
+    """Tunable generation parameters and their policies (SPEC.md section 6).
+
+    Carries its author's account and domain because every role may
+    create one, so a list has to be filtered by caller like any other
+    tenant-owned row. The precedence *level* a profile binds at is not
+    here: that is the assignment's business, and the same profile may
+    be bound at more than one.
+    """
+
+    __tablename__ = "aisvc_generation_profile"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    params: Mapped[dict[str, object]] = mapped_column(JsonColumn, default=dict)
+    account: Mapped[str] = mapped_column(String(255), default="", index=True)
+    domain: Mapped[str] = mapped_column(String(255), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ProfileAssignmentRecord(Base):
+    """Which profile binds at which scope (SPEC.md section 6).
+
+    The same shape as `platform.yaml`'s `assignments`, deliberately:
+    resolution merges the two, and a row here that could not be written
+    in the spec would be a precedence chain no operator could read.
+    """
+
+    __tablename__ = "aisvc_profile_assignment"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(32), index=True)
+    target: Mapped[str] = mapped_column(String(255), default="", index=True)
+    serving_profile: Mapped[str] = mapped_column(String(255), default="")
+    generation_profile: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class GuardrailProfileRecord(Base):
     """A guardrail profile and where it is bound (SPEC.md sections 6, 8)."""
 

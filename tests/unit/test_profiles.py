@@ -284,11 +284,16 @@ class TestEffectiveParams:
                 layer(Level.DOMAIN, top_p=value(value=0.5, policy="locked")),
             ]
         )
-        report = effective.describe()
+        # A list, each entry naming itself: section 9 declares
+        # getAiEffectiveParameters a list command, so the plugin reads
+        # `parameters` as an array. `by_name()` is the keyed form, kept
+        # for the metering record.
+        report = {entry["name"]: entry for entry in effective.describe()}
         assert report["temperature"]["source"] == "platform"
         assert report["top_p"]["source"] == "domain"
         assert report["top_p"]["locked"] is True
         assert report["temperature"]["locked"] is False
+        assert effective.by_name()["top_p"]["locked"] is True
 
     def test_it_is_iterable_and_sized(self) -> None:
         effective = resolve([layer(Level.PLATFORM, a=value(default=1), b=value(default=2))])

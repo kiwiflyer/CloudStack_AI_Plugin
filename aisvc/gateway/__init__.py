@@ -305,7 +305,9 @@ class EnforcedRequest:
             "account": self.context.key.account,
             "domain": self.context.key.domain,
             "model": self.context.model,
-            "effective_parameters": self.effective.describe(),
+            # Keyed by name: a usage row is looked up by parameter,
+            # not iterated. `describe()` is the API's list shape.
+            "effective_parameters": self.effective.by_name(),
         }
 
 

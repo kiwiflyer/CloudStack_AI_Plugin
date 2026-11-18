@@ -135,10 +135,20 @@ class EffectiveParams(Mapping[str, ResolvedValue]):
         """The parameters to apply to the upstream request."""
         return {name: resolved.value for name, resolved in self.entries.items()}
 
-    def describe(self) -> dict[str, dict[str, Any]]:
-        """The shape `getAiEffectiveParameters` returns (SPEC.md section 6)."""
-        return {
-            name: {
+    def describe(self) -> list[dict[str, Any]]:
+        """The shape `getAiEffectiveParameters` returns (SPEC.md section 6).
+
+        A **list**, each entry naming itself. This was a mapping keyed
+        by parameter name, which read naturally and could not be used:
+        section 9 declares `getAiEffectiveParameters` a list command,
+        so the plugin reads `parameters` as an array and returned an
+        empty response every time, and `ui/src/utils/profiles.js` asks
+        each entry for `parameter.name`. Three consumers expected a
+        list and the engine was the one that disagreed.
+        """
+        return [
+            {
+                "name": name,
                 "value": resolved.value,
                 "source": resolved.source.label,
                 "policy": resolved.policy,
@@ -148,6 +158,18 @@ class EffectiveParams(Mapping[str, ResolvedValue]):
                 "max": resolved.max,
             }
             for name, resolved in sorted(self.entries.items())
+        ]
+
+    def by_name(self) -> dict[str, dict[str, Any]]:
+        """The same resolution, keyed by parameter name.
+
+        For a stored record rather than an API response: a usage row
+        is looked up by parameter, not iterated. Derived from
+        `describe()` so the two can never disagree about a value.
+        """
+        return {
+            entry["name"]: {k: v for k, v in entry.items() if k != "name"}
+            for entry in self.describe()
         }
 
 

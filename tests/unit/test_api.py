@@ -228,7 +228,12 @@ class TestEffectiveParameters:
         ).json()
 
         assert body["model"] == "llama-3.3-70b-instruct"
-        assert isinstance(body["parameters"], dict)
+        # A list with a count beside it, like every other list
+        # response: the plugin reads `parameters` as an array and
+        # returned nothing at all while this was a mapping.
+        assert isinstance(body["parameters"], list)
+        assert body["count"] == len(body["parameters"])
+        assert all("name" in entry for entry in body["parameters"])
 
     def test_an_unknown_model_is_a_404(self, client: TestClient) -> None:
         response = client.get("/v1/profiles/effective?model=ghost", headers=ADMIN)
@@ -252,8 +257,9 @@ class TestEffectiveParameters:
                 "/v1/profiles/effective?model=llama-3.3-70b-instruct", headers=TENANT
             ).json()
 
-        assert body["parameters"]["temperature"]["source"] == "domain"
-        assert body["parameters"]["temperature"]["value"] == 0.2
+        temperature = next(p for p in body["parameters"] if p["name"] == "temperature")
+        assert temperature["source"] == "domain"
+        assert temperature["value"] == 0.2
 
 
 class TestHuggingFace:

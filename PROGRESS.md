@@ -5349,3 +5349,122 @@ leaves it unchanged, which was checked rather than assumed.
 and `uploadAiAdapter` — two commands that could not previously
 succeed — now complete, each returning a real record through a
 CloudStack async job.
+
+## Section 6's profiles, served at last
+
+Nine of the thirteen unserved commands were the serving- and
+generation-profile family. They had no engine route because they had no
+table: the precedence logic in `aisvc/profiles/` has existed since
+milestone 1 and could only ever read a profile out of `platform.yaml`,
+so a profile created through CloudStack had nowhere to go. All nine
+answered 404.
+
+### Three tables, not two
+
+Migration 0009 adds `aisvc_serving_profile`, `aisvc_generation_profile`
+and `aisvc_profile_assignment`.
+
+Three because a profile and its binding are different things.
+`platform.yaml` already separates them — a profile is a name and its
+parameters, an assignment says where it applies — and the same profile
+may bind at more than one scope. `aisvc_guardrail_profile` folds the
+scope into the profile, which is simpler and would have been wrong
+here: it cannot express the same profile at two levels, and it would
+disagree with the spec file the resolver reads in the same breath.
+
+A serving profile has no owner and no scope. These are vLLM's own
+arguments, so a tenant who could set `gpu_memory_utilization` could
+take down a host they share with other tenants; the commands are root
+admin's, and binding one is refused for anybody else even where the
+scope rules would otherwise allow it. A generation profile carries its
+author's account and domain, because every role may create one and a
+list has to be filtered by caller like any other tenant-owned row.
+
+### Authority belongs to the binding
+
+A tenant may describe any parameters they like. What they may not do is
+impose them on somebody, and that is the assignment — so
+`check_may_author` is called there and not at creation. The rules are
+`aisvc/guardrails/authority.py`'s, unchanged, because the question is
+identical: a caller binds at their own level and no higher. The module
+lives under `guardrails/` by accident of which feature needed it first;
+the rules are section 6's.
+
+### One chain from two sources
+
+`_layers_for` now merges the spec's assignments with the stored ones.
+Stored last, so at the same level the stored assignment wins — the
+spec is the baseline an operator set, and a tenant tightening their own
+account is the later, more specific statement.
+
+Stored parameters are validated back into the spec's own
+`GenerationValue` on the way out, because `resolve()` asks each value
+for `.min` and `.policy`. A plain dict from JSON fails on the first
+bound, which is how the two tests that matter most here failed first.
+
+Validation happens on the way *in* as well, against the same model. A
+policy the resolver has no branch for would otherwise be stored
+happily and ignored at every request — a locked parameter silently not
+locking, which is precisely the thing a tenant is sold.
+
+### `getAiEffectiveParameters` never worked, and this is why
+
+With profiles storable, the command that shows their effect returned
+an empty body:
+
+```
+getAiEffectiveParameters  {"getaieffectiveparametersresponse": {}}
+```
+
+`EffectiveParams.describe()` returned a mapping keyed by parameter
+name. Section 9 declares this a **list** command, so the plugin reads
+`parameters` as an array and found none; `ui/src/utils/profiles.js`
+asks each entry for `parameter.name`, so the screen would have rendered
+nothing either. Three consumers expected a list and the engine was the
+one that disagreed — and nothing noticed, because the dict shape was
+only ever read by the engine's own tests.
+
+`describe()` returns a list now, each entry naming itself, with `count`
+beside it as every other list response has. `by_name()` is the keyed
+form and keeps the metering record, which is looked up by parameter
+rather than iterated; it is derived from `describe()`, so the two
+cannot disagree about a value.
+
+### Measured, through CloudStack
+
+```
+createAiGenerationProfile  {"aiprofile": {"id": "37dadb35-…", "name": "gen-…"}}
+assignAiTuningProfile      SUCCESS {"scope": "account", "target": "admin"}
+getAiEffectiveParameters   {"count": 1, "aieffectiveparameter": [
+                             {"name": "temperature", "value": "0.25",
+                              "source": "account", "policy": "locked",
+                              "locked": true, "lockedat": "account"}]}
+updateAiGenerationProfile  {"aiprofile": {"id": "37dadb35-…"}}
+deleteAiGenerationProfile  {"success": true}
+```
+
+A profile created through CloudStack, bound through CloudStack, and
+resolved through CloudStack with its source and its lock. The serving
+half was exercised the same way.
+
+2,151 Python tests and 467 JUnit pass.
+
+### What is left, and why it is not a route
+
+Four commands remain unserved, and neither is waiting on someone to
+write an endpoint.
+
+**The three deployment commands.** `platform.yaml` is the source of
+truth for desired state and the reconciler diffs against it, so
+`deployAiModel` means "change the spec and commit it". There is no
+spec-writing machinery and no Git integration anywhere in the engine.
+A Postgres overlay would be quicker and would create a second source of
+desired state, which is the thing the spec exists to avoid — and it
+would be invisible to anyone reading the file.
+
+**`approveAiModel`.** SPEC section 14 still asks whether reseller
+domain admins mirror from Hugging Face directly or only request it.
+What approval *is* depends on the answer: with direct mirroring there
+is no request to approve, and `mirrorAiModel` already works. There is
+no mirror-request table either, though CLAUDE.md has listed one as
+Postgres state for some time.

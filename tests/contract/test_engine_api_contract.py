@@ -223,21 +223,19 @@ class TestErrorContract:
 #: after all, but adding a name means admitting a new hole.
 NOT_YET_SERVED = frozenset(
     {
-        # deployments: created and destroyed by the reconciler today
+        # Deployments. `platform.yaml` is the source of truth for
+        # desired state and the reconciler diffs against it, so these
+        # three mean "change the spec and commit it" — and there is no
+        # spec-writing or Git machinery anywhere in the engine. A
+        # Postgres overlay would be a second source of desired state,
+        # which is the thing the spec exists to avoid.
         "deployAiModel",
         "updateAiModelDeployment",
         "deleteAiModelDeployment",
-        # section 6 profiles: no record type, no routes
-        "listAiServingProfiles",
-        "createAiServingProfile",
-        "updateAiServingProfile",
-        "deleteAiServingProfile",
-        "listAiGenerationProfiles",
-        "createAiGenerationProfile",
-        "updateAiGenerationProfile",
-        "deleteAiGenerationProfile",
-        "assignAiTuningProfile",
-        # the mirror-approval step
+        # the mirror-approval step. Blocked on an open decision, not on
+        # a missing route: SPEC section 14 still asks whether reseller
+        # domain admins mirror from Hugging Face directly or only
+        # request it, and what `approve` does depends on the answer.
         "approveAiModel",
     }
 )
