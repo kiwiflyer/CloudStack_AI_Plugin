@@ -84,6 +84,23 @@ describe('the snippets tab', () => {
 
     expect(wrapper.findAll('[data-test="snippet"]')).toHaveLength(0)
   })
+
+  it('reads the snippets off the endpoint row', async () => {
+    // What CloudStack actually passes a tab is `resource`, the row it
+    // is showing — never a named `snippets` array. The tab only
+    // accepted the prop, so it rendered nothing whatever the endpoint
+    // carried, and until listAiEndpoints returned snippets there was
+    // nothing for it to read either.
+    const resource = {
+      model: 'llama-3.3-70b-instruct',
+      snippets: [{ name: 'curl', language: 'bash', code: 'curl https://ai/v1' }]
+    }
+
+    const wrapper = mount(SnippetsTab, { props: { resource } })
+
+    expect(wrapper.findAll('[data-test="snippet"]')).toHaveLength(1)
+    expect(wrapper.text()).toContain('curl https://ai/v1')
+  })
 })
 
 describe('effective parameters', () => {

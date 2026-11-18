@@ -808,6 +808,16 @@ def _register_routes(app: FastAPI) -> None:
                 "base_url": f"{base}/v1",
                 "task": model.task,
                 "price_tier": model.price_tier,
+                # The snippets tab on this endpoint reads these. They
+                # are rendered here rather than in the browser so a
+                # second implementation of "how you call this" cannot
+                # drift from the first, and they read the key from the
+                # environment: a snippet is copied into tickets and
+                # chats, where a live key would outlive any session.
+                "snippets": [
+                    {"name": s.name, "language": s.language, "code": s.code}
+                    for s in snippets_for(base_url=f"{base}/v1", model=model.name)
+                ],
             }
             for model in services.spec.document.models
             if _model_visible(model, caller)

@@ -64,6 +64,14 @@ Keys are scoped: a key may name the models it may use, the CIDRs it may
 be called from, and when it expires. The secret is shown once, on
 creation, because keys are stored as salted hashes.
 
+The snippets tab carries copy-ready calls — curl, plain Python, and the
+OpenAI clients for Python and JavaScript — rendered by the engine and
+delivered with the endpoint. They are rendered there rather than in the
+browser so there is one implementation of "how you call this", and they
+read the key from the environment rather than carrying one: a snippet
+gets copied into tickets and chats, where a live key would outlive any
+session.
+
 ### Playground
 
 A fifteen-minute, model-scoped session for trying an endpoint without
@@ -153,13 +161,18 @@ visibility from that. Eleven are Vue components, because a table cannot
 express a wizard, a heatmap, a chat transcript, a resolved-parameter
 table or a Hub search.
 
-## Known gaps
+## When something goes wrong
 
-- **The snippets tab is empty.** Its snippets are meant to come from the
-  engine, and no endpoint-facing command returns them yet; exposing them
-  needs a nested object-list field the response generator cannot
-  express.
-- **GPU capacity draws a blank screen when capacity has not been
-  observed**, rather than saying so. The command answers 534 and the
-  screen renders nothing, which is "empty rather than broken" by design
-  but leaves an operator unable to tell the two apart.
+Every screen tells you which of three things happened, because they
+used to look identical — blank:
+
+- **Could not load**, with the reason the engine gave. `listAiGpuCapacity`
+  answers 534 until capacity has been observed, and that sentence names
+  the remedy, so it is shown rather than swallowed.
+- **Nothing to show**, which is a different thing and says so.
+- The data.
+
+None of them leaves an unhandled promise rejection. They used to: nine
+of the eleven views called the API with no `catch`, so a refusal put the
+reason in the browser console, where nobody is looking, and left the
+page blank.

@@ -73,6 +73,11 @@ export default {
     load () {
       getAPI('listAiReconcilerRuns', {}).then((json) => {
         this.fetched = json?.listaireconcilerrunsresponse?.aireconcilerrun ?? []
+      }).catch(() => {
+        // Shown, never thrown. An unhandled rejection leaves a blank
+        // screen with the reason only in the browser console, where
+        // no operator is looking.
+        this.fetched = []
       })
     }
   }

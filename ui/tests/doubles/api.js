@@ -27,12 +27,21 @@ export function apiCalls () {
   return calls
 }
 
-export function getAPI (command, params) {
+// Queue an Error for a command and the call rejects, which is what
+// CloudStack's own helper does on a 4xx or 5xx. Without this every
+// test saw a resolved promise, so a screen with no `.catch()` looked
+// identical to one that handled failure — and the real screens showed
+// a blank page with an unhandled rejection behind it.
+function answer (command, params) {
   calls.push({ command, params })
-  return Promise.resolve(answers[command] ?? {})
+  const queued = answers[command]
+  return queued instanceof Error ? Promise.reject(queued) : Promise.resolve(queued ?? {})
+}
+
+export function getAPI (command, params) {
+  return answer(command, params)
 }
 
 export function postAPI (command, params) {
-  calls.push({ command, params })
-  return Promise.resolve(answers[command] ?? {})
+  return answer(command, params)
 }

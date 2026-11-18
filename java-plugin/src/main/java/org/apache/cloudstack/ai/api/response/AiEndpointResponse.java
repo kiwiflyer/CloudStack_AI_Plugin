@@ -17,6 +17,9 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.response;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.apache.cloudstack.api.BaseResponse;
 
 import com.cloud.serializer.Param;
@@ -43,6 +46,10 @@ public class AiEndpointResponse extends BaseResponse {
     @Param(description = "the price tier billed")
     private String priceTier;
 
+    @SerializedName("snippets")
+    @Param(description = "copy-ready calls against this endpoint", responseObject = AiSnippetResponse.class)
+    private List<AiSnippetResponse> snippets;
+
     /** Map one engine object onto this response. */
     public static AiEndpointResponse from(JsonObject body) {
         AiEndpointResponse mapped = new AiEndpointResponse();
@@ -54,6 +61,7 @@ public class AiEndpointResponse extends BaseResponse {
         mapped.baseUrl = readString(body, "base_url");
         mapped.task = readString(body, "task");
         mapped.priceTier = readString(body, "price_tier");
+        mapped.snippets = readAiSnippetResponseList(body, "snippets");
         return mapped;
     }
 
@@ -73,6 +81,10 @@ public class AiEndpointResponse extends BaseResponse {
         return priceTier;
     }
 
+    public List<AiSnippetResponse> getSnippets() {
+        return snippets;
+    }
+
     private static String readString(JsonObject body, String field) {
         if (!body.has(field) || body.get(field).isJsonNull()) {
             return null;
@@ -89,5 +101,18 @@ public class AiEndpointResponse extends BaseResponse {
             joined.append(part.getAsString());
         }
         return joined.toString();
+    }
+
+    private static List<AiSnippetResponse> readAiSnippetResponseList(JsonObject body, String field) {
+        List<AiSnippetResponse> mapped = new ArrayList<>();
+        if (!body.has(field) || !body.get(field).isJsonArray()) {
+            return mapped;
+        }
+        for (JsonElement item : body.getAsJsonArray(field)) {
+            if (item.isJsonObject()) {
+                mapped.add(AiSnippetResponse.from(item.getAsJsonObject()));
+            }
+        }
+        return mapped;
     }
 }

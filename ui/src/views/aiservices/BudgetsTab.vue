@@ -77,6 +77,11 @@ export default {
     load () {
       getAPI('listAiBudgets', {}).then((json) => {
         this.fetched = json?.listaibudgetsresponse?.aibudget ?? []
+      }).catch(() => {
+        // Shown, never thrown. An unhandled rejection leaves a blank
+        // screen with the reason only in the browser console, where
+        // no operator is looking.
+        this.fetched = []
       })
     }
   }

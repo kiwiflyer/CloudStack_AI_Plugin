@@ -23,7 +23,7 @@ under the License.
 <template>
   <div class="ai-snippets">
     <section
-      v-for="snippet in snippets"
+      v-for="snippet in rows"
       :key="snippet.name"
       data-test="snippet"
       class="ai-snippets__item"
@@ -38,7 +38,17 @@ under the License.
 export default {
   name: 'AiSnippetsTab',
   props: {
-    snippets: { type: Array, default: () => [] }
+    // The endpoint row CloudStack is showing. A tab is handed this
+    // and nothing else, so reading only a `snippets` prop meant the
+    // tab rendered empty however much the endpoint carried.
+    resource: { type: Object, default: () => ({}) },
+    // Supplied by a test, or by a parent that already has them.
+    snippets: { type: Array, default: null }
+  },
+  computed: {
+    rows () {
+      return this.snippets ?? this.resource?.snippets ?? []
+    }
   }
 }
 </script>

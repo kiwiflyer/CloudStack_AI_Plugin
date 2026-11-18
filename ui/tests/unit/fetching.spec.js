@@ -196,6 +196,27 @@ describe('route screens fetch their own data', () => {
 
     expect(wrapper.findAll('[data-test="cell"]')).toHaveLength(0)
   })
+
+  it('a screen that could not load says so', async () => {
+    // Not the same as having nothing to show. listAiGpuCapacity
+    // answers 534 until capacity has been observed, and the screen
+    // drew a blank page — an operator could not tell a fresh install
+    // from a broken one.
+    reset({ listAiGpuCapacity: new Error('capacity has not been observed yet') })
+    const wrapper = mount(GpuCapacity)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="load-failed"]').exists()).toBe(true)
+  })
+
+  it('a screen with nothing to show says that instead', async () => {
+    reset({ listAiGpuCapacity: { listaigpucapacityresponse: { aigpucapacity: [] } } })
+    const wrapper = mount(GpuCapacity)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="load-failed"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="empty"]').exists()).toBe(true)
+  })
 })
 
 describe('the evaluations tab', () => {
@@ -265,5 +286,40 @@ describe('the evaluations tab', () => {
     await flushPromises()
 
     expect(wrapper.text()).toMatch(/overridden/i)
+  })
+})
+
+describe('a screen survives the API failing', () => {
+  // Every one of these called the API with no .catch(), so a 4xx or
+  // 5xx became an unhandled promise rejection and the screen rendered
+  // blank with the reason only in the browser console. listAiGpuCapacity
+  // answers 534 until capacity is observed, which made that the normal
+  // case on a fresh install rather than an edge one.
+  const screens = [
+    ['the heatmap', GpuCapacity, 'listAiGpuCapacity'],
+    ['fleet health', FleetHealth, 'listAiGpuCapacity'],
+    ['the setup wizard', SetupWizard, 'listAiSetupChecks'],
+    ['the playground', Playground, 'listAiModels'],
+    ['effective parameters', EffectiveParameters, 'listAiModels'],
+    ['the api keys tab', ApiKeysTab, 'listAiApiKeys'],
+    ['the budgets tab', BudgetsTab, 'listAiBudgets'],
+    ['the activity tab', RunActionsTab, 'listAiReconcilerRuns']
+  ]
+
+  screens.forEach(([what, component, command]) => {
+    it(`${what} handles a refusal`, async () => {
+      const rejections = []
+      const record = (e) => rejections.push(e)
+      process.on('unhandledRejection', record)
+
+      reset({ [command]: new Error('refused') })
+      const wrapper = mount(component)
+      await flushPromises()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      process.off('unhandledRejection', record)
+      expect(rejections).toHaveLength(0)
+      expect(wrapper.exists()).toBe(true)
+    })
   })
 })

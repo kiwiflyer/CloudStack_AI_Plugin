@@ -71,6 +71,11 @@ export default {
     load () {
       getAPI('listAiApiKeys', {}).then((json) => {
         this.fetched = json?.listaiapikeysresponse?.aiapikey ?? []
+      }).catch(() => {
+        // Shown, never thrown. An unhandled rejection leaves a blank
+        // screen with the reason only in the browser console, where
+        // no operator is looking.
+        this.fetched = []
       })
     }
   }

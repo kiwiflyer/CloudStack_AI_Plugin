@@ -66,6 +66,12 @@ class Field:
     api: str  # CloudStack response field
     type: str  # String | Integer | Long | Boolean | Double
     doc: str
+    #: Set to another response class to carry a list of them. The
+    #: engine sends some things that are not scalars — an endpoint's
+    #: snippets are objects with a name, a language and code — and a
+    #: response that can only hold scalars simply drops them, which is
+    #: how the snippets tab came to have no data source at all.
+    nested: str | None = None
 
 
 @dataclass(frozen=True)
@@ -76,8 +82,15 @@ class Response:
     fields: tuple[Field, ...]
 
 
-def f(java: str, wire: str, type_: str, doc: str, api: str | None = None) -> Field:
-    return Field(java=java, wire=wire, api=api or java.lower(), type=type_, doc=doc)
+def f(
+    java: str,
+    wire: str,
+    type_: str,
+    doc: str,
+    api: str | None = None,
+    nested: str | None = None,
+) -> Field:
+    return Field(java=java, wire=wire, api=api or java.lower(), type=type_, doc=doc, nested=nested)
 
 
 RESPONSES: tuple[Response, ...] = (
@@ -231,6 +244,20 @@ RESPONSES: tuple[Response, ...] = (
         ),
     ),
     Response(
+        "AiSnippetResponse",
+        "aisnippet",
+        "A copy-ready call against one endpoint (SPEC.md section 7).\n *\n * Rendered"
+        ' by the engine, so there is one implementation of\n * "how you call this".'
+        " It reads the key from the environment\n * rather than carrying one: a snippet"
+        " is copied into tickets and\n * chats, where a live key would outlive any"
+        " session.",
+        (
+            f("name", "name", "String", "what this snippet shows"),
+            f("language", "language", "String", "the language it is written in"),
+            f("code", "code", "String", "the snippet itself"),
+        ),
+    ),
+    Response(
         "AiEndpointResponse",
         "aiendpoint",
         "One OpenAI-compatible endpoint (SPEC.md section 7).",
@@ -239,6 +266,17 @@ RESPONSES: tuple[Response, ...] = (
             f("baseUrl", "base_url", "String", "the OpenAI-compatible base URL", "baseurl"),
             f("task", "task", "String", "chat, embedding, rerank or vision-chat"),
             f("priceTier", "price_tier", "String", "the price tier billed", "pricetier"),
+            # The snippets tab's data source. Without it the tab had
+            # none at all: no endpoint-facing command returned them,
+            # and a response that can only carry scalars could not.
+            f(
+                "snippets",
+                "snippets",
+                "String",
+                "copy-ready calls against this endpoint",
+                "snippets",
+                nested="AiSnippetResponse",
+            ),
         ),
     ),
     Response(
@@ -425,20 +463,49 @@ JAVA_READERS = {
 }
 
 
+def java_type(fl: Field) -> str:
+    """The declared type: a list for a nested field, else the scalar."""
+    return f"List<{fl.nested}>" if fl.nested else fl.type
+
+
 def render_response(response: Response) -> str:
     fields = "\n\n".join(
         f'    @SerializedName("{fl.api}")\n'
-        f'    @Param(description = "{fl.doc}")\n'
-        f"    private {fl.type} {fl.java};"
+        + (
+            f'    @Param(description = "{fl.doc}", responseObject = {fl.nested}.class)\n'
+            if fl.nested
+            else f'    @Param(description = "{fl.doc}")\n'
+        )
+        + f"    private {java_type(fl)} {fl.java};"
         for fl in response.fields
     )
     reads = "\n".join(
-        f'        mapped.{fl.java} = read{fl.type}(body, "{fl.wire}");' for fl in response.fields
+        (
+            f'        mapped.{fl.java} = read{fl.nested}List(body, "{fl.wire}");'
+            if fl.nested
+            else f'        mapped.{fl.java} = read{fl.type}(body, "{fl.wire}");'
+        )
+        for fl in response.fields
     )
     getters = "\n\n".join(
-        f"    public {fl.type} get{fl.java[0].upper()}{fl.java[1:]}() {{\n"
+        f"    public {java_type(fl)} get{fl.java[0].upper()}{fl.java[1:]}() {{\n"
         f"        return {fl.java};\n    }}"
         for fl in response.fields
+    )
+    nested_readers = "\n\n".join(
+        f"    private static List<{nested}> read{nested}List("
+        "JsonObject body, String field) {\n"
+        f"        List<{nested}> mapped = new ArrayList<>();\n"
+        "        if (!body.has(field) || !body.get(field).isJsonArray()) {\n"
+        "            return mapped;\n"
+        "        }\n"
+        "        for (JsonElement item : body.getAsJsonArray(field)) {\n"
+        "            if (item.isJsonObject()) {\n"
+        f"                mapped.add({nested}.from(item.getAsJsonObject()));\n"
+        "            }\n"
+        "        }\n"
+        "        return mapped;\n    }"
+        for nested in sorted({fl.nested for fl in response.fields if fl.nested})
     )
 
     def reader_for(t: str, reader: str) -> str:
@@ -477,12 +544,20 @@ def render_response(response: Response) -> str:
     readers = "\n\n".join(
         reader_for(t, reader)
         for t, reader in JAVA_READERS.items()
-        if any(fl.type == t for fl in response.fields)
+        if any(fl.type == t and not fl.nested for fl in response.fields)
+    )
+    if nested_readers:
+        readers = f"{readers}\n\n{nested_readers}" if readers else nested_readers
+
+    # java.util only where a nested list needs it, so every other
+    # response keeps the import block it had.
+    collections = (
+        "import java.util.ArrayList;\nimport java.util.List;\n\n" if nested_readers else ""
     )
 
     return f"""{LICENCE}{GENERATED}package org.apache.cloudstack.ai.api.response;
 
-import org.apache.cloudstack.api.BaseResponse;
+{collections}import org.apache.cloudstack.api.BaseResponse;
 
 import com.cloud.serializer.Param;
 import com.google.gson.JsonElement;

@@ -83,6 +83,10 @@ export default {
       if (!this.query) return
       getAPI('searchAiHfModels', { query: this.query }).then((json) => {
         this.results = json?.searchaihfmodelsresponse?.aihfmodel ?? []
+      }).catch(() => {
+        // The Hub is somebody else's service; a failed search is a
+        // normal outcome, not an exception to leave unhandled.
+        this.results = []
       })
     }
   }

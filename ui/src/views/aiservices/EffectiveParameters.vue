@@ -90,6 +90,8 @@ export default {
       getAPI('listAiModels', {}).then((json) => {
         this.models = (json?.listaimodelsresponse?.aimodel ?? []).map((m) => m.name)
         if (!this.chosen && this.models.length) this.chosen = this.models[0]
+      }).catch(() => {
+        this.models = []
       })
     },
     resolve () {
@@ -97,6 +99,8 @@ export default {
       getAPI('getAiEffectiveParameters', { model: this.chosen }).then((json) => {
         this.resolved =
           json?.getaieffectiveparametersresponse?.aieffectiveparameter ?? []
+      }).catch(() => {
+        this.resolved = []
       })
     }
   }

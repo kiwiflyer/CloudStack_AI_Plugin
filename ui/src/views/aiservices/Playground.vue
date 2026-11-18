@@ -106,12 +106,18 @@ export default {
       getAPI('listAiModels', {}).then((json) => {
         this.models = (json?.listaimodelsresponse?.aimodel ?? []).map((m) => m.name)
         if (!this.chosen && this.models.length) this.chosen = this.models[0]
+      }).catch(() => {
+        this.models = []
       })
     },
     openSession () {
       if (!this.chosen) return
       postAPI('createAiPlaygroundSession', { model: this.chosen }).then((json) => {
         this.opened = json?.createaiplaygroundsessionresponse?.aiplaygroundsession ?? null
+      }).catch(() => {
+        // A refused session leaves the screen as it was rather than
+        // half-opened; CloudStack's own notification carries the why.
+        this.opened = null
       })
     }
   }

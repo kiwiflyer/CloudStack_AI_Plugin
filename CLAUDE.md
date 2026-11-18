@@ -570,10 +570,22 @@ ever fetched; `GpuCapacity` even says why in a comment, and
 views out of eleven. Six are wired now (`Playground`, `EffectiveParameters`,
 `HuggingFaceBrowser`, `ApiKeysTab`, `BudgetsTab`, `RunActionsTab`), each
 fetching when its prop is null so the rendering tests still pass data in.
-**`SnippetsTab` is still inert**: its comment says "the engine renders these",
-and no endpoint-facing command returns them — exposing them needs a nested
-object-list field that `Response`/`Field` in the generator cannot express, since
-every field there is a scalar.
+`SnippetsTab` needed more than wiring: its comment is right that the engine
+renders snippets, and no endpoint-facing command returned them. **The response
+generator now carries nested object lists** — `f(..., nested="AiSnippetResponse")`
+emits a `List<T>` with `@Param(responseObject = …)` and a reader that maps the
+JSON array — so `listAiEndpoints` delivers four snippets with each endpoint and
+the tab reads them off `resource`. Before that every `Field` was a scalar, and a
+response that cannot hold a list silently drops one.
+
+**Nine of the eleven views called the API with no `catch`.** A refusal became an
+unhandled rejection: blank screen, reason in the browser console. That mattered
+most on capacity, where `listAiGpuCapacity` answers 534 until capacity has been
+observed — the normal state of a fresh install, rendering identically to a broken
+one. Each screen now separates *could not load* (with the engine's own sentence,
+which names the remedy) from *nothing to show*, and `ui/tests/doubles/api.js`
+rejects when an `Error` is queued, so a screen with no handler no longer tests
+the same as one with.
 
 **A test that says "does not X until asked" is only half a test.**
 `the Hugging Face browser does not search until asked` passed because the

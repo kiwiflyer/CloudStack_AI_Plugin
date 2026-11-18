@@ -21,6 +21,17 @@ under the License.
      cannot hide behind a quiet class. -->
 <template>
   <div class="ai-capacity">
+    <!-- Three states, kept apart on purpose. A screen that cannot
+         load and a screen with nothing to show looked identical —
+         both blank — and listAiGpuCapacity answers 534 until capacity
+         has been observed, so a fresh install read as a broken one. -->
+    <p v-if="failed" data-test="load-failed" class="ai-capacity__failed">
+      Could not read GPU capacity. {{ failed }}
+    </p>
+    <p v-else-if="!rows.length" data-test="empty" class="ai-capacity__empty">
+      No GPU capacity has been observed in any zone yet.
+    </p>
+
     <div v-for="row in rows" :key="row.zone" class="ai-capacity__row">
       <h4 class="ai-capacity__zone">{{ row.zone }}</h4>
       <div class="ai-capacity__cells">
@@ -57,7 +68,7 @@ export default {
     capacity: { type: Array, default: null }
   },
   data () {
-    return { fetched: [] }
+    return { fetched: [], failed: '' }
   },
   computed: {
     rows () {
@@ -71,6 +82,13 @@ export default {
     load () {
       getAPI('listAiGpuCapacity', {}).then((json) => {
         this.fetched = json?.listaigpucapacityresponse?.aigpucapacity ?? []
+        this.failed = ''
+      }).catch((problem) => {
+        // The reason, not just the fact: "capacity has not been
+        // observed yet" names the remedy, and the engine sends it as
+        // problem JSON precisely so a caller can repeat it.
+        this.failed = problem?.response?.data?.errortext ?? problem?.message ?? ''
+        this.fetched = []
       })
     }
   }

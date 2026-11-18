@@ -5769,3 +5769,50 @@ assert `searchAiHfModels` is called with it — and it failed before the
 screen was wired.
 
 115 Vitest tests pass, up from 109.
+
+### Closing the two gaps
+
+**Snippets needed a capability, not wiring.** The tab's comment was
+right — the engine renders them, nothing is built in the browser — and
+no endpoint-facing command returned any. `listAiEndpoints` gave model,
+baseurl, task and price tier, and could not have given more: every
+`Field` in the response generator was a scalar, so a response that
+needed to carry a list of objects simply dropped it.
+
+The generator carries nested lists now. A field declared
+`nested="AiSnippetResponse"` emits
+
+```java
+@Param(description = "…", responseObject = AiSnippetResponse.class)
+private List<AiSnippetResponse> snippets;
+```
+
+with a reader that walks the JSON array, and pulls in `java.util` only
+for the responses that need it so every other generated class keeps the
+imports it had. `listAiEndpoints` now delivers four snippets with each
+endpoint — curl, plain Python, and the OpenAI clients for Python and
+JavaScript — and the tab reads them off `resource`, which is what
+CloudStack actually passes a tab.
+
+**The blank screen was nine screens.** `listAiGpuCapacity` answers 534
+until capacity has been observed, and the heatmap rendered nothing at
+all: no message, and an unhandled promise rejection behind it with the
+reason only in the browser console. A fresh install looked exactly like
+a broken one.
+
+Nine of the eleven views had the same shape — `getAPI(...).then(...)`
+with no `catch`. Every one of them now handles a refusal, and the
+capacity screens distinguish three states that had all looked the same:
+
+- could not load, quoting the engine's own sentence, which names the
+  remedy;
+- nothing to show;
+- the data.
+
+The test double could not have caught this either: `getAPI` always
+resolved, so a screen with no handler behaved identically to one with.
+Queue an `Error` for a command and it rejects now, and a parameterised
+test mounts all eight fetching screens against a refusal and fails on
+any unhandled rejection.
+
+126 Vitest tests pass, up from 115.

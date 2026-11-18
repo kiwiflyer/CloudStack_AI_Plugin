@@ -55,6 +55,7 @@
     "base_url": "sample",
     "model": "sample",
     "price_tier": "sample",
+    "snippets": "sample",
     "task": "sample"
   },
   "AiEvaluationResponse": {
@@ -139,6 +140,11 @@
     "name": "sample",
     "remedy": "sample",
     "status": "sample"
+  },
+  "AiSnippetResponse": {
+    "code": "sample",
+    "language": "sample",
+    "name": "sample"
   },
   "AiUsageResponse": {
     "account": "sample",
