@@ -2,7 +2,7 @@
 
 What a tenant and an operator actually see, screen by screen.
 
-This describes `ui/src/config/section/aiservices.js` and the eleven Vue
+This describes `ui/src/config/section/aiservices.js` and the twelve Vue
 views beside it. For how to install the section into a CloudStack `ui/`
 tree, see [installation.md](installation.md); for why it is built the
 way it is, [ui/README.md](../ui/README.md).
@@ -193,9 +193,9 @@ is what keeps it true.
 **Most screens are config, not code.** Eight of nineteen are declared
 entirely in `aiservices.js`, and CloudStack builds the list, the detail
 view, search, pagination, async job notifications and role-based action
-visibility from that. Eleven are Vue components, because a table cannot
+visibility from that. Twelve are Vue components, because a table cannot
 express a wizard, a heatmap, a chat transcript, a resolved-parameter
-table or a Hub search.
+table, a Hub search or a profile's list of checks.
 
 ## When something goes wrong
 
@@ -226,5 +226,5 @@ other eight emptied their list and said nothing, so "could not reach the
 engine" and "you have no keys yet" were the same blank panel.
 
 None of them leaves an unhandled promise rejection either. They used
-to: nine of the eleven views called the API with no `catch`, so a
+to: nine of the views called the API with no `catch`, so a
 refusal put the reason in the browser console, where nobody is looking.
