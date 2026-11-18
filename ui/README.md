@@ -92,10 +92,12 @@ tab mints the key itself now, so the spec asserts the real thing again
 and nothing is skipped for being unbuilt.
 
 **The counts above were last measured before that change.** The suite
-has not been re-run since, because Docker's port forwarding went down
-on this machine — every published port on every container, not just
-this harness — so nothing could reach the management server. Re-run it
-before trusting the numbers.
+has not been re-run since, because every published port on every
+container on this machine stopped carrying data — not just this
+harness, and Postgres as well as HTTP. The management server itself
+stayed healthy throughout, answering 401 to an unsigned call from
+inside its own container. Re-run the suite before trusting the
+numbers.
 
 ### Pointing them at a real CloudStack
 

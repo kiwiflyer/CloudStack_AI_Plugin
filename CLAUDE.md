@@ -628,9 +628,17 @@ nothing**; one looked for a button by its words, and **an action button is
 icon-only**. Both facts were already in this file, and `tests/e2e/table.js`
 exports `rowLink` and `action` for exactly them. The whole suite passed at
 39 with 8 skipped when that landed; it has **not been re-run since the API
-keys tab started minting its own key**, because Docker's port forwarding went
-down on this machine — every published port on every container — so nothing
-could reach the management server.
+keys tab started minting its own key**, because every published port on every
+container on this machine stopped carrying data. **The signature is worth
+knowing**: TCP connects and nothing ever flows, on Postgres as much as on
+HTTP, while `docker exec` keeps working because it uses the unix socket. That
+is not the port forwarder — the bridge devices were gone from the Colima VM
+(`colima ssh -- ip -o link show` listing no `docker0` and no `br-…`, only
+dangling veths, while `docker network ls` still named the network). Rebuilding
+them needs `sudo service docker restart` inside the VM, or `colima restart`.
+**Do not `docker restart` a container while its bridge is missing** — it exits
+128 with *"adding interface vethXXXX to bridge br-… failed: Device does not
+exist"* and will not come back until the bridges are rebuilt.
 
 **Every detail view in the section showed the first record in its list.**
 CloudStack opens one by calling the *same list command* with `id=<the row's
