@@ -26,7 +26,7 @@ import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -1066,3 +1066,115 @@ class TestEveryWriteRecordsAnEvent:
             assert command.event in listed, (
                 f"{command.event} is defined but missing from AiServicesEvents.all()"
             )
+
+
+class TestEveryListScreenCanReachItsDetailView:
+    """A column called `name` that renders nothing links nothing.
+
+    `ListView.vue` renders the way into a record's detail view only
+    where `['name', 'provider'].includes(column.key)`. So a screen
+    whose first column is a bare `'name'` depends on the response
+    actually having a `name` field — and when it does not, the column
+    draws blank, the row cannot be clicked, and every `dataView`
+    action on that screen is unreachable however correctly declared.
+
+    That was already found once and fixed on six screens by giving
+    each a synthesised column:
+
+        { field: 'name', customTitle: 'ai.model', name: (r) => r.model }
+
+    Two were missed. `aiendpoint` and `airollout` kept bare `'name'`
+    columns while `AiEndpointResponse` and `AiDeploymentResponse`
+    carry no such field, so the endpoints detail view — with its API
+    keys tab, its snippets tab and three actions — and both rollout
+    actions had no route to them at all.
+
+    This compares the two sides, which is the only way to see it: the
+    section config alone looks correct, and so does each response.
+    """
+
+    def _section(self) -> str:
+        return (
+            Path(__file__).resolve().parents[2]
+            / "ui"
+            / "src"
+            / "config"
+            / "section"
+            / "aiservices.js"
+        ).read_text(encoding="utf-8")
+
+    def _responses_with_a_name(self) -> set[str]:
+        """Every response class declaring a CloudStack `name` field."""
+        root = (
+            Path(__file__).resolve().parents[2]
+            / "java-plugin"
+            / "src"
+            / "main"
+            / "java"
+            / "org"
+            / "apache"
+            / "cloudstack"
+            / "ai"
+            / "api"
+            / "response"
+        )
+        named = set()
+        for java in root.glob("*.java"):
+            if '@SerializedName("name")' in java.read_text(encoding="utf-8"):
+                named.add(java.stem)
+        return named
+
+    #: Which response each screen's rows come from. Written down rather
+    #: than parsed, because the mapping runs through a command name and
+    #: a response class and reads worse derived than stated.
+    SCREEN_RESPONSES: ClassVar[dict[str, str]] = {
+        "aimodelcatalog": "AiModelResponse",
+        "aiendpoint": "AiEndpointResponse",
+        "aiadapter": "AiAdapterResponse",
+        "airegistry": "AiModelResponse",
+        "airollout": "AiDeploymentResponse",
+        "aiservingprofile": "AiProfileResponse",
+    }
+
+    def test_a_bare_name_column_has_a_name_to_render(self) -> None:
+        section = self._section()
+        named = self._responses_with_a_name()
+
+        blank = []
+        for screen, response in self.SCREEN_RESPONSES.items():
+            block = section.split(f"name: '{screen}'", 1)
+            if len(block) < 2:
+                continue
+            columns = block[1].split("details:", 1)[0]
+            bare = re.search(r"^\s*'name',", columns, re.M)
+            if bare and response not in named:
+                blank.append(f"{screen} ({response} has no name field)")
+
+        assert blank == [], (
+            "these screens draw a blank name column, so the row cannot be "
+            "clicked and every dataView action on them is unreachable: "
+            + "; ".join(blank)
+            + ". Render one from a field the response does have, as the "
+            "other screens do."
+        )
+
+    def test_the_screen_response_map_names_real_classes(self) -> None:
+        # So the test above cannot quietly pass by naming a class that
+        # does not exist.
+        root = (
+            Path(__file__).resolve().parents[2]
+            / "java-plugin"
+            / "src"
+            / "main"
+            / "java"
+            / "org"
+            / "apache"
+            / "cloudstack"
+            / "ai"
+            / "api"
+            / "response"
+        )
+        existing = {java.stem for java in root.glob("*.java")}
+
+        missing = sorted(set(self.SCREEN_RESPONSES.values()) - existing)
+        assert missing == [], f"no such response classes: {missing}"

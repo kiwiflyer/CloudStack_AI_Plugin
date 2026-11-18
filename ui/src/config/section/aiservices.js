@@ -95,7 +95,14 @@ export default {
       resourceType: 'AiEndpoint',
       columns: () => {
         const fields = [
-          'name', { field: 'model', customTitle: 'ai.model' }, 'state',
+          // Keyed `name` and rendered from the model, because
+          // AiEndpointResponse has no `name` of its own: a bare
+          // 'name' column drew blank, and ListView links only a
+          // column called `name`, so the detail view — with its API
+          // keys tab, its snippets tab and three actions — had no
+          // route to it at all.
+          { field: 'name', customTitle: 'ai.model', name: (record) => record.model },
+          'state',
           { field: 'replicas', customTitle: 'ai.replicas' },
           { field: 'baseurl', customTitle: 'ai.baseurl' }
         ]
@@ -725,7 +732,10 @@ export default {
       show: isAdminOrDomainAdmin,
       resourceType: 'AiDeployment',
       columns: () => [
-        'name', { field: 'model', customTitle: 'ai.model' },
+        // Same as endpoints: AiDeploymentResponse carries no `name`,
+        // so the row had nothing to link and promote/rollback were
+        // unreachable.
+        { field: 'name', customTitle: 'ai.model', name: (record) => record.model },
         { field: 'livecolour', customTitle: 'ai.livecolour' },
         { field: 'candidate', customTitle: 'ai.candidate' },
         { field: 'weight', customTitle: 'ai.weight' }, 'state'
