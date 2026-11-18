@@ -133,9 +133,11 @@ describe('effective parameters', () => {
 })
 
 describe('the GPU capacity heatmap', () => {
+  // The shape listAiGpuCapacity answers with. It used to say `total`,
+  // `allocated`, `free` and `unhealthy`, none of which CloudStack sends.
   const capacity = [
-    { zone: 'east', gpuclass: 'h100-8x', total: 16, allocated: 8, free: 8, unhealthy: 0 },
-    { zone: 'east', gpuclass: 'l40s-1x', total: 4, allocated: 0, free: 3, unhealthy: 1 }
+    { zone: 'east', gpuclass: 'h100-8x', gpustotal: 16, gpusfree: 8, nodestotal: 2, nodeshealthy: 2 },
+    { zone: 'east', gpuclass: 'l40s-1x', gpustotal: 4, gpusfree: 3, nodestotal: 2, nodeshealthy: 1 }
   ]
 
   it('renders a cell per class', () => {

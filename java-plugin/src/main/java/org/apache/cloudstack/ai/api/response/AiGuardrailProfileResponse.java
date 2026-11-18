@@ -17,6 +17,10 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.response;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
 import org.apache.cloudstack.api.BaseResponse;
 
 import com.cloud.serializer.Param;
@@ -43,6 +47,10 @@ public class AiGuardrailProfileResponse extends BaseResponse {
     @Param(description = "the domain, account or deployment")
     private String target;
 
+    @SerializedName("checks")
+    @Param(description = "the checks this profile applies", responseObject = AiGuardrailCheckResponse.class)
+    private List<AiGuardrailCheckResponse> checks;
+
     /** Map one engine object onto this response. */
     public static AiGuardrailProfileResponse from(JsonObject body) {
         AiGuardrailProfileResponse mapped = new AiGuardrailProfileResponse();
@@ -54,6 +62,7 @@ public class AiGuardrailProfileResponse extends BaseResponse {
         mapped.name = readString(body, "name");
         mapped.scope = readString(body, "scope");
         mapped.target = readString(body, "target");
+        mapped.checks = readAiGuardrailCheckResponseMap(body, "checks");
         return mapped;
     }
 
@@ -73,6 +82,10 @@ public class AiGuardrailProfileResponse extends BaseResponse {
         return target;
     }
 
+    public List<AiGuardrailCheckResponse> getChecks() {
+        return checks;
+    }
+
     private static String readString(JsonObject body, String field) {
         if (!body.has(field) || body.get(field).isJsonNull()) {
             return null;
@@ -89,5 +102,21 @@ public class AiGuardrailProfileResponse extends BaseResponse {
             joined.append(part.getAsString());
         }
         return joined.toString();
+    }
+
+    private static List<AiGuardrailCheckResponse> readAiGuardrailCheckResponseMap(JsonObject body, String field) {
+        List<AiGuardrailCheckResponse> mapped = new ArrayList<>();
+        if (!body.has(field) || !body.get(field).isJsonObject()) {
+            return mapped;
+        }
+        for (Map.Entry<String, JsonElement> entry : body.getAsJsonObject(field).entrySet()) {
+            if (!entry.getValue().isJsonObject()) {
+                continue;
+            }
+            JsonObject named = entry.getValue().getAsJsonObject().deepCopy();
+            named.addProperty("name", entry.getKey());
+            mapped.add(AiGuardrailCheckResponse.from(named));
+        }
+        return mapped;
     }
 }

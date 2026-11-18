@@ -122,6 +122,15 @@ private endpoint on their own network; and guardrail profiles, which a
 tenant may tighten for themselves and never loosen below what is locked
 above them.
 
+A guardrail profile has a **Checks** tab rather than a checks row: the
+engine keys them by name, the plugin carries them as a named list, and
+CloudStack's detail view prints a value rather than rendering one, so a
+list there reads `[object Object]`. The tab calls out anything
+`locked`, which is the thing being sold — a school sets education-safe
+on their domain precisely so an account beneath cannot relax it, and a
+tenant looking at the profile screening them should not have to infer
+that.
+
 ## The operator's screens
 
 ### Setup
@@ -140,11 +149,23 @@ Every remedy is the engine's own sentence, naming the setting or the
 command that fixes it: `gpu_card` has to match a card CloudStack knows,
 so the check that finds it does not lists the ones it does.
 
-### GPU capacity and fleet health
+### GPU capacity
 
-A heatmap of GPU capacity by zone and class, and the health of what is
-serving. Both read observed state — what CloudStack and Kubernetes
-report — rather than anything the engine stores, so they cannot drift.
+A heatmap of GPU capacity by zone and class, reading observed state —
+what CloudStack reports — rather than anything the engine stores, so it
+cannot drift. Allocated and unhealthy are not reported directly; they
+are derived from the totals beside them, in one place.
+
+The status a cell takes is what carries its colour, and unhealthy
+outranks busy, so failing hardware cannot hide behind a quiet class.
+
+### Fleet health · not built
+
+Declared, and it has no data source. It renders hosts with their
+template, driver and drift from `listAiGpuCapacity`, which answers per
+GPU *class* — zone, class, node and GPU counts — and the engine has no
+host-level route at all. The screen needs one before it can show
+anything; it is listed here rather than quietly omitted.
 
 ### Hugging Face
 

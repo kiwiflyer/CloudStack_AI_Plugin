@@ -381,6 +381,25 @@ async def _owned_networks(services: Services, caller: Any) -> list[str]:
     return [str(network) for network in found]
 
 
+def _capacity_row(cap: Any) -> dict[str, Any]:
+    """One GPU class's observed capacity.
+
+    Pulled out of the route so the contract test can read it beside the
+    other row builders: a field added here and not declared in the Java
+    is dropped in silence, which is how the heatmap came to be fed
+    names that did not exist.
+    """
+    return {
+        "zone": cap.zone,
+        "gpu_class": cap.gpu_class,
+        "nodes_total": cap.nodes_total,
+        "nodes_healthy": cap.nodes_healthy,
+        "nodes_free": cap.nodes_free,
+        "gpus_total": cap.gpus_total,
+        "gpus_free": cap.gpus_free,
+    }
+
+
 def _adapter_row(record: Any) -> dict[str, Any]:
     return {
         "id": record.id,
@@ -610,18 +629,7 @@ def _register_routes(app: FastAPI) -> None:
             )
         return {
             "taken_at": snapshot.taken_at.isoformat(),
-            "classes": [
-                {
-                    "zone": cap.zone,
-                    "gpu_class": cap.gpu_class,
-                    "nodes_total": cap.nodes_total,
-                    "nodes_healthy": cap.nodes_healthy,
-                    "nodes_free": cap.nodes_free,
-                    "gpus_total": cap.gpus_total,
-                    "gpus_free": cap.gpus_free,
-                }
-                for cap in snapshot.classes.values()
-            ],
+            "classes": [_capacity_row(cap) for cap in snapshot.classes.values()],
         }
 
     @app.get(f"{PREFIX}/runs", tags=["admin"], summary="Reconciler runs")

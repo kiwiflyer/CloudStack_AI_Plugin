@@ -513,10 +513,18 @@ export default {
       resourceType: 'AiGuardrailProfile',
       columns: () => ['name', 'scope', { field: 'target', customTitle: 'ai.target' }],
       details: () => [
-        'id', 'name', 'scope', { field: 'target', customTitle: 'ai.target' },
-        { field: 'checks', customTitle: 'ai.checks' }
+        'id', 'name', 'scope', { field: 'target', customTitle: 'ai.target' }
       ],
-      tabs: [detailsTab],
+      // The checks are a tab, not a detail row: they are a named list,
+      // and DetailsTab prints a value rather than rendering one, so a
+      // list there reads "[object Object]".
+      tabs: [
+        detailsTab,
+        {
+          name: 'ai.checks',
+          component: view('GuardrailChecksTab')
+        }
+      ],
       actions: [
         {
           api: 'createAiGuardrailProfile',

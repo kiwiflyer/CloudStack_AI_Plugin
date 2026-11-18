@@ -59,6 +59,10 @@ public class AiAdapterResponse extends BaseResponse {
     @Param(description = "whether it is shared across the domain")
     private Boolean shared;
 
+    @SerializedName("created")
+    @Param(description = "when it was uploaded")
+    private String created;
+
     /** Map one engine object onto this response. */
     public static AiAdapterResponse from(JsonObject body) {
         AiAdapterResponse mapped = new AiAdapterResponse();
@@ -74,6 +78,7 @@ public class AiAdapterResponse extends BaseResponse {
         mapped.sizeBytes = readLong(body, "sizebytes");
         mapped.account = readString(body, "account");
         mapped.shared = readBoolean(body, "shared");
+        mapped.created = readString(body, "created");
         return mapped;
     }
 
@@ -107,6 +112,10 @@ public class AiAdapterResponse extends BaseResponse {
 
     public Boolean getShared() {
         return shared;
+    }
+
+    public String getCreated() {
+        return created;
     }
 
     private static String readString(JsonObject body, String field) {

@@ -2,6 +2,7 @@
   "AiAdapterResponse": {
     "account": "sample",
     "basemodel": "sample",
+    "created": "sample",
     "id": "sample",
     "name": "sample",
     "rank": 7,
@@ -22,21 +23,26 @@
     "created": "sample",
     "finished": "sample",
     "id": "sample",
+    "inputuri": "sample",
     "model": "sample",
+    "outputuri": "sample",
     "requestcount": 7,
     "status": "sample"
   },
   "AiBudgetResponse": {
     "account": "sample",
+    "blocked": true,
     "currency": "sample",
     "domain": "sample",
     "id": "sample",
     "monthly": 1.5,
     "on_exceed": "sample",
+    "percent_used": 1.5,
     "spent": 1.5
   },
   "AiCertificateResponse": {
     "account": "sample",
+    "created": "sample",
     "customdomain": "sample",
     "expires": "sample",
     "fingerprint": "sample",
@@ -70,6 +76,7 @@
     "gpu_class": "sample",
     "gpus_free": 7,
     "gpus_total": 7,
+    "nodes_free": 7,
     "nodes_healthy": 7,
     "nodes_total": 7,
     "zone": "sample"
@@ -79,7 +86,13 @@
     "hosts": 7,
     "suggested_name": "sample"
   },
+  "AiGuardrailCheckResponse": {
+    "action": "sample",
+    "name": "sample",
+    "policy": "sample"
+  },
   "AiGuardrailProfileResponse": {
+    "checks": "sample",
     "id": "sample",
     "name": "sample",
     "scope": "sample",
@@ -112,6 +125,7 @@
   "AiPrivateEndpointResponse": {
     "account": "sample",
     "certificate": "sample",
+    "created": "sample",
     "customdomain": "sample",
     "deployment": "sample",
     "exposure": "sample",
@@ -127,7 +141,15 @@
     "scope": "sample",
     "target": "sample"
   },
+  "AiReconcilerActionResponse": {
+    "error": "sample",
+    "kind": "sample",
+    "name": "sample",
+    "outcome": "sample",
+    "resource_type": "sample"
+  },
   "AiReconcilerRunResponse": {
+    "actions": "sample",
     "dry_run": true,
     "finished_at": "sample",
     "id": "sample",

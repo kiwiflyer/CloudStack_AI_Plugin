@@ -20,13 +20,19 @@ import { describeParameter, sourceLabel } from '@/utils/profiles'
 import { canProceed, groupChecks } from '@/utils/setup'
 
 describe('the GPU capacity heatmap', () => {
+  // What listAiGpuCapacity actually answers with. This fixture used to
+  // say `total`, `allocated`, `free` and `unhealthy`, none of which
+  // CloudStack sends — so every test agreed with the code and the live
+  // screen drew "undefined / undefined allocated" in a green cell for
+  // every class, whatever the hardware was doing. Allocated and
+  // unhealthy are not sent at all; they are differences.
   const capacity = (over = {}) => ({
     zone: 'zone-east-1',
     gpuclass: 'h100-8x',
-    total: 16,
-    allocated: 8,
-    free: 8,
-    unhealthy: 0,
+    gpustotal: 16,
+    gpusfree: 8,
+    nodestotal: 2,
+    nodeshealthy: 2,
     ...over
   })
 
@@ -34,33 +40,41 @@ describe('the GPU capacity heatmap', () => {
     expect(cellFor(capacity()).utilisation).toBeCloseTo(0.5)
   })
 
+  it('derives what is allocated, because the engine sends free and total', () => {
+    expect(cellFor(capacity()).allocated).toBe(8)
+  })
+
+  it('counts a node that is not healthy as unhealthy capacity', () => {
+    expect(cellFor(capacity({ nodeshealthy: 1 })).unhealthy).toBe(1)
+  })
+
   it('a class with no GPUs is not an error, just empty', () => {
     // A declared class whose hosts are not tagged yet; dividing by zero
     // here would render NaN% in the operator's first screen.
-    expect(cellFor(capacity({ total: 0, allocated: 0, free: 0 })).utilisation).toBe(0)
+    expect(cellFor(capacity({ gpustotal: 0, gpusfree: 0 })).utilisation).toBe(0)
   })
 
   it('full capacity reads as full', () => {
-    expect(cellFor(capacity({ allocated: 16, free: 0 })).utilisation).toBe(1)
+    expect(cellFor(capacity({ gpusfree: 0 })).utilisation).toBe(1)
   })
 
   it('any unhealthy GPU outranks utilisation in the status', () => {
     // An operator scanning the heatmap needs broken hardware to stand
     // out even when the class is otherwise quiet.
-    const cell = cellFor(capacity({ allocated: 0, free: 15, unhealthy: 1 }))
+    const cell = cellFor(capacity({ gpusfree: 15, nodeshealthy: 1 }))
     expect(cell.status).toBe('unhealthy')
   })
 
   it('a full class is flagged before it is exhausted', () => {
-    expect(cellFor(capacity({ allocated: 15, free: 1 })).status).toBe('tight')
+    expect(cellFor(capacity({ gpusfree: 1 })).status).toBe('tight')
   })
 
   it('an exhausted class is flagged as such', () => {
-    expect(cellFor(capacity({ allocated: 16, free: 0 })).status).toBe('exhausted')
+    expect(cellFor(capacity({ gpusfree: 0 })).status).toBe('exhausted')
   })
 
   it('a quiet class is healthy', () => {
-    expect(cellFor(capacity({ allocated: 2, free: 14 })).status).toBe('healthy')
+    expect(cellFor(capacity({ gpusfree: 14 })).status).toBe('healthy')
   })
 
   it('groups classes into one row per zone', () => {

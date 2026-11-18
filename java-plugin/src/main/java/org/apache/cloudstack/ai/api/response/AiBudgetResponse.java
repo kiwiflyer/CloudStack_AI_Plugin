@@ -55,6 +55,14 @@ public class AiBudgetResponse extends BaseResponse {
     @Param(description = "what happens at 100%: alert or block")
     private String onExceed;
 
+    @SerializedName("percentused")
+    @Param(description = "how much of it is used")
+    private Double percentUsed;
+
+    @SerializedName("blocked")
+    @Param(description = "whether spend is being refused")
+    private Boolean blocked;
+
     /** Map one engine object onto this response. */
     public static AiBudgetResponse from(JsonObject body) {
         AiBudgetResponse mapped = new AiBudgetResponse();
@@ -69,6 +77,8 @@ public class AiBudgetResponse extends BaseResponse {
         mapped.currency = readString(body, "currency");
         mapped.spent = readDouble(body, "spent");
         mapped.onExceed = readString(body, "on_exceed");
+        mapped.percentUsed = readDouble(body, "percent_used");
+        mapped.blocked = readBoolean(body, "blocked");
         return mapped;
     }
 
@@ -100,6 +110,14 @@ public class AiBudgetResponse extends BaseResponse {
         return onExceed;
     }
 
+    public Double getPercentUsed() {
+        return percentUsed;
+    }
+
+    public Boolean getBlocked() {
+        return blocked;
+    }
+
     private static String readString(JsonObject body, String field) {
         if (!body.has(field) || body.get(field).isJsonNull()) {
             return null;
@@ -116,6 +134,12 @@ public class AiBudgetResponse extends BaseResponse {
             joined.append(part.getAsString());
         }
         return joined.toString();
+    }
+
+    private static Boolean readBoolean(JsonObject body, String field) {
+        return body.has(field) && !body.get(field).isJsonNull()
+                ? body.get(field).getAsBoolean()
+                : null;
     }
 
     private static Double readDouble(JsonObject body, String field) {

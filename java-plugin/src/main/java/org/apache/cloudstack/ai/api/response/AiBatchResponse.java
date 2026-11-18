@@ -55,6 +55,14 @@ public class AiBatchResponse extends BaseResponse {
     @Param(description = "when it finished, if it has")
     private String finished;
 
+    @SerializedName("inputuri")
+    @Param(description = "where its JSONL input came from")
+    private String inputUri;
+
+    @SerializedName("outputuri")
+    @Param(description = "where its results were written, once it has any")
+    private String outputUri;
+
     /** Map one engine object onto this response. */
     public static AiBatchResponse from(JsonObject body) {
         AiBatchResponse mapped = new AiBatchResponse();
@@ -69,6 +77,8 @@ public class AiBatchResponse extends BaseResponse {
         mapped.account = readString(body, "account");
         mapped.created = readString(body, "created");
         mapped.finished = readString(body, "finished");
+        mapped.inputUri = readString(body, "inputuri");
+        mapped.outputUri = readString(body, "outputuri");
         return mapped;
     }
 
@@ -98,6 +108,14 @@ public class AiBatchResponse extends BaseResponse {
 
     public String getFinished() {
         return finished;
+    }
+
+    public String getInputUri() {
+        return inputUri;
+    }
+
+    public String getOutputUri() {
+        return outputUri;
     }
 
     private static String readString(JsonObject body, String field) {

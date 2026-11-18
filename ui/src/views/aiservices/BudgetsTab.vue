@@ -16,9 +16,16 @@ under the License.
 -->
 <!-- Budgets and where a tenant stands (SPEC.md section 7).
 
-     `source` says whether a budget came from platform.yaml or was set
-     through the API, because the two disagree often enough that an
-     operator needs to know which one is in force. -->
+     Field names are CloudStack's, not the engine's: a response field is
+     serialised under its lower-cased `api` name, so `percent_used`
+     arrives as `percentused`. Reading the engine's spelling renders
+     nothing and says nothing, which is how this tab came to show an
+     empty percentage over a budget that was blocking spend.
+
+     There was a "Set in" column saying whether a budget came from
+     platform.yaml or the API. The engine sends no such field and never
+     has, so every budget claimed to come from platform.yaml. It is gone
+     rather than guessed at. -->
 <template>
   <div class="ai-budgets__panel">
     <!-- Three states, kept apart on purpose. Emptying the list on a
@@ -54,9 +61,8 @@ under the License.
           <td>{{ budget.account }}</td>
           <td>{{ budget.monthly }} {{ budget.currency }}</td>
           <td>{{ budget.spent }} {{ budget.currency }}</td>
-          <td>{{ budget.percent_used }}%</td>
-          <td>{{ budget.on_exceed === 'block' ? 'stop serving' : 'alert only' }}</td>
-          <td>{{ budget.source === 'api' ? 'CloudStack' : 'platform.yaml' }}</td>
+          <td>{{ budget.percentused }}%</td>
+          <td>{{ budget.onexceed === 'block' ? 'stop serving' : 'alert only' }}</td>
         </tr>
       </tbody>
     </table>

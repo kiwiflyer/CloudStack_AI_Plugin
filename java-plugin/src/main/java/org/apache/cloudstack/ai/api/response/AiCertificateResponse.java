@@ -51,6 +51,10 @@ public class AiCertificateResponse extends BaseResponse {
     @Param(description = "the owning account")
     private String account;
 
+    @SerializedName("created")
+    @Param(description = "when it was uploaded")
+    private String created;
+
     /** Map one engine object onto this response. */
     public static AiCertificateResponse from(JsonObject body) {
         AiCertificateResponse mapped = new AiCertificateResponse();
@@ -64,6 +68,7 @@ public class AiCertificateResponse extends BaseResponse {
         mapped.expires = readString(body, "expires");
         mapped.serial = readInteger(body, "serial");
         mapped.account = readString(body, "account");
+        mapped.created = readString(body, "created");
         return mapped;
     }
 
@@ -89,6 +94,10 @@ public class AiCertificateResponse extends BaseResponse {
 
     public String getAccount() {
         return account;
+    }
+
+    public String getCreated() {
+        return created;
     }
 
     private static String readString(JsonObject body, String field) {

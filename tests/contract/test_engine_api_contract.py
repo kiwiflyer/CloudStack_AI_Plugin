@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
@@ -378,3 +378,105 @@ class TestAResponseIsMappedFromTheFieldsTheEngineSends:
 
         assert "apikey" in declared, "the session key is what this command is for"
         assert "expires" in declared
+
+
+class TestNoFieldTheEngineSendsIsSilentlyDropped:
+    """The other direction, which nothing checked.
+
+    `TestAResponseIsMappedFromTheFieldsTheEngineSends` asks whether the
+    Java reads a field the engine never sends — those arrive empty. This
+    asks the opposite: a field the engine sends that no Java response
+    declares is **dropped in silence**, and CloudStack answers without it.
+
+    Five v2 detail rows were exactly that. The adapters, certificates and
+    private-endpoint screens each showed a `created` row, the batches
+    screen `inputuri` and `outputuri`, and the guardrails screen `checks` —
+    all six blank for ever, on every server, while the engine had been
+    sending every one of them. Same family as the snippets list, where a
+    response that could not hold one dropped it; these are scalars, which
+    is worse, because nothing about the Java looks wrong.
+
+    Read statically from the row builders rather than by calling the
+    routes: the builders are the one place the engine names these fields,
+    and seeding five kinds of record through the API to learn what is
+    already in the source would prove less, not more.
+    """
+
+    #: engine row builder -> the Java response class CloudStack answers with
+    ROWS: ClassVar[dict[str, str]] = {
+        "_adapter_row": "AiAdapterResponse",
+        "_batch_row": "AiBatchResponse",
+        "_guardrail_row": "AiGuardrailProfileResponse",
+        "_certificate_row": "AiCertificateResponse",
+        "_capacity_row": "AiGpuCapacityResponse",
+        "_exposure_row": "AiPrivateEndpointResponse",
+        "_evaluation_row": "AiEvaluationResponse",
+        "_budget_row": "AiBudgetResponse",
+    }
+
+    #: Fields the engine sends that the plugin deliberately does not carry.
+    #: Each needs a reason, because the default is to carry it.
+    NOT_CARRIED: ClassVar[set[tuple[str, str]]] = {
+        # The resolved exposure sentence is rendered for the CLI; the UI
+        # builds its own from the fields beside it.
+        ("AiPrivateEndpointResponse", "exposure"),
+        # Per-suite scores behind the verdict. The evaluations tab shows
+        # whether publishing was gated and why in one sentence, which is
+        # the question being asked there; nothing reads the breakdown, and
+        # carrying a list no screen renders is surface without a consumer.
+        # If a screen ever wants it, carry it — do not widen this list.
+        ("AiEvaluationResponse", "regressions"),
+        ("AiEvaluationResponse", "performance"),
+    }
+
+    def _engine_fields(self, builder: str) -> set[str]:
+        import ast
+        import inspect
+
+        import aisvc.api.app as app
+
+        tree = ast.parse(inspect.getsource(app))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == builder:
+                keys: set[str] = set()
+                for inner in ast.walk(node):
+                    if isinstance(inner, ast.Dict):
+                        keys |= {
+                            k.value
+                            for k in inner.keys
+                            if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                        }
+                return keys
+        raise AssertionError(f"{builder} is not in aisvc/api/app.py")
+
+    def _java_fields(self, response_name: str) -> set[str]:
+        import importlib.util
+        import sys
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[2] / "java-plugin" / "tools" / "generate_commands.py"
+        )
+        spec = importlib.util.spec_from_file_location("aisvc_java_generator_drop", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        response = next(r for r in module.RESPONSES if r.name == response_name)
+        return {field.wire for field in response.fields}
+
+    @pytest.mark.parametrize("builder,response_name", sorted(ROWS.items()))
+    def test_the_java_carries_every_field_the_engine_sends(
+        self, builder: str, response_name: str
+    ) -> None:
+        sends = self._engine_fields(builder)
+        carries = self._java_fields(response_name)
+        dropped = {
+            f for f in sends - carries if (response_name, f) not in self.NOT_CARRIED
+        }
+
+        assert dropped == set(), (
+            f"{response_name} does not declare {sorted(dropped)}, which {builder} "
+            "sends — so CloudStack drops them and anything reading them is blank. "
+            "Add the field to the generator, or list it in NOT_CARRIED with a reason."
+        )

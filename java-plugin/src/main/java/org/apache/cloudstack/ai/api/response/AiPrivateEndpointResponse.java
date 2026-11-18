@@ -63,6 +63,10 @@ public class AiPrivateEndpointResponse extends BaseResponse {
     @Param(description = "the owning account")
     private String account;
 
+    @SerializedName("created")
+    @Param(description = "when it was created")
+    private String created;
+
     /** Map one engine object onto this response. */
     public static AiPrivateEndpointResponse from(JsonObject body) {
         AiPrivateEndpointResponse mapped = new AiPrivateEndpointResponse();
@@ -79,6 +83,7 @@ public class AiPrivateEndpointResponse extends BaseResponse {
         mapped.tls = readString(body, "tls");
         mapped.certificate = readString(body, "certificate");
         mapped.account = readString(body, "account");
+        mapped.created = readString(body, "created");
         return mapped;
     }
 
@@ -116,6 +121,10 @@ public class AiPrivateEndpointResponse extends BaseResponse {
 
     public String getAccount() {
         return account;
+    }
+
+    public String getCreated() {
+        return created;
     }
 
     private static String readString(JsonObject body, String field) {

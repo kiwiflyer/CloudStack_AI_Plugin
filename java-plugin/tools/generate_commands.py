@@ -72,6 +72,13 @@ class Field:
     #: response that can only hold scalars simply drops them, which is
     #: how the snippets tab came to have no data source at all.
     nested: str | None = None
+    #: The engine sends this one as a JSON *object* keyed by name rather
+    #: than an array — a guardrail profile's checks are
+    #: {"pii": {"action": …}} — so each entry becomes one nested object
+    #: carrying its key as `name`. Without it a map field is simply
+    #: dropped, which is how a locked guardrail came to be invisible on
+    #: the screen that sells it.
+    nested_map: bool = False
 
 
 @dataclass(frozen=True)
@@ -89,8 +96,17 @@ def f(
     doc: str,
     api: str | None = None,
     nested: str | None = None,
+    nested_map: bool = False,
 ) -> Field:
-    return Field(java=java, wire=wire, api=api or java.lower(), type=type_, doc=doc, nested=nested)
+    return Field(
+        java=java,
+        wire=wire,
+        api=api or java.lower(),
+        type=type_,
+        doc=doc,
+        nested=nested,
+        nested_map=nested_map,
+    )
 
 
 RESPONSES: tuple[Response, ...] = (
@@ -113,6 +129,7 @@ RESPONSES: tuple[Response, ...] = (
             f("sizeBytes", "sizebytes", "Long", "its size on disk", "sizebytes"),
             f("account", "account", "String", "the owning account"),
             f("shared", "shared", "Boolean", "whether it is shared across the domain"),
+            f("created", "created", "String", "when it was uploaded"),
         ),
     ),
     Response(
@@ -138,6 +155,14 @@ RESPONSES: tuple[Response, ...] = (
             f("account", "account", "String", "the owning account"),
             f("created", "created", "String", "when it was submitted"),
             f("finished", "finished", "String", "when it finished, if it has"),
+            f("inputUri", "inputuri", "String", "where its JSONL input came from", "inputuri"),
+            f(
+                "outputUri",
+                "outputuri",
+                "String",
+                "where its results were written, once it has any",
+                "outputuri",
+            ),
         ),
     ),
     Response(
@@ -149,6 +174,17 @@ RESPONSES: tuple[Response, ...] = (
             f("name", "name", "String", "the profile's name"),
             f("scope", "scope", "String", "the level it is bound at"),
             f("target", "target", "String", "the domain, account or deployment"),
+            # Keyed by check name on the engine, so `nested_map`. Without
+            # it the field was dropped and the guardrails screen showed a
+            # profile with no checks in it — the one thing it is for.
+            f(
+                "checks",
+                "checks",
+                "String",
+                "the checks this profile applies",
+                nested="AiGuardrailCheckResponse",
+                nested_map=True,
+            ),
         ),
     ),
     Response(
@@ -181,6 +217,7 @@ RESPONSES: tuple[Response, ...] = (
                 "bumped on each replacement; a proxy built from an older one is stale",
             ),
             f("account", "account", "String", "the owning account"),
+            f("created", "created", "String", "when it was uploaded"),
         ),
     ),
     Response(
@@ -197,6 +234,7 @@ RESPONSES: tuple[Response, ...] = (
             f("tls", "tls", "String", "where its certificate comes from: none, acme or uploaded"),
             f("certificate", "certificate", "String", "the uploaded certificate it uses, if any"),
             f("account", "account", "String", "the owning account"),
+            f("created", "created", "String", "when it was created"),
         ),
     ),
     Response(
@@ -241,6 +279,40 @@ RESPONSES: tuple[Response, ...] = (
                 "whether the repo ships its own modelling code",
                 "requiresremotecode",
             ),
+        ),
+    ),
+    Response(
+        "AiReconcilerActionResponse",
+        "aireconcileraction",
+        "One action inside a reconcile run (SPEC.md section 4).\n *\n * A failed action"
+        " stops only its dependants, so a run can be part\n * applied and the outcome"
+        " per action is what says how far it got.",
+        (
+            f("kind", "kind", "String", "what was done: create, update, delete"),
+            f(
+                "resourceType",
+                "resource_type",
+                "String",
+                "the kind of thing it was done to",
+                "resourcetype",
+            ),
+            f("name", "name", "String", "which one"),
+            f("outcome", "outcome", "String", "succeeded, failed or skipped"),
+            f("error", "error", "String", "why it failed, where it did"),
+        ),
+    ),
+    Response(
+        "AiGuardrailCheckResponse",
+        "aiguardrailcheck",
+        "One check inside a guardrail profile (SPEC.md section 8).\n *\n * The engine"
+        " keys these by name, so the name comes from the key\n * rather than from the"
+        " object beside it. The check's own `value` —\n * a topic list, or a size in"
+        " characters — is not carried: it is a\n * different shape per check, and what"
+        " a screen needs to show is\n * which checks apply and how strictly.",
+        (
+            f("name", "name", "String", "the check: pii, topics, input_size and so on"),
+            f("action", "action", "String", "what it does on a match: block, warn or allow"),
+            f("policy", "policy", "String", "default, clamp or locked"),
         ),
     ),
     Response(
@@ -377,6 +449,11 @@ RESPONSES: tuple[Response, ...] = (
                 "what happens at 100%: alert or block",
                 "onexceed",
             ),
+            # Both are what a budget is read for, and both were dropped:
+            # the budgets tab rendered an empty percentage and never
+            # marked a blocked account.
+            f("percentUsed", "percent_used", "Double", "how much of it is used", "percentused"),
+            f("blocked", "blocked", "Boolean", "whether spend is being refused"),
         ),
     ),
     Response(
@@ -390,6 +467,13 @@ RESPONSES: tuple[Response, ...] = (
             f("gpusFree", "gpus_free", "Integer", "GPUs not allocated", "gpusfree"),
             f("nodesTotal", "nodes_total", "Integer", "hosts carrying the class tag", "nodestotal"),
             f("nodesHealthy", "nodes_healthy", "Integer", "hosts up and enabled", "nodeshealthy"),
+            f(
+                "nodesFree",
+                "nodes_free",
+                "Integer",
+                "nodes in this class with no replica on them",
+                "nodesfree",
+            ),
         ),
     ),
     Response(
@@ -403,6 +487,16 @@ RESPONSES: tuple[Response, ...] = (
             f("dryRun", "dry_run", "Boolean", "whether the run wrote anything", "dryrun"),
             f("startedAt", "started_at", "String", "when the run began", "startedat"),
             f("finishedAt", "finished_at", "String", "when the run ended", "finishedat"),
+            # The engine has always sent these; nothing declared them, so
+            # CloudStack dropped the list and the activity screen's
+            # actions tab had no data source at all.
+            f(
+                "actions",
+                "actions",
+                "String",
+                "what the run did, in order",
+                nested="AiReconcilerActionResponse",
+            ),
         ),
     ),
     Response(
@@ -481,7 +575,9 @@ def render_response(response: Response) -> str:
     )
     reads = "\n".join(
         (
-            f'        mapped.{fl.java} = read{fl.nested}List(body, "{fl.wire}");'
+            f'        mapped.{fl.java} = read{fl.nested}Map(body, "{fl.wire}");'
+            if fl.nested and fl.nested_map
+            else f'        mapped.{fl.java} = read{fl.nested}List(body, "{fl.wire}");'
             if fl.nested
             else f'        mapped.{fl.java} = read{fl.type}(body, "{fl.wire}");'
         )
@@ -505,8 +601,41 @@ def render_response(response: Response) -> str:
         "            }\n"
         "        }\n"
         "        return mapped;\n    }"
-        for nested in sorted({fl.nested for fl in response.fields if fl.nested})
+        for nested in sorted(
+            {fl.nested for fl in response.fields if fl.nested and not fl.nested_map}
+        )
     )
+    # The map form. Each entry's key is the object's name, so the key is
+    # merged into a copy of the value and the ordinary `from` does the
+    # rest — the nested class's fields are private, and only its own
+    # static factory can set them.
+    nested_map_readers = "\n\n".join(
+        f"    private static List<{nested}> read{nested}Map("
+        "JsonObject body, String field) {\n"
+        f"        List<{nested}> mapped = new ArrayList<>();\n"
+        "        if (!body.has(field) || !body.get(field).isJsonObject()) {\n"
+        "            return mapped;\n"
+        "        }\n"
+        "        for (Map.Entry<String, JsonElement> entry : "
+        "body.getAsJsonObject(field).entrySet()) {\n"
+        "            if (!entry.getValue().isJsonObject()) {\n"
+        "                continue;\n"
+        "            }\n"
+        "            JsonObject named = entry.getValue().getAsJsonObject().deepCopy();\n"
+        '            named.addProperty("name", entry.getKey());\n'
+        f"            mapped.add({nested}.from(named));\n"
+        "        }\n"
+        "        return mapped;\n    }"
+        for nested in sorted(
+            {fl.nested for fl in response.fields if fl.nested and fl.nested_map}
+        )
+    )
+    if nested_map_readers:
+        nested_readers = (
+            f"{nested_readers}\n\n{nested_map_readers}"
+            if nested_readers
+            else nested_map_readers
+        )
 
     def reader_for(t: str, reader: str) -> str:
         if t != "String":
@@ -552,7 +681,13 @@ def render_response(response: Response) -> str:
     # java.util only where a nested list needs it, so every other
     # response keeps the import block it had.
     collections = (
-        "import java.util.ArrayList;\nimport java.util.List;\n\n" if nested_readers else ""
+        (
+            "import java.util.ArrayList;\nimport java.util.List;\n"
+            + ("import java.util.Map;\n" if nested_map_readers else "")
+            + "\n"
+        )
+        if nested_readers
+        else ""
     )
 
     return f"""{LICENCE}{GENERATED}package org.apache.cloudstack.ai.api.response;

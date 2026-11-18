@@ -20,23 +20,48 @@
 // hardware has to win over a merely busy class, or a failing GPU hides
 // behind a green cell.
 
+// What CloudStack sends, which is not what this file used to read.
+// A response field is serialised under its lower-cased name, so the
+// engine's `gpus_total` arrives as `gpustotal` — and `allocated` and
+// `unhealthy` are not sent at all. They are differences, derived here
+// so the arithmetic lives in one place.
+//
+// Reading the wrong names was silent: every cell took `undefined` for
+// its counts, which made utilisation 0 and the status `healthy`, so a
+// zone with every GPU allocated and a dead node in it drew the same
+// green cell as an idle one.
+function countsOf (capacity) {
+  const total = capacity.gpustotal ?? 0
+  const free = capacity.gpusfree ?? 0
+  const nodes = capacity.nodestotal ?? 0
+  const healthy = capacity.nodeshealthy ?? 0
+
+  return {
+    total,
+    free,
+    allocated: Math.max(total - free, 0),
+    unhealthy: Math.max(nodes - healthy, 0)
+  }
+}
+
 /** Fraction of a class's GPUs that are allocated, 0 to 1. */
-function utilisationOf (capacity) {
+function utilisationOf (counts) {
   // A declared class whose hosts are not tagged yet has no GPUs at all.
   // Dividing by zero here puts NaN% on the operator's first screen.
-  if (!capacity.total) return 0
-  return capacity.allocated / capacity.total
+  if (!counts.total) return 0
+  return counts.allocated / counts.total
 }
 
 export function cellFor (capacity) {
-  const utilisation = utilisationOf(capacity)
+  const counts = countsOf(capacity)
+  const utilisation = utilisationOf(counts)
 
   let status = 'healthy'
-  if (capacity.unhealthy > 0) {
-    // Outranks everything: a GPU in this state is not coming back
+  if (counts.unhealthy > 0) {
+    // Outranks everything: a node in this state is not coming back
     // without a drain, and a quiet class should not hide it.
     status = 'unhealthy'
-  } else if (capacity.free === 0 && capacity.total > 0) {
+  } else if (counts.free === 0 && counts.total > 0) {
     status = 'exhausted'
   } else if (utilisation >= 0.9) {
     status = 'tight'
@@ -45,10 +70,7 @@ export function cellFor (capacity) {
   return {
     zone: capacity.zone,
     gpuclass: capacity.gpuclass,
-    total: capacity.total,
-    allocated: capacity.allocated,
-    free: capacity.free,
-    unhealthy: capacity.unhealthy,
+    ...counts,
     utilisation,
     status
   }

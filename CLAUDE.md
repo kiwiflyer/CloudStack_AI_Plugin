@@ -578,6 +578,63 @@ JSON array — so `listAiEndpoints` delivers four snippets with each endpoint an
 the tab reads them off `resource`. Before that every `Field` was a scalar, and a
 response that cannot hold a list silently drops one.
 
+**A field the engine sends that no Java response declares is dropped in
+silence, and ten were.** The contract test asked only the other question — does
+the Java read a field the engine never sends, which arrives empty — so this
+whole direction was unchecked. `AiAdapterResponse`, `AiCertificateResponse` and
+`AiPrivateEndpointResponse` each dropped `created`; `AiBatchResponse` dropped
+`inputuri` and `outputuri`; `AiReconcilerRunResponse` dropped a run's `actions`
+entirely; `AiGpuCapacityResponse` dropped `nodes_free`; and
+`AiGuardrailProfileResponse` dropped `checks` — a guardrail profile without its
+checks, which is the whole of what a domain admin was sold. Every one was
+declared in the UI and blank on every server. `AiBudgetResponse` dropped
+`percent_used` and `blocked`, so the budgets tab showed an empty percentage and
+never marked an account whose spend was being refused. **Nothing about the Java
+looks wrong** — this is the snippets defect again, but for scalars, where there
+is no missing `List<T>` to notice. `TestNoFieldTheEngineSendsIsSilentlyDropped`
+walks each engine row builder against its response class; a field may be left
+out only by appearing in `NOT_CARRIED` with a reason. That is why
+`_capacity_row` exists at all: it was an inline dict in the route, which the
+test could not see.
+
+**A guardrail profile's checks are keyed by name, so `nested_map=True`.** The
+generator's `nested` reads a JSON array; the engine sends
+`{"pii": {"action": "block", "policy": "locked"}}`. The map reader merges each
+key into a copy of its value as `name` and calls the ordinary `from`, because a
+nested class's fields are private and only its own factory can set them. **A
+list cannot go in `details`**: CloudStack's `DetailsTab` takes a field and a
+title and prints the value, so a list of objects renders `[object Object]`. It
+is a tab, the same shape the snippets fix used.
+
+**Three screens read the engine's spelling rather than CloudStack's.** A
+response field is serialised under its lower-cased `api` name, so `percent_used`
+arrives as `percentused` and `on_exceed` as `onexceed`. Vue renders an undefined
+as nothing, so this never raises: the budgets tab printed `%` with no number.
+Its "Set in" column was worse — it read `budget.source`, a field the engine has
+never sent, so every budget claimed to come from `platform.yaml`. The column is
+gone rather than guessed at. **And `ui/src/utils/capacity.js` read `total`,
+`allocated`, `free` and `unhealthy`**, none of which CloudStack sends: the
+heatmap took `undefined` for every count, which makes utilisation 0 and the
+status `healthy`, so a zone with every GPU allocated and a dead node drew the
+same green cell as an idle one. `allocated` and `unhealthy` are not sent at all
+— they are differences, derived in one place now. **Every fixture for these
+agreed with the code**, which is why ten tests passed over a screen that could
+not work.
+
+**`RunActionsTab` fetched the run list and read action fields off each run.**
+Every cell was empty whatever had happened, and there was no data source either
+way, since `actions` was one of the dropped fields. A tab is handed the row the
+operator opened; the run carries its actions. **Its test asserted that it
+fetched**, so correcting the component turned the test red — the same shape as
+`assertEquals(4L, body.get("zone_id"))` and `name=my+host`.
+
+**`FleetHealth` asks for data the engine does not have.** It renders a table of
+hosts with template, driver, state and drift, from `listAiGpuCapacity` — which
+answers per GPU *class*: zone, class, node and GPU counts. There is no
+host-level route anywhere in `aisvc/api/app.py`, so this is not a mapping bug to
+fix but a screen with no source. Recorded rather than patched; it needs an
+engine route before it can show anything.
+
 **The setup wizard had never shown a check, and the fix names the rule.**
 A live `listAiSetupChecks` answers with all eight — three failures, each
 carrying the remedy that names the setting to change — and the screen drew

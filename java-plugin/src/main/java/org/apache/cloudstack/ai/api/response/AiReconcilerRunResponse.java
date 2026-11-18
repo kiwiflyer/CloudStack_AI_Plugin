@@ -17,6 +17,9 @@
 // map. Edit the generator, not this file.
 package org.apache.cloudstack.ai.api.response;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.apache.cloudstack.api.BaseResponse;
 
 import com.cloud.serializer.Param;
@@ -51,6 +54,10 @@ public class AiReconcilerRunResponse extends BaseResponse {
     @Param(description = "when the run ended")
     private String finishedAt;
 
+    @SerializedName("actions")
+    @Param(description = "what the run did, in order", responseObject = AiReconcilerActionResponse.class)
+    private List<AiReconcilerActionResponse> actions;
+
     /** Map one engine object onto this response. */
     public static AiReconcilerRunResponse from(JsonObject body) {
         AiReconcilerRunResponse mapped = new AiReconcilerRunResponse();
@@ -64,6 +71,7 @@ public class AiReconcilerRunResponse extends BaseResponse {
         mapped.dryRun = readBoolean(body, "dry_run");
         mapped.startedAt = readString(body, "started_at");
         mapped.finishedAt = readString(body, "finished_at");
+        mapped.actions = readAiReconcilerActionResponseList(body, "actions");
         return mapped;
     }
 
@@ -91,6 +99,10 @@ public class AiReconcilerRunResponse extends BaseResponse {
         return finishedAt;
     }
 
+    public List<AiReconcilerActionResponse> getActions() {
+        return actions;
+    }
+
     private static String readString(JsonObject body, String field) {
         if (!body.has(field) || body.get(field).isJsonNull()) {
             return null;
@@ -113,5 +125,18 @@ public class AiReconcilerRunResponse extends BaseResponse {
         return body.has(field) && !body.get(field).isJsonNull()
                 ? body.get(field).getAsBoolean()
                 : null;
+    }
+
+    private static List<AiReconcilerActionResponse> readAiReconcilerActionResponseList(JsonObject body, String field) {
+        List<AiReconcilerActionResponse> mapped = new ArrayList<>();
+        if (!body.has(field) || !body.get(field).isJsonArray()) {
+            return mapped;
+        }
+        for (JsonElement item : body.getAsJsonArray(field)) {
+            if (item.isJsonObject()) {
+                mapped.add(AiReconcilerActionResponse.from(item.getAsJsonObject()));
+            }
+        }
+        return mapped;
     }
 }

@@ -18,7 +18,13 @@ under the License.
 
      A failed action stops only its dependants, so a run can be part
      applied; the outcome per action is what tells an operator how far
-     it got. -->
+     it got.
+
+     It reads the run CloudStack handed it. It used to fetch the whole
+     run list and read action fields off each *run* — so every cell was
+     empty, whatever had happened. A run carries its actions as a nested
+     list, which nothing declared until now, so there was no data source
+     to read even if it had looked in the right place. -->
 <template>
   <div class="ai-run-actions__panel">
     <!-- Three states, kept apart on purpose. Emptying the list on a
@@ -26,11 +32,8 @@ under the License.
          exactly like one with nothing to show, and the reason is the
          engine's own sentence because that is the one that names a
          remedy. -->
-    <p v-if="failed" data-test="load-failed" class="ai-run-actions__failed">
-      Could not read reconciler runs — {{ failed }}
-    </p>
-    <p v-else-if="!rows.length" data-test="empty" class="ai-run-actions__empty">
-      No reconciler run has recorded an action yet.
+    <p v-if="!rows.length" data-test="empty" class="ai-run-actions__empty">
+      This run recorded no actions.
     </p>
 
     <table class="ai-run-actions">
@@ -60,43 +63,19 @@ under the License.
 </template>
 
 <script>
-import { getAPI } from '@/api'
-
-import { engineReason } from '@/utils/errors'
-
 export default {
   name: 'AiRunActionsTab',
   props: {
-    // CloudStack hands a tab its parent `resource`, never a named
-    // array, so a tab that only accepts props renders an empty table
-    // however much the account has. null means "fetch for yourself",
-    // the same arrangement the route screens use; the tests and any
-    // parent holding the data still pass it in.
+    // CloudStack hands a tab its parent `resource` — here, the run the
+    // operator opened. The actions come with it; there is nothing to
+    // fetch, and fetching the run list was the bug.
+    resource: { type: Object, default: () => ({}) },
+    // Supplied by a test, or by a parent that already has them.
     actions: { type: Array, default: null }
-  },
-  data () {
-    return { fetched: [], failed: '' }
   },
   computed: {
     rows () {
-      return this.actions ?? this.fetched
-    }
-  },
-  mounted () {
-    if (this.actions === null) this.load()
-  },
-  methods: {
-    load () {
-      getAPI('listAiReconcilerRuns', {}).then((json) => {
-        this.fetched = json?.listaireconcilerrunsresponse?.aireconcilerrun ?? []
-        this.failed = ''
-      }).catch((problem) => {
-        // Shown, never thrown, and shown as the engine said it.
-        // An unhandled rejection leaves a blank screen with the
-        // reason only in the browser console, where nobody looks.
-        this.failed = engineReason(problem)
-        this.fetched = []
-      })
+      return this.actions ?? this.resource?.actions ?? []
     }
   }
 }

@@ -20,6 +20,7 @@ import FleetHealth from '@/views/aiservices/FleetHealth.vue'
 import GpuCapacity from '@/views/aiservices/GpuCapacity.vue'
 import HuggingFaceBrowser from '@/views/aiservices/HuggingFaceBrowser.vue'
 import ApiKeysTab from '@/views/aiservices/ApiKeysTab.vue'
+import GuardrailChecksTab from '@/views/aiservices/GuardrailChecksTab.vue'
 import BudgetsTab from '@/views/aiservices/BudgetsTab.vue'
 import EffectiveParameters from '@/views/aiservices/EffectiveParameters.vue'
 import Playground from '@/views/aiservices/Playground.vue'
@@ -155,11 +156,16 @@ describe('route screens fetch their own data', () => {
     expect(apiCalls().map((c) => c.command)).toContain('listAiBudgets')
   })
 
-  it('the activity tab asks for the reconciler runs', async () => {
-    mount(RunActionsTab)
+  it('the activity tab fetches nothing, because its run carries its actions', async () => {
+    // This used to assert the opposite, and the opposite was the bug:
+    // the tab fetched the whole run list and then read action fields —
+    // kind, outcome, resourcetype — off each *run*, so every cell was
+    // empty. A tab is handed the row the operator opened, and a run
+    // carries its actions as a nested list.
+    mount(RunActionsTab, { props: { resource: { id: 'run-1', actions: [] } } })
     await flushPromises()
 
-    expect(apiCalls().map((c) => c.command)).toContain('listAiReconcilerRuns')
+    expect(apiCalls()).toHaveLength(0)
   })
 
   it('a screen given data does not fetch', async () => {
@@ -325,8 +331,7 @@ describe('a screen survives the API failing', () => {
     ['the playground', Playground, 'listAiModels'],
     ['effective parameters', EffectiveParameters, 'listAiModels'],
     ['the api keys tab', ApiKeysTab, 'listAiApiKeys'],
-    ['the budgets tab', BudgetsTab, 'listAiBudgets'],
-    ['the activity tab', RunActionsTab, 'listAiReconcilerRuns']
+    ['the budgets tab', BudgetsTab, 'listAiBudgets']
   ]
 
   screens.forEach(([what, component, command]) => {
@@ -361,8 +366,7 @@ describe('every screen says why it could not load', () => {
     ['the playground', Playground, 'listAiModels'],
     ['effective parameters', EffectiveParameters, 'listAiModels'],
     ['the api keys tab', ApiKeysTab, 'listAiApiKeys'],
-    ['the budgets tab', BudgetsTab, 'listAiBudgets'],
-    ['the activity tab', RunActionsTab, 'listAiReconcilerRuns']
+    ['the budgets tab', BudgetsTab, 'listAiBudgets']
   ]
 
   screens.forEach(([what, component, command]) => {
@@ -411,5 +415,131 @@ describe('every screen says why it could not load', () => {
     const failed = wrapper.find('[data-test="load-failed"]')
     expect(failed.exists()).toBe(true)
     expect(failed.text()).toContain('the hub could not be reached')
+  })
+})
+
+describe('the guardrail checks tab', () => {
+  // A profile's checks are the profile. They used to be nowhere: the
+  // engine sent them, no Java response declared the field, and
+  // CloudStack dropped it — so a domain admin who had bought a locked
+  // education-safe profile could open it and see a name, a scope and
+  // nothing about what it screens.
+  //
+  // The engine keys them by name, so the plugin turns that object into
+  // a named list and this reads it off `resource`, the way the
+  // snippets tab does. A list cannot go in `details`: CloudStack's
+  // DetailsTab takes a field and a title and prints the value, which
+  // for a list of objects is "[object Object]".
+  beforeEach(() => reset())
+
+  it('shows each check with what it does', async () => {
+    const wrapper = mount(GuardrailChecksTab, {
+      props: {
+        resource: {
+          name: 'education-safe',
+          checks: [
+            { name: 'pii', action: 'block', policy: 'locked' },
+            { name: 'topics', action: 'block', policy: 'locked' }
+          ]
+        }
+      }
+    })
+
+    expect(wrapper.findAll('[data-test="check"]')).toHaveLength(2)
+    expect(wrapper.text()).toContain('pii')
+    expect(wrapper.text()).toContain('block')
+  })
+
+  it('says which checks cannot be relaxed', async () => {
+    // The whole reason a school buys the education-safe profile is that
+    // an account beneath them cannot loosen it. A tenant looking at the
+    // profile screening them needs to see that, not infer it.
+    const wrapper = mount(GuardrailChecksTab, {
+      props: {
+        resource: {
+          checks: [
+            { name: 'pii', action: 'block', policy: 'locked' },
+            { name: 'input_size', action: 'warn', policy: 'default' }
+          ]
+        }
+      }
+    })
+
+    const locked = wrapper.findAll('[data-test="check"]').filter((c) => c.text().match(/locked/i))
+    expect(locked).toHaveLength(1)
+    expect(locked[0].text()).toContain('pii')
+  })
+
+  it('says so when a profile screens nothing', async () => {
+    const wrapper = mount(GuardrailChecksTab, { props: { resource: { checks: [] } } })
+
+    expect(wrapper.find('[data-test="empty"]').exists()).toBe(true)
+  })
+})
+
+describe('a tab reads the names CloudStack sends, not the engine\'s', () => {
+  // CloudStack serialises a response field under its `api` name, which
+  // is lower-cased and has no underscores: the engine's `percent_used`
+  // arrives as `percentused`. Reading the engine's spelling in a
+  // template is silent — Vue renders an undefined as nothing — so the
+  // budgets tab showed an empty percentage, never marked a blocked
+  // account, and always said a budget came from platform.yaml.
+  beforeEach(() => reset())
+
+  it('the budgets tab shows how much of a budget is used', async () => {
+    reset({
+      listAiBudgets: {
+        listaibudgetsresponse: {
+          aibudget: [{
+            account: 'acme', monthly: 100, currency: 'USD', spent: 90,
+            percentused: 90, blocked: true, onexceed: 'block'
+          }]
+        }
+      }
+    })
+    const wrapper = mount(BudgetsTab)
+    await flushPromises()
+
+    const row = wrapper.find('[data-test="budget"]')
+    expect(row.text()).toContain('90')
+    expect(row.text()).toContain('stop serving')
+  })
+
+  it('the budgets tab marks an account whose spend is being refused', async () => {
+    // The one thing a budget does. It was never shown: `blocked` was
+    // dropped by the response class entirely.
+    reset({
+      listAiBudgets: {
+        listaibudgetsresponse: {
+          aibudget: [{ account: 'acme', blocked: true, percentused: 120, onexceed: 'block' }]
+        }
+      }
+    })
+    const wrapper = mount(BudgetsTab)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="budget"]').classes()).toContain('is-blocked')
+  })
+
+  it('the activity tab reads the actions of the run it was given', async () => {
+    // It iterated the *runs* and read action fields off them, so every
+    // cell was empty. A run carries its actions as a nested list, and a
+    // tab is handed the row the user opened — that run — not the list.
+    const wrapper = mount(RunActionsTab, {
+      props: {
+        resource: {
+          id: 'run-1',
+          actions: [
+            { kind: 'create', resourcetype: 'deployment', name: 'llama', outcome: 'succeeded' }
+          ]
+        }
+      }
+    })
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-test="action"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text()).toContain('deployment')
+    expect(rows[0].text()).toContain('succeeded')
   })
 })

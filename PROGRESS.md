@@ -5893,3 +5893,91 @@ configured on this engine"*, and the setup wizard renders all eight
 checks grouped by outcome with Continue disabled.
 
 152 Vitest tests (up from 128) and 2,181 Python tests pass.
+
+## Driving the v2 screens, and the seam underneath them
+
+With the v1 screens working, the next question was whether the Tier 2
+ones do. `ai.services.v2.enabled` is on in the harness and all five v2
+list commands answer with real data — an adapter, a batch, two
+certificates, six guardrail profiles. The screens are config-only, so
+the question is whether the fields they declare exist on the responses
+they read. Mostly they did not.
+
+### Ten fields the engine sends and the plugin dropped
+
+The contract test had asked one question — does a Java response read a
+field the engine never sends, which arrives empty — and never the
+opposite. A field the engine sends that no response declares is dropped
+in silence, and ten were:
+
+| Response | Dropped | What it cost |
+| --- | --- | --- |
+| `AiAdapterResponse` | `created` | a blank detail row |
+| `AiCertificateResponse` | `created` | a blank detail row |
+| `AiPrivateEndpointResponse` | `created` | a blank detail row |
+| `AiBatchResponse` | `inputuri`, `outputuri` | no way to find a batch's results |
+| `AiGuardrailProfileResponse` | `checks` | a guardrail profile with no guardrails in it |
+| `AiBudgetResponse` | `percent_used`, `blocked` | an empty percentage; a blocked account unmarked |
+| `AiReconcilerRunResponse` | `actions` | the activity tab had no data source at all |
+| `AiGpuCapacityResponse` | `nodes_free` | — |
+
+This is the snippets defect again, but for scalars, where there is no
+missing `List<T>` to notice: the Java looks entirely correct.
+`TestNoFieldTheEngineSendsIsSilentlyDropped` now walks each engine row
+builder against its response class, and a field may be left out only by
+appearing in `NOT_CARRIED` with a reason. Two are there — the per-suite
+evaluation breakdown, which no screen renders.
+
+`_capacity_row` exists only because of that test: the capacity route
+built its dict inline, where nothing could read it.
+
+### The checks are a tab, because a list cannot be a detail row
+
+A guardrail profile's checks are keyed by name —
+`{"pii": {"action": "block", "policy": "locked"}}` — so carrying them
+needed a map variant of the generator's nested list. The reader merges
+each key into a copy of its value as `name` and calls the ordinary
+`from`, since a nested class's fields are private and only its own
+factory can set them.
+
+They could not go in `details`. CloudStack's `DetailsTab` takes a field
+and a title and prints the value, so a list of objects renders
+`[object Object]`. `GuardrailChecksTab` renders them instead, calling
+out `locked` — a school buys the education-safe profile precisely so an
+account beneath cannot relax it, and a tenant looking at the profile
+screening them should not have to infer that.
+
+### And three screens read the engine's spelling, not CloudStack's
+
+A response field is serialised under its lower-cased `api` name, so
+`percent_used` arrives as `percentused`. Vue renders an undefined as
+nothing, so nothing raises.
+
+The budgets tab printed `%` with no number in front of it. Its "Set in"
+column read `budget.source`, a field the engine has never sent, so every
+budget claimed to come from `platform.yaml`; the column is gone rather
+than guessed at.
+
+The capacity heatmap was worse. `cellFor` read `total`, `allocated`,
+`free` and `unhealthy` — CloudStack sends `gpustotal`, `gpusfree`,
+`nodestotal` and `nodeshealthy`, and does not send allocated or
+unhealthy at all, because they are differences. Every cell took
+`undefined` for its counts, which makes utilisation 0 and the status
+`healthy`: a zone with every GPU allocated and a dead node in it drew
+the same green cell as an idle one. Ten tests passed over it, because
+every fixture used the names the code read.
+
+`RunActionsTab` fetched the whole run list and read action fields off
+each *run*. Its test asserted that it fetched, so correcting the
+component turned the test red — the same shape as the `zone_id` and
+`name=my+host` tests that pinned their own bugs in place.
+
+### One screen that cannot be fixed by mapping
+
+`FleetHealth` renders hosts with template, driver, state and drift, out
+of `listAiGpuCapacity` — which answers per GPU *class*. There is no
+host-level route in the engine at all. It is recorded rather than
+patched: the screen needs an engine route before it can show anything,
+and inventing one to make a table render would be the wrong order.
+
+157 Vitest, 2,078 unit, 47 contract and 477 Java tests pass.

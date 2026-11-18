@@ -51,6 +51,10 @@ public class AiGpuCapacityResponse extends BaseResponse {
     @Param(description = "hosts up and enabled")
     private Integer nodesHealthy;
 
+    @SerializedName("nodesfree")
+    @Param(description = "nodes in this class with no replica on them")
+    private Integer nodesFree;
+
     /** Map one engine object onto this response. */
     public static AiGpuCapacityResponse from(JsonObject body) {
         AiGpuCapacityResponse mapped = new AiGpuCapacityResponse();
@@ -64,6 +68,7 @@ public class AiGpuCapacityResponse extends BaseResponse {
         mapped.gpusFree = readInteger(body, "gpus_free");
         mapped.nodesTotal = readInteger(body, "nodes_total");
         mapped.nodesHealthy = readInteger(body, "nodes_healthy");
+        mapped.nodesFree = readInteger(body, "nodes_free");
         return mapped;
     }
 
@@ -89,6 +94,10 @@ public class AiGpuCapacityResponse extends BaseResponse {
 
     public Integer getNodesHealthy() {
         return nodesHealthy;
+    }
+
+    public Integer getNodesFree() {
+        return nodesFree;
     }
 
     private static String readString(JsonObject body, String field) {
