@@ -49,4 +49,14 @@ public class ListAiEndpointsCmd extends AiServicesListCmd<AiEndpointResponse> {
     protected AiEndpointResponse mapItem(JsonObject item) {
         return AiEndpointResponse.from(item);
     }
+
+    @Override
+    protected boolean filtersById() {
+        return true;
+    }
+
+    @Override
+    protected String identityField() {
+        return "model";
+    }
 }

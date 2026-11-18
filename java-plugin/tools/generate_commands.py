@@ -776,6 +776,17 @@ class Command:
     is_async: bool = False
     response: str = ""
     items_key: str | None = None  # set for list commands
+    #: CloudStack opens a detail view by calling the same list command with
+    #: `id=<the row's key>`. Without a declared `id` the parameter is dropped
+    #: in silence, the engine answers with everything, and AutogenView renders
+    #: the first row — so every detail page showed the first record in its
+    #: list. Set on any list command a screen has a detail view for.
+    filter_by_id: bool = False
+    #: The engine field that `id` is matched against. A row's key is
+    #: `record.id || record.name` (ListView.vue), so this is "id" wherever the
+    #: response carries one, and the field the screen builds its name from
+    #: otherwise.
+    identity: str = "id"
     event: str | None = None
     event_doing: str = ""
     params: tuple[Param, ...] = ()
@@ -892,6 +903,8 @@ COMMANDS: tuple[Command, ...] = (
         "/v1/models",
         response="AiModelResponse",
         items_key="models",
+        filter_by_id=True,
+        identity="name",
     ),
     # -- deployments ------------------------------------------------------
     Command(
@@ -900,6 +913,7 @@ COMMANDS: tuple[Command, ...] = (
         "/v1/deployments",
         response="AiDeploymentResponse",
         items_key="deployments",
+        filter_by_id=True,
     ),
     Command(
         "updateAiModelDeployment",
@@ -950,6 +964,8 @@ COMMANDS: tuple[Command, ...] = (
         "/v1/endpoints",
         response="AiEndpointResponse",
         items_key="endpoints",
+        filter_by_id=True,
+        identity="model",
     ),
     # -- keys -------------------------------------------------------------
     Command(
@@ -1012,6 +1028,7 @@ COMMANDS: tuple[Command, ...] = (
         "/v1/profiles/serving",
         response="AiProfileResponse",
         items_key="profiles",
+        filter_by_id=True,
     ),
     Command(
         "createAiServingProfile",
@@ -1065,6 +1082,7 @@ COMMANDS: tuple[Command, ...] = (
         "/v1/profiles/generation",
         response="AiProfileResponse",
         items_key="profiles",
+        filter_by_id=True,
     ),
     Command(
         "createAiGenerationProfile",
@@ -1159,6 +1177,8 @@ COMMANDS: tuple[Command, ...] = (
             p("enddate", "endDate", "STRING", "end of the period", wire="end_date"),
         ),
         query=("startDate", "endDate"),
+        filter_by_id=True,
+        identity="model",
     ),
     Command(
         "listAiBudgets",
@@ -1305,6 +1325,7 @@ COMMANDS: tuple[Command, ...] = (
         "/v1/runs",
         response="AiReconcilerRunResponse",
         items_key="runs",
+        filter_by_id=True,
     ),
     # -- tier 2 (SPEC.md section 8) ---------------------------------------
     # Generated, but registered only when ai.services.v2.enabled is on:
@@ -1316,6 +1337,7 @@ COMMANDS: tuple[Command, ...] = (
         response="AiAdapterResponse",
         items_key="adapters",
         release="v2",
+        filter_by_id=True,
     ),
     Command(
         "uploadAiAdapter",
@@ -1416,6 +1438,7 @@ COMMANDS: tuple[Command, ...] = (
         response="AiBatchResponse",
         items_key="batches",
         release="v2",
+        filter_by_id=True,
     ),
     Command(
         "cancelAiBatch",
@@ -1446,6 +1469,7 @@ COMMANDS: tuple[Command, ...] = (
         response="AiGuardrailProfileResponse",
         items_key="profiles",
         release="v2",
+        filter_by_id=True,
     ),
     Command(
         "createAiGuardrailProfile",
@@ -1556,6 +1580,7 @@ COMMANDS: tuple[Command, ...] = (
         response="AiCertificateResponse",
         items_key="certificates",
         release="v2",
+        filter_by_id=True,
     ),
     Command(
         "replaceAiCertificate",
@@ -1605,6 +1630,7 @@ COMMANDS: tuple[Command, ...] = (
         response="AiPrivateEndpointResponse",
         items_key="endpoints",
         release="v2",
+        filter_by_id=True,
     ),
     Command(
         "createAiPrivateEndpoint",
@@ -1918,6 +1944,18 @@ def render_command(command: Command) -> str:
             f"    protected {response_type} mapItem(JsonObject item) {{\n"
             f"        return {response_type}.from(item);\n    }}"
         )
+        if command.filter_by_id:
+            # The `id` field lives on the base class, which every list
+            # command shares; only the field to match it against varies.
+            success += (
+                "\n\n    @Override\n    protected boolean filtersById() {\n"
+                "        return true;\n    }"
+            )
+            if command.identity != "id":
+                success += (
+                    "\n\n    @Override\n    protected String identityField() {\n"
+                    f'        return "{command.identity}";\n    }}'
+                )
     else:
         extends = "AiServicesSyncCmd"
         if command.success_response:

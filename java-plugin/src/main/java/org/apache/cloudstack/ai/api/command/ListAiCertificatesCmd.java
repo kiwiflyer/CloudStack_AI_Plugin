@@ -49,4 +49,9 @@ public class ListAiCertificatesCmd extends AiServicesListCmd<AiCertificateRespon
     protected AiCertificateResponse mapItem(JsonObject item) {
         return AiCertificateResponse.from(item);
     }
+
+    @Override
+    protected boolean filtersById() {
+        return true;
+    }
 }

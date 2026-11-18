@@ -5981,3 +5981,30 @@ patched: the screen needs an engine route before it can show anything,
 and inventing one to make a table render would be the wrong order.
 
 157 Vitest, 2,078 unit, 47 contract and 477 Java tests pass.
+
+### And every detail view showed the first record in its list
+
+Opening a guardrail profile on the live server drew a different
+profile. CloudStack renders a detail page by calling the same list
+command with `id=<the row's key>` — the network log shows
+`listAiGuardrailProfiles&id=c8daccc7…` answering with all six profiles,
+and `AutogenView` taking `items[0]`, which is `pw-test`.
+
+No list command declared an `id`, so the parameter was dropped in
+silence. Thirteen screens across eleven commands: clicking any row
+opened the wrong record, and the actions on that page still carried
+the route's id, so what an operator was looking at and what a Delete
+would act on were different objects.
+
+A row's key is `record.id || record.name` (ListView.vue), so
+`AiServicesListCmd` matches on the response's own `id` where it has
+one and on a declared `identity` otherwise — `model` for endpoints and
+usage, `name` for models. `filtersById()` defaults to false
+deliberately: a screen with no detail view is never called with an
+`id`, and filtering one that is would silently empty a list that
+worked, which is a worse failure than the one being fixed.
+
+The filter is in the plugin, not the engine: it fixes eleven commands
+in one place and needs no engine change. The cost is fetching every
+row to return one, which these list sizes do not notice; pushing it
+into the engine is the follow-up when they do.

@@ -60,6 +60,40 @@ class AiServicesSyncCmdTest {
         }
     }
 
+    /** A list whose screen has a detail view, matching on the model's name. */
+    private static final class TestFilteringListCmd extends AiServicesListCmd<AiModelResponse> {
+        @Override
+        protected String enginePath() {
+            return "/v1/models";
+        }
+
+        @Override
+        protected String itemsKey() {
+            return "models";
+        }
+
+        @Override
+        protected boolean filtersById() {
+            return true;
+        }
+
+        @Override
+        protected String identityField() {
+            return "name";
+        }
+
+        @Override
+        protected AiModelResponse mapItem(JsonObject item) {
+            return AiModelResponse.from(item);
+        }
+    }
+
+    private static void askFor(AiServicesListCmd<?> command, String id) throws Exception {
+        Field field = AiServicesListCmd.class.getDeclaredField("id");
+        field.setAccessible(true);
+        field.set(command, id);
+    }
+
     private static <T> T wire(T command, EngineResponse answer) throws Exception {
         AiServicesService service = mock(AiServicesService.class);
         EngineTransport transport = (method, url, headers, body) -> answer;
@@ -222,5 +256,63 @@ class AiServicesSyncCmdTest {
     @Test
     void parsingRejectsNonJson() {
         assertThrows(EngineException.class, () -> AiServicesSyncCmd.parse("nope"));
+    }
+
+    @Test
+    void aDetailViewGetsTheRowItAskedFor() throws Exception {
+        // CloudStack opens a detail page by calling the same list command
+        // with id=<the row's key>. Before this the parameter was dropped,
+        // the engine answered with everything, and AutogenView drew the
+        // first row — so every detail page showed the first record in its
+        // list, whatever had been clicked.
+        TestFilteringListCmd command = wire(new TestFilteringListCmd(), new EngineResponse(200,
+                "{\"count\": 2, \"models\": ["
+                        + "{\"name\": \"a\"}, {\"name\": \"b\"}]}"));
+        askFor(command, "b");
+
+        command.execute();
+
+        ListResponse<AiModelResponse> listed =
+                (ListResponse<AiModelResponse>) command.getResponseObject();
+        assertEquals(1, listed.getCount());
+        assertEquals("b", listed.getResponses().get(0).getName());
+    }
+
+    @Test
+    void aListWithNoIdIsTheWholeList() throws Exception {
+        TestFilteringListCmd command = wire(new TestFilteringListCmd(), new EngineResponse(200,
+                "{\"count\": 2, \"models\": ["
+                        + "{\"name\": \"a\"}, {\"name\": \"b\"}]}"));
+
+        command.execute();
+
+        assertEquals(2, ((ListResponse<?>) command.getResponseObject()).getCount());
+    }
+
+    @Test
+    void anIdMatchingNothingIsAnEmptyList() throws Exception {
+        // Not the first row, which is the failure being fixed.
+        TestFilteringListCmd command = wire(new TestFilteringListCmd(), new EngineResponse(200,
+                "{\"count\": 2, \"models\": ["
+                        + "{\"name\": \"a\"}, {\"name\": \"b\"}]}"));
+        askFor(command, "gone");
+
+        command.execute();
+
+        assertEquals(0, ((ListResponse<?>) command.getResponseObject()).getCount());
+    }
+
+    @Test
+    void aListWithNoDetailViewIgnoresAnIdRatherThanEmptyingItself() throws Exception {
+        // filtersById() is false by default. A screen with no detail page is
+        // never called with an id, and filtering one that is would silently
+        // empty a list that used to work.
+        TestListCmd command = wire(new TestListCmd(), new EngineResponse(200,
+                "{\"count\": 2, \"models\": ["
+                        + "{\"name\": \"a\"}, {\"name\": \"b\"}]}"));
+
+        command.execute();
+
+        assertEquals(2, listOf(command).getCount());
     }
 }

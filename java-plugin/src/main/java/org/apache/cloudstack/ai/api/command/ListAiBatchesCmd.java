@@ -49,4 +49,9 @@ public class ListAiBatchesCmd extends AiServicesListCmd<AiBatchResponse> {
     protected AiBatchResponse mapItem(JsonObject item) {
         return AiBatchResponse.from(item);
     }
+
+    @Override
+    protected boolean filtersById() {
+        return true;
+    }
 }

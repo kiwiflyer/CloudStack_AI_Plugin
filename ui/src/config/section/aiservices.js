@@ -278,7 +278,7 @@ export default {
           // Admin only: a tenant able to set its own budget could lift
           // the limit that is blocking it.
           show: isAdminOrDomainAdmin,
-          args: ['account', 'monthly', 'currency', 'onexceed']
+          args: ['account', 'domain', 'monthly', 'currency', 'onexceed']
         },
         {
           api: 'updateAiBudget',
@@ -333,7 +333,7 @@ export default {
           label: 'label.ai.upload.adapter',
           listView: true,
           popup: true,
-          args: ['name', 'basemodel', 'rank', 'uri']
+          args: ['name', 'basemodel', 'rank', 'sizebytes', 'files', 'uri']
         },
         {
           api: 'deleteAiAdapter',
@@ -374,7 +374,7 @@ export default {
           label: 'label.ai.create.batch',
           listView: true,
           popup: true,
-          args: ['model', 'inputuri']
+          args: ['model', 'input', 'inputuri']
         },
         {
           api: 'getAiBatchResults',
@@ -683,7 +683,7 @@ export default {
           // published, so the person who runs it is the one who can
           // override it (SPEC.md section 8).
           show: isAdmin,
-          args: ['revision']
+          args: ['model', 'revision']
         }
       ]
     },

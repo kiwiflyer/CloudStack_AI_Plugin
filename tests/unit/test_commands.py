@@ -1324,8 +1324,135 @@ class TestEveryUiActionSendsParametersItsCommandTakes:
 
         assert not wrong, "\n".join(wrong)
 
+    def test_no_action_omits_a_parameter_its_command_requires(self) -> None:
+        """The other direction, and just as silent.
+
+        An action that never offers a required parameter cannot succeed:
+        the dialog submits without it and the engine refuses. Four did.
+        `uploadAiAdapter` offered no `files`, so every upload came back
+        "no adapter weights found"; `createAiBatch` no `input`, so every
+        batch came back "the batch input file has no requests";
+        `createAiBudget` no `domain`, though an account name is unique
+        only within one; and `runAiModelEvaluation` no `model`.
+
+        `id` is excused: CloudStack fills it from the row a dataView
+        action was opened on.
+        """
+        module = generator_module()
+        commands = {c.name: c for c in module.COMMANDS}
+
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "ui" / "src" / "config" / "section" / "aiservices.js").read_text()
+
+        missing = []
+        for block in re.finditer(r"\{\s*\n\s*api: '([A-Za-z]+)',(.*?)\n        \}", source, re.S):
+            name, body = block.group(1), block.group(2)
+            command = commands.get(name)
+            if command is None:
+                continue
+            args = re.search(r"args: \[([^\]]*)\]", body, re.S)
+            offered = set(re.findall(r"'([a-z0-9]+)'", args.group(1))) if args else set()
+            required = {p.name for p in command.params if p.required}
+            absent = required - offered - {"id"}
+            if absent:
+                missing.append(
+                    f"the {name} action never offers {sorted(absent)}, which the "
+                    "command requires, so it cannot succeed"
+                )
+
+        assert not missing, "\n".join(missing)
+
     def test_the_actions_are_actually_being_read(self) -> None:
         root = Path(__file__).resolve().parents[2]
         source = (root / "ui" / "src" / "config" / "section" / "aiservices.js").read_text()
         found = len(re.findall(r"args: \[", source))
         assert found >= 10, f"only {found} action argument lists found in the section"
+
+
+# ---------------------------------------------------------------------------
+# CloudStack opens a detail view by calling the same list command with
+# `id=<the row's key>`. A command that does not declare `id` has it dropped,
+# the engine answers with everything, and AutogenView renders the first row —
+# so every detail page in the section showed the first record in its list,
+# whatever had been clicked. Measured on a live server: the route
+# /aiguardrail/c8daccc7… drew the profile `pw-test`, which is b8365209….
+#
+# The row's key is `record.id || record.name` (ListView.vue), so the field to
+# match on is the response's own `id` where it has one, and otherwise whatever
+# the screen renders as its name.
+
+
+class TestEveryListBehindADetailViewCanBeFilteredById:
+    #: Commands whose rows carry no `id`, and the engine field their row key
+    #: is built from instead.
+    IDENTITY: ClassVar[dict[str, str]] = {
+        "listAiModels": "name",
+        "listAiEndpoints": "model",
+        "listAiUsage": "model",
+    }
+
+    def test_each_one_declares_an_id_filter(self) -> None:
+        module = generator_module()
+        commands = {c.name: c for c in module.COMMANDS}
+
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "ui" / "src" / "config" / "section" / "aiservices.js").read_text()
+
+        starts = [
+            (mm.start(), mm.group(1))
+            for mm in re.finditer(r"^      name: '([a-z.]+)',$", source, re.M)
+        ]
+        blocks = [
+            (name, source[pos : (starts[i + 1][0] if i + 1 < len(starts) else len(source))])
+            for i, (pos, name) in enumerate(starts)
+        ]
+
+        unfiltered = []
+        for screen, body in blocks:
+            permission = re.search(r"permission: \['([^']+)'\]", body)
+            if not permission:
+                continue
+            # a screen rendering its own component has no list or detail view
+            if re.search(r"^      component: ", body, re.M):
+                continue
+            if "dataView: true" not in body and "details: () =>" not in body:
+                continue
+            command = commands.get(permission.group(1))
+            if command is None or not command.items_key:
+                continue
+            if not getattr(command, "filter_by_id", False):
+                unfiltered.append(
+                    f"the {screen} screen has a detail view, but {command.name} declares "
+                    "no id filter — CloudStack drops the parameter and the view shows "
+                    "the first row in the list"
+                )
+
+        assert not unfiltered, "\n".join(unfiltered)
+
+    def test_a_command_whose_rows_have_no_id_says_what_to_match_on(self) -> None:
+        module = generator_module()
+        responses = {r.name: {f.api for f in r.fields} for r in module.RESPONSES}
+        # the two hand-written ones
+        jdir = (
+            Path(__file__).resolve().parents[2]
+            / "java-plugin/src/main/java/org/apache/cloudstack/ai/api/response"
+        )
+        for extra in ("AiModelResponse", "AiDeploymentResponse"):
+            java = (jdir / f"{extra}.java").read_text()
+            responses[extra] = set(re.findall(r'@SerializedName\("([a-z0-9]+)"\)', java))
+
+        wrong = []
+        for command in module.COMMANDS:
+            if not getattr(command, "filter_by_id", False):
+                continue
+            fields = responses.get(command.response, set())
+            identity = command.identity
+            if identity not in fields:
+                wrong.append(
+                    f"{command.name} matches on '{identity}', which is not a field of "
+                    f"{command.response} ({sorted(fields)})"
+                )
+            if identity != "id" and command.name not in self.IDENTITY:
+                wrong.append(f"{command.name} matches on '{identity}' and is not recorded here")
+
+        assert not wrong, "\n".join(wrong)

@@ -49,4 +49,9 @@ public class ListAiServingProfilesCmd extends AiServicesListCmd<AiProfileRespons
     protected AiProfileResponse mapItem(JsonObject item) {
         return AiProfileResponse.from(item);
     }
+
+    @Override
+    protected boolean filtersById() {
+        return true;
+    }
 }

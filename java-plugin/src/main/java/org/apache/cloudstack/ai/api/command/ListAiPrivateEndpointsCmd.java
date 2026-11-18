@@ -49,4 +49,9 @@ public class ListAiPrivateEndpointsCmd extends AiServicesListCmd<AiPrivateEndpoi
     protected AiPrivateEndpointResponse mapItem(JsonObject item) {
         return AiPrivateEndpointResponse.from(item);
     }
+
+    @Override
+    protected boolean filtersById() {
+        return true;
+    }
 }

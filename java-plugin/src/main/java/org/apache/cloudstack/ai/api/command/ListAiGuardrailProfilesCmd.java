@@ -49,4 +49,9 @@ public class ListAiGuardrailProfilesCmd extends AiServicesListCmd<AiGuardrailPro
     protected AiGuardrailProfileResponse mapItem(JsonObject item) {
         return AiGuardrailProfileResponse.from(item);
     }
+
+    @Override
+    protected boolean filtersById() {
+        return true;
+    }
 }

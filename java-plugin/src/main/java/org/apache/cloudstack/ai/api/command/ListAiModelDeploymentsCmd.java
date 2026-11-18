@@ -49,4 +49,9 @@ public class ListAiModelDeploymentsCmd extends AiServicesListCmd<AiDeploymentRes
     protected AiDeploymentResponse mapItem(JsonObject item) {
         return AiDeploymentResponse.from(item);
     }
+
+    @Override
+    protected boolean filtersById() {
+        return true;
+    }
 }

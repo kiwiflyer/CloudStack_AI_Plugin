@@ -49,4 +49,14 @@ public class ListAiModelsCmd extends AiServicesListCmd<AiModelResponse> {
     protected AiModelResponse mapItem(JsonObject item) {
         return AiModelResponse.from(item);
     }
+
+    @Override
+    protected boolean filtersById() {
+        return true;
+    }
+
+    @Override
+    protected String identityField() {
+        return "name";
+    }
 }

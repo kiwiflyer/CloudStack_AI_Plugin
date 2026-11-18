@@ -49,4 +49,9 @@ public class ListAiAdaptersCmd extends AiServicesListCmd<AiAdapterResponse> {
     protected AiAdapterResponse mapItem(JsonObject item) {
         return AiAdapterResponse.from(item);
     }
+
+    @Override
+    protected boolean filtersById() {
+        return true;
+    }
 }

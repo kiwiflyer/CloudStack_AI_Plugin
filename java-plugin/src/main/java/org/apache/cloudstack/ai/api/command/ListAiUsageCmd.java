@@ -60,4 +60,14 @@ public class ListAiUsageCmd extends AiServicesListCmd<AiUsageResponse> {
     protected AiUsageResponse mapItem(JsonObject item) {
         return AiUsageResponse.from(item);
     }
+
+    @Override
+    protected boolean filtersById() {
+        return true;
+    }
+
+    @Override
+    protected String identityField() {
+        return "model";
+    }
 }

@@ -17,7 +17,10 @@ package org.apache.cloudstack.ai.api.command;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.cloudstack.api.ApiConstants;
 import org.apache.cloudstack.api.BaseResponse;
+import org.apache.cloudstack.api.Parameter;
+import org.apache.cloudstack.api.BaseCmd.CommandType;
 import org.apache.cloudstack.api.response.ListResponse;
 
 import com.google.gson.JsonArray;
@@ -34,8 +37,51 @@ import com.google.gson.JsonObject;
  */
 public abstract class AiServicesListCmd<T extends BaseResponse> extends AiServicesSyncCmd {
 
+    /**
+     * The row CloudStack is opening a detail view for.
+     *
+     * AutogenView renders a detail page by calling the same list command
+     * with `id=<the row's key>`. A command that does not declare the
+     * parameter has it dropped in silence, so the engine answers with
+     * everything and the view draws the first row — which is what every
+     * detail page in this section used to do, whatever had been clicked.
+     */
+    @Parameter(name = ApiConstants.ID, type = CommandType.STRING,
+            description = "the record to show, when opening one from a list")
+    private String id;
+
     /** The JSON array field holding the items, for example "models". */
     protected abstract String itemsKey();
+
+    /**
+     * Whether this command's screen opens a detail view at all. A list with
+     * no detail page is never called with an `id`, and filtering one that is
+     * would silently empty it.
+     */
+    protected boolean filtersById() {
+        return false;
+    }
+
+    /**
+     * The engine field an `id` is matched against. A row's key is
+     * `record.id || record.name`, so this is "id" wherever the response
+     * carries one, and the field the screen builds its name from otherwise.
+     */
+    protected String identityField() {
+        return "id";
+    }
+
+    /** Whether this engine object is the one that was asked for. */
+    private boolean wanted(JsonObject item) {
+        if (!filtersById() || id == null || id.isEmpty()) {
+            return true;
+        }
+        JsonElement value = item.get(identityField());
+        if (value == null || value.isJsonNull() || !value.isJsonPrimitive()) {
+            return false;
+        }
+        return id.equals(value.getAsString());
+    }
 
     /** Map one engine object onto a CloudStack response. */
     protected abstract T mapItem(JsonObject item);
@@ -46,7 +92,7 @@ public abstract class AiServicesListCmd<T extends BaseResponse> extends AiServic
         if (body.has(itemsKey()) && body.get(itemsKey()).isJsonArray()) {
             JsonArray entries = body.getAsJsonArray(itemsKey());
             for (JsonElement element : entries) {
-                if (element.isJsonObject()) {
+                if (element.isJsonObject() && wanted(element.getAsJsonObject())) {
                     items.add(mapItem(element.getAsJsonObject()));
                 }
             }

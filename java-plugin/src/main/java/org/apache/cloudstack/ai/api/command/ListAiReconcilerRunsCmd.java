@@ -49,4 +49,9 @@ public class ListAiReconcilerRunsCmd extends AiServicesListCmd<AiReconcilerRunRe
     protected AiReconcilerRunResponse mapItem(JsonObject item) {
         return AiReconcilerRunResponse.from(item);
     }
+
+    @Override
+    protected boolean filtersById() {
+        return true;
+    }
 }

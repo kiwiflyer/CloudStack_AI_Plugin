@@ -578,6 +578,23 @@ JSON array — so `listAiEndpoints` delivers four snippets with each endpoint an
 the tab reads them off `resource`. Before that every `Field` was a scalar, and a
 response that cannot hold a list silently drops one.
 
+**Every detail view in the section showed the first record in its list.**
+CloudStack opens one by calling the *same list command* with `id=<the row's
+key>`; no list command declared an `id`, so the parameter was dropped in
+silence, the engine answered with everything, and `AutogenView` rendered
+`items[0]`. Measured live: the route `/aiguardrail/c8daccc7…` drew `pw-test`,
+which is `b8365209…`. Thirteen screens, eleven commands — clicking any row
+opened the wrong record, while the actions on that page still carried the
+route's id, so what was shown and what would be acted on were different
+objects. **A row's key is `record.id || record.name`** (`ListView.vue`), so
+`AiServicesListCmd` filters on the response's own `id` where it has one and on
+`identity` otherwise — `model` for endpoints and usage, `name` for models.
+`filtersById()` defaults to **false** on purpose: a screen with no detail view
+is never called with an `id`, and filtering one that is would silently empty a
+list that worked. The filter is in the plugin rather than the engine because it
+fixes eleven commands in one place; pushing it down is the follow-up when list
+sizes justify fetching one row instead of all of them.
+
 **And the mirror image, in the UI: thirteen actions offered a field the command
 does not take.** CloudStack drops an unknown parameter in silence, so a dialog
 can collect a value that goes nowhere. **`createAiApiKey` was the Terraform
