@@ -627,21 +627,24 @@ into the management server and the engine answering it over mTLS:
   SPEC.md section 12's requirement, passing. Note that `nosetests`
   cannot run them, or any CloudStack Marvin test, on Python 3.12;
   `test/integration/plugins/ai-services/run_without_nose.py` does.
-- **Playwright role specs: 22 of 22**, against the production UI build
-  served by Jetty at `/client`. The v2 group is 11 of 13.
+- **The whole Playwright suite: 40 passed, 7 skipped**, against the
+  plugin and the UI in the same management server. The seven are the
+  `ai.services.v2.enabled` *off* group, which cannot run while the
+  setting is on, so nothing is skipped for being unbuilt.
 
 **Still never run:**
 
 - **Nothing has been provisioned.** `apply` builds a deployer that
   needs a Kubernetes cluster, so the write half of the reconciler —
   `deployVirtualMachine` and everything after it — is unexercised.
-- **No Terraform acceptance test has run** against a live management
-  server, v1 or v2.
+- **Two of the eight Terraform acceptance tests have never run.** The
+  other six pass against a live management server; those two skip,
+  wanting a real `.safetensors` and a real deployment.
 - **No proxy VM has booted.** The provisioner plans, creates and
   destroys; nothing has run it.
-- **Nothing has been mirrored from Hugging Face**, so the registry is
-  empty — which is why the two remaining v2 UI specs, both of which
-  want a model to click on, do not pass.
+- **Nothing has been mirrored from Hugging Face.** The catalogue and
+  registry screens list what `platform.yaml` declares, so they are not
+  empty, but no artefact has been fetched and no `sha256` verified.
 - **The self-test cannot run.** `setup` plans it, but its steps need GPU
   capacity, so SPEC.md section 14's first acceptance criterion is unmet.
 - **LiteLLM is not yet a real dependency**, and there is no rollout

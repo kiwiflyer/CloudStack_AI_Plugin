@@ -14,9 +14,11 @@ and usage records in the same console they already run their cloud from.
 > a real Apache CloudStack 4.23.0.0 — `make stack-up` brings one up.
 > **The plugin loads into the management server**, registers its
 > commands, talks to the engine over mTLS, and answers with real data;
-> the UI section is built and served at `/client`; the Marvin tests pass
-> for all 58 commands across three roles, allowed and denied; and
-> failover between engine replicas behaves as specified.
+> the UI section is built and served at `/client`, with its whole
+> Playwright suite — 40 passed, 7 skipped — now run against the plugin
+> and the UI in **the same** management server rather than two; the
+> Marvin tests pass for all 58 commands across three roles, allowed and
+> denied; and failover between engine replicas behaves as specified.
 >
 > But **no GPU node has booted and no model has served a token.** The
 > write half of the reconciler needs a Kubernetes cluster, nothing has

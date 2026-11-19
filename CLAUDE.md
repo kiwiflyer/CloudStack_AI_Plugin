@@ -35,7 +35,7 @@ worker (`aisvc batch`) has no leader election, so run one.
 **A Kubernetes LoadBalancer Service cannot be placed on a chosen network.** The
 CloudStack cloud-controller-manager takes a service's network from the nodes' first
 NIC; `loadBalancerIP` only picks among public IPs the account already holds. That is
-why a private endpoint is a proxy VM on the tenant's tier and not a Service. `ui/` **builds and runs inside a real CloudStack UI** — the section, its eleven
+why a private endpoint is a proxy VM on the tenant's tier and not a Service. `ui/` **builds and runs inside a real CloudStack UI** — the section, its twelve
 views and its utils were copied into a 4.23.0.0 tree, registered in `router.js`,
 built for production with `npm run build`, and served by Jetty at `/client`,
 where a tenant signs in and uses it. **The compiler writes to stdout, not the
@@ -49,17 +49,18 @@ Mac, and with the management server and dev server up, under 2 GB of 8 was free;
 stop both and set `parallel: false` and it builds in one pass. It is not faster
 to test against, either: the same specs took 10 minutes on the built artifact
 against 2.4 behind the dev server, because Jetty serves each chunk separately
-under emulation. `ui/README.md` has the whole procedure. **Its Playwright role specs now pass, 22 of 22**, against the UI
-and the plugin in the same management server — the section visible per role,
-every admin screen absent for a domain admin and a tenant, and a tenant typing an
-admin screen's URL getting a 404 rather than a refusal, because CloudStack drops
-a route whose `permission` is missing from that caller's `listApis`. Its nineteen
+under emulation. `ui/README.md` has the whole procedure. **Its whole Playwright suite now passes, 40 with 7
+skipped**, against the UI and the plugin in **the same management server** — the section
+visible per role, every admin screen absent for a domain admin and a tenant, and a tenant
+typing an admin screen's URL getting a 404 rather than a refusal, because CloudStack drops
+a route whose `permission` is missing from that caller's `listApis`. The 7 skips are the
+`ai.services.v2.enabled` *off* group, which cannot run while the setting is on, so nothing
+is skipped for being unbuilt. Its nineteen
 route-level `permission` entries name seventeen distinct commands, twelve v1 and
 five v2, and both halves of that gate are proven: without the plugin `listApis`
 advertised none of them; with it loaded all twelve v1 ones are there (thirty-eight
 in all) while the five v2 routes drop, which is what the `ai.services.v2.enabled`
-default is supposed to do. What has not run is the UI against the loaded
-plugin: the two were verified in separate management servers, never the same one. `terraform/` builds and unit-tests (v1 and v2) but
+default is supposed to do. `terraform/` builds and unit-tests (v1 and v2) but
 **6 of its 8 acceptance tests pass** against a live management server and the
 other two skip, wanting a real `.safetensors` and a real deployment. Running
 them needs a `terraform` binary, which the SDK's own installer could not fetch.
@@ -876,7 +877,7 @@ not stop a management server from starting. Upstream the table belongs in
 **Five files in CloudStack's own tree are still needed** to ship this: `plugins/pom.xml`
 and `client/pom.xml` (no auto-discovery; the shade plugin bundles declared dependencies
 only), the `ui/` section plus its `router.js` registration, **`ui/public/locales/en.json`,
-into which this repo's 74 keys must be merged**, and — upstream — the table in
+into which this repo's 150 keys must be merged**, and — upstream — the table in
 `engine/schema`. The locale was the one nobody had noticed: the section was copied into a
 real UI tree and compiled without it, so every label rendered as its own key —
 `label.ai.model.catalog` as a page title — and a build that says `Compiled successfully`

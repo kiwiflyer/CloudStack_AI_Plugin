@@ -167,8 +167,10 @@ tell you is how much of it has been exercised against something real.
   works; all ten config keys appear in `listConfigurations`.
 - **Role access**, by Marvin: 58 commands across three default roles,
   allowed and denied, 7 tests.
-- **The UI section**, by Playwright inside a real 4.23.0.0 UI: 22 of 22
-  role tests.
+- **The UI section**, by Playwright inside a real 4.23.0.0 UI, against the
+  plugin and the UI in the same management server: 40 passed, 7 skipped.
+  The seven are the `ai.services.v2.enabled` *off* group, which cannot run
+  while the setting is on.
 - **Terraform**: 6 of 8 acceptance tests against a live management server;
   2 skip for want of a real `.safetensors` and a real deployment.
 - **Engine failover**, in all four branches, including that a replica which

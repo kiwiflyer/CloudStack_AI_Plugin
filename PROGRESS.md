@@ -6049,3 +6049,50 @@ only ever checked the keys the section names as strings, and an
 argument's key is named nowhere.
 
 160 Vitest, 39 Playwright (8 skipped), 2,130 Python and 481 Java.
+
+## A key you cannot use is not a key
+
+The API keys tab now mints the key itself and shows the secret once.
+
+`createAiApiKey` returns it — measured live, `apikey` is a
+66-character `aisvc-…` string — and CloudStack's dialog closed without
+displaying it. Because the engine stores a salted hash, that secret was
+gone the moment it was created: **a key made through the UI could never
+be used by anyone**, and nothing said so.
+
+The cause is general enough to be worth the rule: **nothing in a
+section's config can display a sync command's response.** The two hooks
+that would — `action.response` and `successMethod` — are both inside
+`$pollJob` in `AutogenView.vue`, so they fire for an async command
+only. `createAiApiKey` is sync. So anything returning a credential has
+to be minted from its own view, the way `Playground.vue` mints a
+session.
+
+`ApiKeysTab.vue` posts the command and renders what comes back, with
+the warning that it cannot be read again and a control to dismiss it —
+the screen gets demonstrated and screenshotted, so nothing holds the
+secret afterwards. It sends the command's real parameter names,
+`models`, `cidrlist` and `expires`, not the
+`allowedmodels`/`cidrs`/`expiresat` CloudStack drops in silence, so a
+key restricted to two models and a CIDR is actually restricted.
+
+The autogen action is gone, so there is one path rather than two with
+one of them broken. **Removing an action orphans its argument keys** —
+`label.ai.create.api.key` and the three bare ones only that dialog used
+— which `i18n.spec.js` caught, leaving 150.
+
+### And the suite that proves it
+
+The whole Playwright suite now passes, **40 with 7 skipped**, against
+the plugin and the UI in the same management server. The spec that
+drives this flow asserts both the "shown once" warning and a visible
+`aisvc-…` secret in a real browser; it had been `test.fixme` while the
+product could not do it. The seven skips are the
+`ai.services.v2.enabled` *off* group, which cannot run while the
+setting is on — nothing is skipped for being unbuilt.
+
+That run also retired a claim this file and CLAUDE.md had both carried:
+that the UI and the loaded plugin had only ever been verified in
+separate management servers. They have now been verified in one.
+
+167 Vitest, 2,083 unit, 47 contract and 481 Java tests pass.
