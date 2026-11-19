@@ -101,3 +101,31 @@ influence it could read another tenant's data.
 **The command list is generated, not hand-written.** `aisvc/api/commands.py` holds section 9's
 map, and the Python tests check it against the engine's routes. Adding a command there and
 forgetting it here should be caught by a test, not by a Marvin run.
+
+## Building it inside a CloudStack tree
+
+Out of tree this pom is deliberately standalone: it inherits no parent, so the module
+builds without a CloudStack checkout on the path, and it pins `cs.version` with every
+CloudStack dependency `provided`. In tree it inherits `cloudstack-plugins` and takes
+versions from the reactor. Three things about its test dependencies cost a build each,
+and each fails differently:
+
+- **`junit-jupiter` and `junit-jupiter-params` need an explicit version.** CloudStack's
+  own tests are JUnit 4, so the root pom has a `cs.junit.jupiter.version` property but no
+  `dependencyManagement` entry. Use that property rather than a second opinion about
+  which 5.x to run.
+- **`mockito-core` must not be declared.** The root pom puts it in its own
+  `<dependencies>`, not in `<dependencyManagement>`, so every module inherits it already
+  — and declaring it without a version is what fails, since there is nothing managed to
+  inherit.
+- **Surefire needs `surefire-junit-platform` named explicitly.** The root puts JUnit 4 on
+  every module's classpath, so this module has both 4 and 5 on one test classpath, and
+  surefire choosing the JUnit 4 provider runs **none** of these tests while reporting
+  success for having run nothing. That failure is silent, which is why it is written down.
+
+**The directory is `plugins/api/ai-services`**, not `plugins/ai-services`: CloudStack's
+convention ties the artifactId prefix to the path, so `cloud-plugin-api-ai-services` sits
+beside `cloud-plugin-api-discovery` at `plugins/api/discovery`.
+
+Checkstyle runs in tree and does not out of tree, and `cloud-style.xml` makes an unused
+import an **error**. Build the module in a real tree before trusting it.
