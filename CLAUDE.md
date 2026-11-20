@@ -1154,6 +1154,18 @@ version of this note justified the exclusion by `config_hash`; that was wrong.
 involved in a manifest.) New files need the header; the Java generator already
 emits it.
 
+**A `.vue` header is `//` line comments, not `<!-- -->`.** CloudStack's
+`.pre-commit-config.yaml` runs `insert-license` per file type with an explicit
+comment style — `|//|` for Vue, `|#|` for properties, `|--|` for SQL — and
+fuzzy-matches the text against
+`.github/workflows/license-templates/LICENSE.txt`. The same licence re-wrapped
+is **not** a match: properties and SQL get a `TODO: This license is not
+consistent` inserted, and a `.vue` file with an HTML-comment header gets a
+second, `//`-style one prepended on top of it. Every upstream `.vue` starts
+`// Licensed to the Apache…`, so ours do too, and the twelve views here are
+byte-identical to what the hook produces. Keep them that way or the next sync
+into a CloudStack tree fails the commit.
+
 `docs/installation.md` is the operator-facing install and setup guide: prerequisites,
 the four pieces and their order, every config key and environment variable, and an
 honest list of what has never been run. Keep it current when any of those change.
