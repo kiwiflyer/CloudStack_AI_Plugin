@@ -1154,6 +1154,29 @@ version of this note justified the exclusion by `config_hash`; that was wrong.
 involved in a manifest.) New files need the header; the Java generator already
 emits it.
 
+**The surface test must iterate the v2 commands too.** `GeneratedSurfaceTest`
+drives its five invariants from `new AiServicesManagerImpl().getCommands()`, and
+that list omits the twenty v2 commands unless the setting is on — which it is
+not, by default, in a unit test. So those classes were never *constructed*:
+Codecov put `UploadAiAdapterCmd` at 0% and about 947 lines across the twenty
+were untouched. The source now overrides `v2Enabled()`, which took the Java
+suite from 481 to 581 — five parameterised tests times twenty commands. Whether
+a command is *registered* is `V2CommandRegistrationTest`'s question; the
+invariants here are properties of a generated command, not of a release.
+
+**CloudStack's `ui/` runs Jest, ours runs Vitest, and the versions differ.**
+Theirs is `@vue/test-utils` **2.0.0** with Vue 3.2.37 under
+`@vue/cli-plugin-unit-jest`; ours is 2.4.6 under Vitest. A spec ports by
+deleting the `import … from 'vitest'` line — Jest supplies those as globals —
+and replacing the config alias for `@/api` with
+`jest.mock('@/api', () => require('…/doubles/api.js'))`, because in their tree
+`@/api` is the real one. `utils.spec.js` and `fetching.spec.js` port cleanly and
+pass there, 88 tests. **`components.spec.js` does not**: on test-utils 2.0.0 the
+fourth and later `mount` in a file throws
+`Cannot set properties of undefined (setting 'hasOwnProperty')`, which is their
+version, not our components — it passes here on 2.4.6. Do not ship it upstream
+and do not bump their dependency to make it fit.
+
 **A `.vue` header is `//` line comments, not `<!-- -->`.** CloudStack's
 `.pre-commit-config.yaml` runs `insert-license` per file type with an explicit
 comment style — `|//|` for Vue, `|#|` for properties, `|--|` for SQL — and

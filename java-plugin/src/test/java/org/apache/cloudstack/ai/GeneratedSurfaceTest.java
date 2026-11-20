@@ -69,8 +69,28 @@ class GeneratedSurfaceTest {
         }
     }
 
+    /**
+     * Every generated command, v2 included.
+     *
+     * `getCommands()` leaves the v2 commands out unless the setting is on, and
+     * the setting defaults to off — so iterating the manager as shipped ran
+     * these invariants over the 38 v1 commands and never constructed the 20 v2
+     * ones at all. They were not merely unasserted: Codecov reported
+     * UploadAiAdapterCmd at 0%, and about 947 lines across those classes were
+     * untouched by any test.
+     *
+     * The invariants here — a versioned path, no surviving placeholder, a known
+     * verb, valid JSON, no body on a read — are properties of a generated
+     * command, not of a release. Whether a command is registered is
+     * V2CommandRegistrationTest's question, and it asks it both ways.
+     */
     static Stream<Class<?>> commands() {
-        return new AiServicesManagerImpl().getCommands().stream();
+        return new AiServicesManagerImpl() {
+            @Override
+            boolean v2Enabled() {
+                return true;
+            }
+        }.getCommands().stream();
     }
 
     static Stream<String> responseNames() {
