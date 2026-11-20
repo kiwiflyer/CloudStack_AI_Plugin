@@ -1164,6 +1164,18 @@ suite from 481 to 581 — five parameterised tests times twenty commands. Whethe
 a command is *registered* is `V2CommandRegistrationTest`'s question; the
 invariants here are properties of a generated command, not of a release.
 
+**CloudStack runs `codespell` as a pre-commit hook, over identifiers too.** A
+private test helper named `deployIn(zoneId, zoneName)` failed the commit four
+times over — `deployIn ==> deploying, deploy in`. It is a false positive, but
+the fix belongs on our side: renaming it to `deployCommandFor` costs nothing,
+while adding a word to their ignore list edits one of their files for our
+convenience. Prefer identifiers that do not look like a run-together phrase.
+`insert-license`, `codespell`, `flake8` and `markdownlint` all pass over the
+branch; the npm-based hooks (`doctoc`, `markdownlint`) cannot install on this
+machine — npm refuses the git fetch with `EALLOWGIT` — so markdownlint has to
+be run another way, for example `npx markdownlint-cli` inside the harness
+container.
+
 **CloudStack's `ui/` runs Jest, ours runs Vitest, and the versions differ.**
 Theirs is `@vue/test-utils` **2.0.0** with Vue 3.2.37 under
 `@vue/cli-plugin-unit-jest`; ours is 2.4.6 under Vitest. A spec ports by

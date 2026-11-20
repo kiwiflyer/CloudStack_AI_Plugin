@@ -71,7 +71,7 @@ class AiCommandsTest {
     }
 
     /** A command whose zone id resolves to a CloudStack zone by that name. */
-    private static DeployAiModelCmd deployIn(long zoneId, String zoneName) throws Exception {
+    private static DeployAiModelCmd deployCommandFor(long zoneId, String zoneName) throws Exception {
         DeployAiModelCmd command = new DeployAiModelCmd();
         set(command, "zoneId", zoneId);
         DataCenter zone = mock(DataCenter.class);
@@ -90,7 +90,7 @@ class AiCommandsTest {
         // `cloudstack_zone`. Sending the raw Long was answered with a
         // 422 by a live engine, and this test pinned it in place by
         // asserting the number.
-        DeployAiModelCmd command = deployIn(4L, "East-1");
+        DeployAiModelCmd command = deployCommandFor(4L, "East-1");
         set(command, "modelName", "llama-3.3-70b-instruct");
 
         JsonObject body = JsonParser.parseString(command.engineBody()).getAsJsonObject();
@@ -113,7 +113,7 @@ class AiCommandsTest {
     void anUnsetReplicaCountIsOmittedRatherThanSentAsZero() throws Exception {
         // Zero would scale the deployment to nothing; absent lets the
         // engine use the model's declared minimum.
-        DeployAiModelCmd command = deployIn(1L, "East-1");
+        DeployAiModelCmd command = deployCommandFor(1L, "East-1");
         set(command, "modelName", "m");
 
         JsonObject body = JsonParser.parseString(command.engineBody()).getAsJsonObject();
@@ -123,7 +123,7 @@ class AiCommandsTest {
 
     @Test
     void anExplicitReplicaCountIsSent() throws Exception {
-        DeployAiModelCmd command = deployIn(1L, "East-1");
+        DeployAiModelCmd command = deployCommandFor(1L, "East-1");
         set(command, "modelName", "m");
         set(command, "replicas", 3);
 
