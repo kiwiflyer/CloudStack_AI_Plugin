@@ -397,7 +397,9 @@ Breaking changes require a new version prefix.
 **Java plugin.** State-changing commands extend `BaseAsyncCmd` and poll `/v1/jobs/{id}`. Keep the
 ownership table minimal (`ai_deployment`) so CloudStack enforces ownership, list filtering and
 cleanup natively — the engine stays the source of truth for runtime state. Before writing bespoke
-Java, check whether the target release's Extensions framework already covers the action.
+Java, check whether the target release's Extensions framework already covers the action —
+for the *engine* it does not, and [ADR-0009](docs/adr/0009-engine-into-cloudstack.md) says
+why, so do not research that again.
 
 **A column or detail CloudStack has no word for needs a `customTitle`.** A screen
 declaring `columns: () => ['name', 'task', …]` gets each rendered as
@@ -512,6 +514,20 @@ Recorded as ADRs in `docs/adr/`. Do not relitigate them without reading the ADR 
   this project requires only that a Kubernetes service is available. Note the defect
   it names: `check_clusters` fails a zone CloudStack has never heard of, which is
   right only while every cluster is assumed to be a CKS one.
+
+- **ADR-0009 — how much of the engine belongs inside CloudStack:** **proposed,
+  nothing built.** Options and a lean, not a decision. **The Extensions
+  framework does not apply** — an `Orchestrator` extension delegates
+  CloudStack's *own* VM lifecycle outward and is invoked as
+  `exec <action> <payload_file> <timeout>`, while the engine consumes
+  CloudStack and runs as a leader-locked loop. The constraint shaping
+  everything else is that `gateway-hooks/enforcement.py` imports five engine
+  packages **in process** on every request, and ADR-0002 forbids
+  reimplementing precedence in any language — but that is only **1,275 lines,
+  8%** of the engine, against 14,394 that could move. A full Java port means
+  reopening ADR-0002 and ADR-0004 deliberately; the lean is to port the 92%
+  incrementally behind the existing REST contract and keep the 8% as a Python
+  library beside the hooks.
 
 **A private endpoint's network is checked against CloudStack**, not against anything
 the engine keeps: `aisvc/cloudstack/networks.py` resolves the caller's domain path to a

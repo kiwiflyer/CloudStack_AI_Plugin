@@ -40,8 +40,9 @@ start depending on why you are here.
   denied, with a runner for the Python 3.12 images where `nosetests`
   cannot import.
 - **[adr/](adr/)** — the decisions, and why. Read one before
-  relitigating it. 0001–0005 are accepted; 0006, 0007 and 0008 are
-  proposed, and each says what is built and what is not.
+  relitigating it. 0001–0005 are accepted, 0008 is accepted and built;
+  0006, 0007 and 0009 are proposed, and each says what is built and
+  what is not.
 
 ## Presentations
 
@@ -67,6 +68,8 @@ with the documents above, the documents are current.
 | [0005](adr/0005-model-artifact-storage.md) | Secondary storage cannot hold model artifacts; CloudStack object storage can supply the bucket | Partly accepted |
 | [0006](adr/0006-gpu-node-join.md) | Hand GPU node VMs to CKS instead of `kubeadm join` | **Proposed** — gated on one experiment |
 | [0007](adr/0007-kubernetes-cluster-source.md) | A zone declares where its cluster comes from; CKS is the paved road, not the only road | **Proposed** — schema and preflight built, creation built, join unchanged |
+| [0008](adr/0008-api-deployments.md) | `placement: spec \| api` says who owns a model's placement; API placements live in Postgres | Accepted and built |
+| [0009](adr/0009-engine-into-cloudstack.md) | How much of the engine should live inside CloudStack; the Extensions framework does not apply | **Proposed** — nothing built |
 
 ## Progress
 
