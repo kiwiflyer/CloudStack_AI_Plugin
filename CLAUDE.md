@@ -160,7 +160,14 @@ guessing a tag that would start and serve badly; and **`repo.radeon.com/amdgpu` 
 `repo.radeon.com/rocm/apt` version independently** — `rocm/apt/7.2.4` exists while
 `amdgpu/7.2.4` is a 404 — so the ROCm golden image takes two variables and a matched
 pair has to be checked. **Nothing AMD has booted:** no ROCm image has been baked, no
-MI300X has been seen by this code, and the whole AMD path is unit-tested only.
+MI300X has been seen by this code, and the whole AMD path is unit-tested only. And
+**nothing here installs a GPU device plugin, for either vendor** — `render()` emits a
+Deployment, a Service and a PDB and nothing else, so until an operator installs
+NVIDIA's or ROCm's `k8s-device-plugin` the cluster never advertises the resource the
+container asks for and every inference pod sits `Pending` for ever, with the reason
+visible only in `kubectl describe pod`. That gap is older than AMD and applies to
+NVIDIA identically; it is a prerequisite in `docs/installation.md` now rather than an
+assumption.
 
 **The harness container is run by supervisord, so never restart anything in
 it by hand.** `supervisorctl status` lists `cloudstack`, `cloudstack-ui` and

@@ -77,6 +77,15 @@ engine. **The engine is never exposed to tenant networks.**
   `vendor: amd` on the `gpuClass` so the engine asks for `amd.com/gpu`
   and runs a ROCm image. **No AMD node has booted** — see
   [What has and has not run](#what-has-and-has-not-run).
+- **A GPU device plugin in the Kubernetes cluster.** Nothing in this
+  project installs one, for either vendor. Kubernetes does not know a
+  GPU exists until a device plugin advertises it as an extended
+  resource, and the engine asks for that resource by name —
+  `nvidia.com/gpu` or `amd.com/gpu`, from the class's `vendor`. Install
+  NVIDIA's `k8s-device-plugin` (or the GPU Operator) for NVIDIA nodes,
+  and ROCm's `k8s-device-plugin` (or the AMD GPU Operator) for AMD
+  ones, and check that `kubectl describe node` lists the resource
+  before you deploy anything.
 - **Postgres**, in HA, with backups. The engine keeps runs, actions,
   usage, budgets, profiles, hashed keys, mirror requests and
   evaluations there. Nothing lives only in memory.
@@ -697,6 +706,14 @@ into the management server and the engine answering it over mTLS:
 
 - **Renewing an uploaded certificate replaces its proxy VM**, which is
   downtime: a proxy fetches its TLS material once, at boot.
+- **A missing GPU device plugin looks like nothing at all.** Without
+  one the node never advertises `nvidia.com/gpu` or `amd.com/gpu`, so
+  every inference pod sits `Pending` for ever with no error anywhere:
+  the engine's reconcile succeeds, the Deployment exists, and the
+  scheduler simply never finds a node that satisfies the request.
+  `kubectl describe pod` names it — *"Insufficient nvidia.com/gpu"* —
+  and nothing else will. Installing the wrong vendor's plugin fails
+  identically, which is the mode to watch for on a mixed fleet.
 - **Passthrough GPUs cannot live-migrate.** Draining **destroys** a
   node, it does not stop it — `gpu.detach.on.stop` defaults to false, so
   a stopped node keeps its GPU allocated ([ADR-0003](adr/0003-cloudstack-release.md)).

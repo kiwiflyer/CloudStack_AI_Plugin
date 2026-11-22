@@ -6184,6 +6184,31 @@ no AMD node has booted, and `templates/packer/gpu-golden-rocm.pkr.hcl`
 says so in its own header. The whole AMD path is unit-tested only, which
 is the same standing as the NVIDIA write half of the reconciler.
 
+Tracing the question "will the plugin actually see an AMD GPU and be
+able to use it" turned up a gap older than any of this. **Nothing in
+the project installs a GPU device plugin, for either vendor.**
+`render()` emits a Deployment, a Service and a PDB; Kubernetes does not
+know a GPU exists until a device plugin advertises it as an extended
+resource; and the container asks for that resource by name. So without
+one, every inference pod sits `Pending` for ever — the reconcile
+succeeds, the Deployment exists, and the scheduler just never finds a
+node, with the reason visible only in `kubectl describe pod`. It was
+never written down, for NVIDIA either. It is a prerequisite in
+`docs/installation.md` now, with the failure mode under "Things that
+will bite you", and **·not built** on the spec sheet.
+
+The trace itself was reassuring on everything else: an MI300X host as
+CloudStack would report it — eight devices, one held by a VM, one in
+`Error` — goes through `take_snapshot` to six free of eight, which is
+the same `usable`/`free` logic that the live H100 `Error` bug was fixed
+in, and out through `_capacity_row` to the plugin. The plugin needs no
+rebuild, because it was never in that path: it forwards a model and a
+zone, and the engine does placement and rendering. What it cannot do is
+*say* the GPU is AMD — `AiGpuCapacityResponse` declares a zone, a class
+name and five counts, and the engine sends exactly those, so vendor and
+card name reach the UI only through whatever the operator named the
+class.
+
 Also noted and deliberately not acted on: the NVIDIA vLLM default is
 pinned at `v0.11.0` while AMD's ROCm builds are shipping vLLM 0.29 and
 0.32. Bumping it would move `config_hash` for every existing deployment,
