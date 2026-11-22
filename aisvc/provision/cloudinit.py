@@ -28,6 +28,8 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from aisvc.k8s import gpu_resource_name
+
 __all__ = [
     "MAX_USERDATA_BYTES",
     "GpuNodeUserdata",
@@ -55,6 +57,9 @@ class GpuNodeUserdata:
     join_token: str = field(repr=False)
     ca_cert_hash: str = field(repr=False)
     weight_cache_device: str | None = None
+    #: From the node's GPU class. Decides which driver the node proves is
+    #: working before it joins, and which extended resource it advertises.
+    vendor: str = "nvidia"
 
 
 @cache
@@ -82,6 +87,8 @@ def render_gpu_node_userdata(userdata: GpuNodeUserdata) -> str:
         join_token=userdata.join_token,
         ca_cert_hash=userdata.ca_cert_hash,
         weight_cache_device=userdata.weight_cache_device,
+        vendor=userdata.vendor,
+        gpu_resource=gpu_resource_name(userdata.vendor),
     )
 
 

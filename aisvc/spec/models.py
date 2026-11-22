@@ -27,6 +27,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 API_VERSION = "aisvc/v1"
 
 GpuMode = Literal["passthrough", "vgpu", "mig"]
+#: Who makes the accelerator. CloudStack discovers GPUs by PCI class
+#: rather than by vendor, so a zone can hand the engine either; what
+#: differs is the Kubernetes extended resource, the engine image and the
+#: driver a node proves is working.
+GpuVendor = Literal["nvidia", "amd"]
 Task = Literal["chat", "embedding", "rerank", "vision-chat"]
 Engine = Literal["vllm", "sglang", "trtllm"]
 RolloutStrategy = Literal["bluegreen", "canary", "recreate"]
@@ -184,10 +189,22 @@ class GpuClass(Base):
     gpus_per_node: int = Field(gt=0, le=8)
     gpu_mem_gb: float = Field(gt=0)
     mode: GpuMode = "passthrough"
+    #: Defaults to `nvidia`, so every spec written before AMD was
+    #: supported means exactly what it did then.
+    vendor: GpuVendor = "nvidia"
     #: CloudStack's `gpucardname`, to narrow capacity counting on hosts
     #: carrying more than one kind of GPU. Unset counts every GPU on a
     #: host the tag selects.
     gpu_card: str | None = None
+
+    @model_validator(mode="after")
+    def _mode_suits_the_vendor(self) -> GpuClass:
+        if self.mode == "mig" and self.vendor != "nvidia":
+            raise ValueError(
+                f"gpu class {self.name!r}: mode 'mig' is NVIDIA's Multi-Instance GPU "
+                f"and has no meaning on {self.vendor}; use 'passthrough'"
+            )
+        return self
 
 
 class NodePool(Base):

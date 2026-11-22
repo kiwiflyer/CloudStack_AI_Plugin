@@ -59,12 +59,20 @@ gpuClasses:
     gpus_per_node: 8
     gpu_mem_gb: 80
     mode: passthrough          # passthrough | vgpu | mig
+    vendor: nvidia             # nvidia | amd, default nvidia
   - name: l40s-1x
     host_tag: l40s
     service_offering: "GPU-L40S-1x"
     gpus_per_node: 1
     gpu_mem_gb: 48
     mode: passthrough
+  - name: mi300x-8x
+    host_tag: mi300x
+    service_offering: "GPU-MI300X-8x"
+    gpus_per_node: 8
+    gpu_mem_gb: 192
+    mode: passthrough
+    vendor: amd
 nodePools:
   - name: h100-pool
     zone: zone-east-1

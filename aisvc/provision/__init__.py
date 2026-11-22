@@ -234,6 +234,7 @@ class NodeProvisioner:
                 join_token=self.join.token,
                 ca_cert_hash=self.join.ca_cert_hash,
                 weight_cache_device=self.weight_cache_device,
+                vendor=gpu_class.vendor,
             )
             try:
                 await self.client.call_async(

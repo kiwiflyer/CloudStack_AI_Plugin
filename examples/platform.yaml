@@ -77,6 +77,22 @@ gpuClasses:
     gpu_mem_gb: 48
     mode: passthrough
     gpu_card: "NVIDIA L40S"
+  # AMD capacity. CloudStack discovers GPUs by PCI class rather than by
+  # vendor, so an MI300X is inventoried like any other card; `vendor` is
+  # what makes the engine render amd.com/gpu and run a ROCm image.
+  #
+  # Commented out, not omitted: a contract test requires every class here
+  # to have a matching service offering in the recorded lab zone, and that
+  # zone has no AMD hardware. Uncomment it on a zone that does.
+  #
+  # - name: mi300x-8x
+  #   host_tag: mi300x
+  #   service_offering: "GPU-MI300X-8x"
+  #   gpus_per_node: 8
+  #   gpu_mem_gb: 192
+  #   mode: passthrough
+  #   vendor: amd
+  #   gpu_card: "AMD Instinct MI300X"
 
 nodePools:
   - name: h100-pool

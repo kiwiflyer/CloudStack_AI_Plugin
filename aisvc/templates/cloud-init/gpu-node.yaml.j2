@@ -20,7 +20,7 @@ write_files:
   - path: /etc/aisvc/kubelet-extra-args
     permissions: "0644"
     content: |
-      --node-labels=aisvc.io/node-pool={{ pool }},aisvc.io/gpu-class={{ gpu_class }},aisvc.io/zone={{ zone }},nvidia.com/gpu.present=true
+      --node-labels=aisvc.io/node-pool={{ pool }},aisvc.io/gpu-class={{ gpu_class }},aisvc.io/zone={{ zone }},{{ gpu_resource }}.present=true
 
 {% if weight_cache_device %}
   - path: /etc/systemd/system/var-lib-aisvc-weights.mount
@@ -43,9 +43,15 @@ write_files:
 runcmd:
   # Fail fast if the driver did not come up: a node that joins without a
   # working GPU will still be given pods to run.
+{% if vendor == "amd" %}
+  - ["/bin/bash", "-c", "amd-smi list || rocm-smi --showid || { echo 'no GPU visible'; exit 1; }"]
+  # ROCm needs no container runtime shim: the AMD device plugin hands
+  # /dev/kfd and /dev/dri to the container, so containerd is left alone.
+{% else %}
   - ["/bin/bash", "-c", "nvidia-smi -L || { echo 'no GPU visible'; exit 1; }"]
   - ["/bin/bash", "-c", "nvidia-ctk runtime configure --runtime=containerd --set-as-default"]
   - ["systemctl", "restart", "containerd"]
+{% endif %}
 {% if weight_cache_device %}
   - ["/bin/bash", "-c", "blkid {{ weight_cache_device }} || mkfs.ext4 -F {{ weight_cache_device }}"]
   - ["mkdir", "-p", "/var/lib/aisvc/weights"]

@@ -810,12 +810,13 @@ def _target_hash(
     namespace: str,
 ) -> str:
     """The replica-independent identity of a deployment's configuration."""
+    gpu_class = spec.gpu_class(pool.gpu_class)
     target = DeploymentTarget(
         model=model,
         pool=pool,
-        gpu_class=spec.gpu_class(pool.gpu_class),
+        gpu_class=gpu_class,
         serving_profile=spec.serving_profile_for(model),
-        image=image_for(model),
+        image=image_for(model, gpu_class.vendor),
         replicas=replicas,
         weights_uri=registry.uri_for(model.repo_id, model.revision or ""),
         colour=colour,

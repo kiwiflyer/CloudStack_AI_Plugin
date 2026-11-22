@@ -134,6 +134,34 @@ server that trims the field a zero-capacity platform, which is exactly how the
 `managedstate` bug failed. **Whenever CloudStack reports two fields about one
 thing, read both.**
 
+**AMD GPUs work, and CloudStack was never the thing standing in the way.**
+`scripts/vm/hypervisor/kvm/gpudiscovery.sh` filters by **PCI class, not vendor** —
+`3D controller|Processing accelerators|Display controller` — and an MI300X reports
+`Processing accelerators [1200]`, which the script's own header carries as a worked
+AMD example (`vendor_id 1002`, `driver amdgpu`). Upstream has a deliberate
+*"Fix detection of Mi3xx GPUs"* commit from 2025-09-30, ten months before 4.23.0.0
+tagged, and the file at the `4.23.0.0` tag is **byte-identical** to main's. The only
+hardcoded `10de` on the libvirt path (`LibvirtGpuDef.java:70`) is guarded to the
+*non-passthrough* case, so passthrough — the only mode this project uses — is
+vendor-neutral. What was NVIDIA-bound was **ours**, in three places: `nvidia.com/gpu`
+in the container's limits/requests and the pod's toleration, `nvidia-smi`/`nvidia-ctk`
+in the node's cloud-init, and the golden image. A `gpuClass` now declares
+`vendor: nvidia | amd` and all three follow it; `mig` is refused on `amd` at
+validation, because MIG is NVIDIA's.
+
+**An `nvidia` class must keep rendering byte-for-byte as it did before that field
+existed.** `config_hash` is what decides a rollout, so a hash that moved would
+restart every running deployment for a feature the operator did not ask for —
+`tests/unit/test_amd_gpus.py` pins the recorded hash rather than recomputing it.
+Two traps found by checking rather than assuming, both the same shape as the
+`allowedmodels` family: **SGLang's ROCm images are per-silicon** (`-mi30x`,
+`-mi35x`), so the vendor alone cannot pick one and `image_for` refuses instead of
+guessing a tag that would start and serve badly; and **`repo.radeon.com/amdgpu` and
+`repo.radeon.com/rocm/apt` version independently** — `rocm/apt/7.2.4` exists while
+`amdgpu/7.2.4` is a 404 — so the ROCm golden image takes two variables and a matched
+pair has to be checked. **Nothing AMD has booted:** no ROCm image has been baked, no
+MI300X has been seen by this code, and the whole AMD path is unit-tested only.
+
 **The harness container is run by supervisord, so never restart anything in
 it by hand.** `supervisorctl status` lists `cloudstack`, `cloudstack-ui` and
 `mysqld`, and the `cloudstack` program's command is exactly

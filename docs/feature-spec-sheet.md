@@ -48,6 +48,10 @@ and the gaps are marked **·not built** in the tables below.
 | | |
 | --- | --- |
 | GPU modes | `passthrough`, `vgpu`, `mig` |
+| GPU vendors | `nvidia` (default), `amd`. CloudStack discovers GPUs by PCI class rather than by vendor, so AMD capacity is inventoried like any other. `mig` is refused on `amd` at validation, because MIG is NVIDIA's |
+| GPU resource name | `nvidia.com/gpu` or `amd.com/gpu`, from the class's vendor; the pod's toleration key matches |
+| Default engine images | NVIDIA: vLLM, SGLang, TensorRT-LLM. AMD: vLLM only — SGLang's ROCm tags are per-silicon (`mi30x`, `mi35x`) and TensorRT-LLM is NVIDIA-only, so both refuse with a message naming `image:` **·no AMD node has booted** |
+| Node driver check | `nvidia-smi -L`, or `amd-smi list` falling back to `rocm-smi`; a node that cannot see a GPU fails its boot rather than joining |
 | GPU discovery | `listGpuDevices` (4.21+), per device, so vGPU and MIG are countable where host tags are not. `gpu_card` is checked against `listGpuCards` in preflight. **·management not built** — nothing calls `manageGpuDevice`, `unmanageGpuDevice` or `discoverGpuDevices` |
 | Replica cap | One replica per host. Validation refuses `tensor_parallel` above the class's `gpus_per_node`; there is no multi-node tensor parallelism, so a replica is bounded by one node's GPUs |
 | Sizing inputs | Parameter count, layers, KV heads, head dimension, quantization, context length |

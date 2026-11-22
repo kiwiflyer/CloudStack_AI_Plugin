@@ -70,9 +70,13 @@ engine. **The engine is never exposed to tenant networks.**
   Nodes still join with `kubeadm join` whichever source you choose.
   [ADR-0006](adr/0006-gpu-node-join.md) proposes moving that onto CKS;
   none of it is built.
-- **NVIDIA GPU hosts** with host tags, and matching service offerings.
-  A replica is capped at one host; there is no multi-node tensor
-  parallelism.
+- **NVIDIA or AMD GPU hosts** with host tags, and matching service
+  offerings. A replica is capped at one host; there is no multi-node
+  tensor parallelism. CloudStack discovers GPUs by PCI class rather
+  than by vendor, so AMD cards are inventoried like any other; set
+  `vendor: amd` on the `gpuClass` so the engine asks for `amd.com/gpu`
+  and runs a ROCm image. **No AMD node has booted** — see
+  [What has and has not run](#what-has-and-has-not-run).
 - **Postgres**, in HA, with backups. The engine keeps runs, actions,
   usage, budgets, profiles, hashed keys, mirror requests and
   evaluations there. Nothing lives only in memory.
@@ -414,13 +418,21 @@ and the write-once handling of key and certificate material.
 
 ### 1. Build the golden image
 
-`templates/packer/gpu-golden.pkr.hcl` builds the GPU node template.
-`templates/packer/proxy.pkr.hcl` builds the private-endpoint proxy
-image, and is only needed if tenants will attach endpoints to their own
-VPC tiers.
+`templates/packer/gpu-golden.pkr.hcl` builds the GPU node template, and
+`templates/packer/gpu-golden-rocm.pkr.hcl` its ROCm equivalent for a
+`gpuClass` declaring `vendor: amd`. `templates/packer/proxy.pkr.hcl`
+builds the private-endpoint proxy image, and is only needed if tenants
+will attach endpoints to their own VPC tiers.
 
-Both pin the CloudStack Packer plugin at `>= 1.0.2`, which is its newest
-release.
+All three pin the CloudStack Packer plugin at `>= 1.0.2`, which is its
+newest release.
+
+The ROCm template takes **two** version variables, `amdgpu_version` and
+`rocm_version`, because `repo.radeon.com/amdgpu` and
+`repo.radeon.com/rocm/apt` version independently — at the time of
+writing `rocm/apt/7.2.4` exists and `amdgpu/7.2.4` is a 404. The
+defaults, `7.0.3` for both, are a pair that resolves for `noble` on
+both repositories. Check a new pair before changing either.
 
 ### 2. Write your `platform.yaml`
 
@@ -634,6 +646,12 @@ into the management server and the engine answering it over mTLS:
 
 **Still never run:**
 
+- **No AMD GPU has been seen by this code.** CloudStack's own discovery
+  of AMD cards was verified by reading `gpudiscovery.sh` at the
+  `4.23.0.0` tag, and every ROCm repository path, package name and
+  image tag the engine uses was checked against the real registries —
+  but no ROCm image has been baked and no AMD node has booted. The AMD
+  path is unit-tested only.
 - **Nothing has been provisioned.** `apply` builds a deployer that
   needs a Kubernetes cluster, so the write half of the reconciler —
   `deployVirtualMachine` and everything after it — is unexercised.

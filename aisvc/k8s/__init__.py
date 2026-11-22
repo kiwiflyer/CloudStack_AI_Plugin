@@ -45,10 +45,12 @@ __all__ = [
     "DEFAULT_ENGINE_IMAGES",
     "DEFAULT_NAMESPACE",
     "ENGINE_PORT",
+    "GPU_RESOURCE_NAMES",
     "WEIGHT_CACHE_PATH",
     "DeploymentTarget",
     "config_hash",
     "engine_args",
+    "gpu_resource_name",
     "image_for",
     "render",
     "render_yaml",
@@ -59,20 +61,60 @@ DEFAULT_NAMESPACE = "aisvc-serving"
 
 #: Engine images used when a model does not pin its own. Operators
 #: override per model with `image:` in platform.yaml.
-DEFAULT_ENGINE_IMAGES: dict[str, str] = {
-    "vllm": "vllm/vllm-openai:v0.11.0",
-    "sglang": "lmsysorg/sglang:v0.4.6-cu124",
-    "trtllm": "nvcr.io/nvidia/tritonserver:25.01-trtllm-python-py3",
+DEFAULT_ENGINE_IMAGES: dict[str, dict[str, str]] = {
+    "nvidia": {
+        "vllm": "vllm/vllm-openai:v0.11.0",
+        "sglang": "lmsysorg/sglang:v0.4.6-cu124",
+        "trtllm": "nvcr.io/nvidia/tritonserver:25.01-trtllm-python-py3",
+    },
+    "amd": {
+        # AMD's own ROCm build of vLLM. There is deliberately no `sglang`
+        # here: SGLang publishes per-silicon ROCm tags (`-mi30x`,
+        # `-mi35x`), so the vendor alone cannot pick one and guessing
+        # would hand every MI355 a CDNA3 image that starts and serves
+        # badly. And `trtllm` is TensorRT-LLM, which is NVIDIA-only.
+        "vllm": "rocm/vllm:rocm10.1.0_ubuntu24.04_py3.14-pytorch_2.13.0_vllm-0.29.0",
+    },
+}
+
+#: The Kubernetes extended resource each vendor's device plugin
+#: advertises, and the taint its nodes carry. Asking for the wrong one
+#: does not fail — the pod simply stays Pending for ever.
+GPU_RESOURCE_NAMES: dict[str, str] = {
+    "nvidia": "nvidia.com/gpu",
+    "amd": "amd.com/gpu",
 }
 
 
-def image_for(model: Model) -> str:
-    """The container image to run this model's engine with."""
+def gpu_resource_name(vendor: str) -> str:
+    """The extended resource to request for this vendor's GPUs."""
+    try:
+        return GPU_RESOURCE_NAMES[vendor]
+    except KeyError:
+        raise ValueError(f"no GPU resource name for vendor {vendor!r}") from None
+
+
+def image_for(model: Model, vendor: str = "nvidia") -> str:
+    """The container image to run this model's engine with.
+
+    `vendor` comes from the deployment's GPU class. A model that pins
+    its own `image:` wins for either vendor, because an operator who has
+    named an image knows what silicon it is for.
+    """
     if model.image:
         return model.image
     try:
-        return DEFAULT_ENGINE_IMAGES[model.engine]
+        images = DEFAULT_ENGINE_IMAGES[vendor]
     except KeyError:
+        raise ValueError(f"no default images for vendor {vendor!r}") from None
+    try:
+        return images[model.engine]
+    except KeyError:
+        if vendor != "nvidia" and model.engine in DEFAULT_ENGINE_IMAGES["nvidia"]:
+            raise ValueError(
+                f"no default {vendor} image for engine {model.engine!r}: "
+                f"set `image:` on the model to one built for {vendor} GPUs"
+            ) from None
         raise ValueError(f"no default image for engine {model.engine!r}") from None
 
 
@@ -239,6 +281,7 @@ def engine_args(
 
 
 def _container(target: DeploymentTarget) -> dict[str, Any]:
+    gpu_resource = gpu_resource_name(target.gpu_class.vendor)
     return {
         "name": "engine",
         "image": target.image,
@@ -257,8 +300,8 @@ def _container(target: DeploymentTarget) -> dict[str, Any]:
             {"name": "AISVC_COLOUR", "value": target.colour},
         ],
         "resources": {
-            "limits": {"nvidia.com/gpu": target.model.tensor_parallel},
-            "requests": {"nvidia.com/gpu": target.model.tensor_parallel},
+            "limits": {gpu_resource: target.model.tensor_parallel},
+            "requests": {gpu_resource: target.model.tensor_parallel},
         },
         "volumeMounts": [
             {"name": "weight-cache", "mountPath": WEIGHT_CACHE_PATH, "readOnly": True},
@@ -329,7 +372,7 @@ def _deployment(target: DeploymentTarget, namespace: str) -> dict[str, Any]:
                     },
                     "tolerations": [
                         {
-                            "key": "nvidia.com/gpu",
+                            "key": gpu_resource_name(target.gpu_class.vendor),
                             "operator": "Exists",
                             "effect": "NoSchedule",
                         }

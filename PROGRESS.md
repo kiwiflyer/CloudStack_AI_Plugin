@@ -6096,3 +6096,111 @@ that the UI and the loaded plugin had only ever been verified in
 separate management servers. They have now been verified in one.
 
 167 Vitest, 2,083 unit, 47 contract and 481 Java tests pass.
+
+## AMD GPUs
+
+Asked whether the framework supports AMD, the answer split cleanly in
+two: CloudStack already did, and we did not.
+
+### CloudStack was never the obstacle
+
+GPU discovery on KVM hosts is a shell script, `gpudiscovery.sh`, run by
+`LibvirtComputingResource.getGpuDevices()`. It filters by **PCI class,
+not by vendor**:
+
+```
+if [[ ! "$PCI_CLASS" =~ (3D\ controller|Processing\ accelerators|Display\ controller) ]]; then
+```
+
+An MI300X reports `Processing accelerators [1200]`, and the script's own
+header carries a worked AMD example — `vendor_id 1002`, `vendor
+"Advanced Micro Devices, Inc. [AMD/ATI]"`, `driver amdgpu`. Upstream has
+a commit *"Fix detection of Mi3xx GPUs (#11715)"* dated 2025-09-30, ten
+months before 4.23.0.0 tagged, so this is deliberate and tested support
+rather than a loose regex. The file was fetched at the `4.23.0.0` tag
+and is **byte-identical** to the one on main, so none of this is a
+claim about an unreleased tree.
+
+Two supporting checks: `GpuCard` carries generic `vendorId`/`vendorName`
+fields, and the one hardcoded `10de` on the libvirt path
+(`LibvirtGpuDef.java:70`) is guarded to the *non-passthrough* case —
+it sets `managed='no'` for NVIDIA vGPU — so passthrough, the only mode
+this project uses, is vendor-neutral. The two `10de` branches inside the
+discovery script's SR-IOV loop only enrich vGPU profile metadata through
+`nvidia-smi`; they gate nothing.
+
+### We were NVIDIA-bound in three places, and only three
+
+A survey found zero occurrences of `amd`, `rocm`, `mi300` or `instinct`
+anywhere in the repository, and NVIDIA hardcoded in about fifteen lines
+across three files: `nvidia.com/gpu` in the container's limits and
+requests and in the pod's toleration (`aisvc/k8s`), `nvidia-smi` and
+`nvidia-ctk` in the node's cloud-init, and the NVIDIA driver and
+container toolkit in the Packer golden image.
+
+Everything else was already vendor-neutral and needed no work:
+`aisvc/capacity` entirely — the KV-cache and `gpu_mem_gb` sizing has no
+vendor in it — the whole CloudStack read path, and `gpu_card`, which is
+free text validated against whatever `listGpuCards` returns.
+
+A `gpuClass` now declares `vendor: nvidia | amd`, defaulting to
+`nvidia`, and those three sites follow it. `mig` is refused on `amd` at
+validation, because MIG is NVIDIA's Multi-Instance GPU and AMD's
+partitioning is not it.
+
+### The invariant that shaped the work
+
+`config_hash` is what decides whether a deployment rolls, so an `nvidia`
+class had to render **byte-for-byte** as it did before the field
+existed — otherwise adding AMD support would restart every running
+deployment for a feature nobody asked for. The hash is recorded as a
+literal in `tests/unit/test_amd_gpus.py` rather than recomputed, so a
+regression is loud.
+
+### Three things checked rather than assumed
+
+Each would have shipped as a plausible-looking guess.
+
+1. **SGLang's ROCm images are per-silicon.** Docker Hub lists
+   `v0.5.23-rocm720-mi30x` and `-mi35x` as separate tags, so the vendor
+   alone cannot choose one. `image_for` refuses for `amd` + `sglang`
+   with a message naming `image:`, rather than defaulting an MI355 to a
+   CDNA3 build that would start and serve badly. `trtllm` refuses too:
+   TensorRT-LLM is NVIDIA-only.
+2. **`repo.radeon.com/amdgpu` and `repo.radeon.com/rocm/apt` version
+   independently.** `rocm/apt/7.2.4` is live while `amdgpu/7.2.4` is a
+   404, and `amdgpu/` additionally carries a separate driver series
+   (30.x, 31.x) beside the ROCm-aligned one. So the ROCm golden image
+   takes two variables, not one, and `7.0.3` was verified as a pair that
+   resolves for `noble` on both.
+3. **Every package name was read out of the real repository** —
+   `amdgpu-dkms`, `amd-smi-lib`, `rocm-smi-lib`, `rocminfo` — and the
+   vLLM default is a real dated tag from `rocm/vllm`.
+
+### What has not happened
+
+**No AMD GPU has been seen by this code.** No ROCm image has been baked,
+no AMD node has booted, and `templates/packer/gpu-golden-rocm.pkr.hcl`
+says so in its own header. The whole AMD path is unit-tested only, which
+is the same standing as the NVIDIA write half of the reconciler.
+
+Also noted and deliberately not acted on: the NVIDIA vLLM default is
+pinned at `v0.11.0` while AMD's ROCm builds are shipping vLLM 0.29 and
+0.32. Bumping it would move `config_hash` for every existing deployment,
+so it belongs in its own change.
+
+One more thing the suite caught, worth recording because it is the
+right kind of failure. The AMD class was first added to
+`examples/platform.yaml` as a worked example, and
+`test_service_offerings_cover_every_gpu_class_in_the_example` went red:
+every class in that file must have a matching service offering in the
+recorded lab zone, and that zone has no AMD hardware. The fix was not
+to add `GPU-MI300X-8x` to a recording — fixtures come from `make
+record` against a real zone, and hand-editing one is forging the
+evidence the test exists to check. The class is commented out in the
+example, with the reason beside it, and lives uncommented in SPEC.md
+where it is schema documentation rather than a deployable claim.
+
+`make check` is green: 2,116 unit (24 new, plus 9 the existing Packer
+suite picked up for the new template), 47 contract, 36 integration and
+29 security tests, with `mypy --strict` clean over 175 files.

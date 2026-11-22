@@ -102,12 +102,13 @@ class ServingDeployer:
                 revision = model.revision or ""
                 adapters = tuple(self.adapters_for(model.name) if self.adapters_for else ())
                 profile = self.spec.serving_profile_for(model)
+                gpu_class = self.spec.gpu_class(pool.gpu_class)
                 return DeploymentTarget(
                     model=model,
                     pool=pool,
-                    gpu_class=self.spec.gpu_class(pool.gpu_class),
+                    gpu_class=gpu_class,
                     serving_profile=profile,
-                    image=image_for(model),
+                    image=image_for(model, gpu_class.vendor),
                     replicas=model.replicas.min,
                     weights_uri=self.registry.uri_for(model.repo_id, revision),
                     colour=colour,
