@@ -84,8 +84,8 @@ engine. **The engine is never exposed to tenant networks.**
   `nvidia.com/gpu` or `amd.com/gpu`, from the class's `vendor`. Install
   NVIDIA's `k8s-device-plugin` (or the GPU Operator) for NVIDIA nodes,
   and ROCm's `k8s-device-plugin` (or the AMD GPU Operator) for AMD
-  ones, and check that `kubectl describe node` lists the resource
-  before you deploy anything.
+  ones. `aisvc setup` checks this for you — one check per declared
+  vendor — so you do not have to remember `kubectl describe node`.
 - **Postgres**, in HA, with backups. The engine keeps runs, actions,
   usage, budgets, profiles, hashed keys, mirror requests and
   evaluations there. Nothing lives only in memory.
@@ -713,7 +713,10 @@ into the management server and the engine answering it over mTLS:
   scheduler simply never finds a node that satisfies the request.
   `kubectl describe pod` names it — *"Insufficient nvidia.com/gpu"* —
   and nothing else will. Installing the wrong vendor's plugin fails
-  identically, which is the mode to watch for on a mixed fleet.
+  identically, which is the mode to watch for on a mixed fleet. The
+  preflight check catches both: it fails only once GPU nodes have
+  joined and none advertises the resource, and warns rather than fails
+  before any node exists, so a fresh zone is not red for no reason.
 - **Passthrough GPUs cannot live-migrate.** Draining **destroys** a
   node, it does not stop it — `gpu.detach.on.stop` defaults to false, so
   a stopped node keeps its GPU allocated ([ADR-0003](adr/0003-cloudstack-release.md)).

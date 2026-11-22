@@ -6229,3 +6229,65 @@ where it is schema documentation rather than a deployable claim.
 `make check` is green: 2,116 unit (24 new, plus 9 the existing Packer
 suite picked up for the new template), 47 contract, 36 integration and
 29 security tests, with `mypy --strict` clean over 175 files.
+
+## The GPU device plugin, and a check for it
+
+Asked whether `install.py` could install the GPU drivers, the answer is
+no and the reasons are structural: it runs on the engine host, which
+has no GPUs; it is standard-library only, because it builds the
+virtualenv the engine lives in; and the driver is deliberately baked
+into the Packer golden image rather than installed at boot, since
+SPEC.md section 11's three-minute cold start is unreachable if a node
+has to fetch a driver first. The only "driver" anywhere in its 1,336
+lines is the database one — pg8000 or PyMySQL.
+
+But the question exposed two real gaps.
+
+`cloudstack_todo()` is documented as "What this script will not do, and
+nobody should assume it did", and it listed six things, none of them
+about GPUs at all. The one place an operator looks for what is left was
+silent on both the golden image and the device plugin. It names both
+now, with the reason the driver is baked rather than installed.
+
+The second gap wanted code. `check_gpu_device_plugin` lists the
+cluster's nodes and asks whether anything advertises the extended
+resource each declared vendor needs — `nvidia.com/gpu` or
+`amd.com/gpu`, from the GPU class. It sits beside
+`check_cluster_reachable`, which already had the Kubernetes client, so
+`preflight` needed one line and the API route none.
+
+The shape of its answers is the part worth keeping:
+
+- **Pass** when a node advertises the resource.
+- **Fail** only when nodes carrying `aisvc.io/gpu-class` exist and none
+  of them advertises it. That is also exactly what the *wrong* vendor's
+  plugin looks like, which is the failure to expect on a mixed fleet.
+- **Warn, not fail, when no GPU node has joined yet.** That is the
+  normal state of a fresh zone, and a preflight that goes red on every
+  new install is one an operator learns to skip. Same reasoning as
+  `_card_check` warning rather than failing on an unreachable
+  CloudStack: do not send someone to fix a thing that was never broken.
+- **Warn when the cluster cannot be read**, carrying the error. An
+  unreachable API server says nothing about whether the plugin is
+  installed.
+
+Two things had to be fixed underneath it, both invisible until
+something tried to read a Node.
+
+`ClusterKubernetes.list` only ever called `list_namespaced_<kind>`, and
+its `_api_for` was a three-entry dict. A Node is cluster-scoped, so the
+call does not exist in that form; `CLUSTER_SCOPED` now selects
+`list_<kind>` instead. And `FakeKubernetes.list` stamped
+`{"readyReplicas": n}` onto **every** listed object's `status`, which
+would have wiped the `allocatable` map this check reads — a test double
+that agrees with a bug, the same shape as `refusal()` returning a bare
+`Error` whose `.message` was the reason. Only a Deployment gets that
+stamp now, and a test pins a listed Node keeping its allocatable.
+
+The check adds one result per declared vendor, so the eight a live
+`listAiSetupChecks` once returned is nine for a single-vendor platform.
+That number has not been re-measured against a running management
+server; the arithmetic is from the code.
+
+`make check` is green: 2,131 unit, 47 contract, 36 integration and 29
+security tests, with `mypy --strict` clean over 176 files.

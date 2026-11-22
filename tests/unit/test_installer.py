@@ -277,6 +277,15 @@ class TestTheCloudStackHandover:
         assert "ui" in todo
         assert "ai.services.enabled" in todo
 
+    def test_it_names_the_golden_image_and_the_device_plugin(self) -> None:
+        """The two largest things a GPU platform needs and this script
+        does not do. Neither was listed, so the one place an operator
+        looks for "what is left" was silent on the driver entirely."""
+        todo = " ".join(install.cloudstack_todo()).lower()
+
+        assert "golden image" in todo
+        assert "device plugin" in todo
+
     def test_it_says_where_the_written_guide_is(self) -> None:
         assert any("docs/installation.md" in line for line in install.cloudstack_todo())
 

@@ -64,6 +64,12 @@ class KubernetesError(Exception):
     """An object could not be applied, read or removed."""
 
 
+#: Kinds that live outside a namespace, so the client's `list` must call
+#: `list_<kind>` rather than `list_namespaced_<kind>`. Callers pass an
+#: empty namespace for these; it is ignored.
+CLUSTER_SCOPED = frozenset({"Node"})
+
+
 class Kubernetes(Protocol):
     """The slice of the Kubernetes API this module needs."""
 
@@ -118,7 +124,11 @@ class FakeKubernetes:
             if obj_kind != kind or obj_namespace != namespace:
                 continue
             enriched = dict(obj)
-            enriched["status"] = {"readyReplicas": self._ready.get(name, 0)}
+            if kind == "Deployment":
+                # Only a Deployment has readyReplicas. Stamping it on
+                # everything used to overwrite a Node's own status,
+                # which is where its allocatable resources live.
+                enriched["status"] = {"readyReplicas": self._ready.get(name, 0)}
             found.append(enriched)
         return found
 
@@ -151,6 +161,7 @@ class ClusterKubernetes:  # pragma: no cover - needs a real cluster
             "Deployment": self.apps,
             "Service": self.core,
             "PodDisruptionBudget": self.policy,
+            "Node": self.core,
         }[kind]
 
     def apply(
@@ -191,6 +202,9 @@ class ClusterKubernetes:  # pragma: no cover - needs a real cluster
 
     def list(self, kind: str, namespace: str) -> list[dict[str, Any]]:
         api = self._api_for(kind)
+        if kind in CLUSTER_SCOPED:
+            lister = getattr(api, f"list_{_snake(kind)}")
+            return [item.to_dict() for item in lister().items]
         lister = getattr(api, f"list_namespaced_{_snake(kind)}")
         return [item.to_dict() for item in lister(namespace=namespace).items]
 

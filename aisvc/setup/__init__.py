@@ -35,11 +35,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from aisvc.k8s import DEFAULT_NAMESPACE
+from aisvc.k8s import DEFAULT_NAMESPACE, gpu_resource_name
 from aisvc.registry import ModelRegistry
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
+    from typing import Any
 
     from aisvc.cloudstack.clusters import ClusterState
     from aisvc.cloudstack.gpus import GpuCardCatalogue
@@ -59,6 +60,7 @@ __all__ = [
     "check_cluster_reachable",
     "check_clusters",
     "check_gpu_cards",
+    "check_gpu_device_plugin",
     "check_registry",
     "check_spec",
     "discover_gpu_classes",
@@ -577,6 +579,121 @@ def plan_self_test(spec: PlatformSpec, *, zone: str) -> SelfTestPlan:
     )
 
 
+def check_gpu_device_plugin(spec: PlatformSpec, kube: Kubernetes | None) -> list[CheckResult]:
+    """Does anything in the cluster advertise the GPUs the spec wants?
+
+    Kubernetes does not know a GPU exists until a device plugin
+    advertises it as an extended resource, and nothing in this project
+    installs one — `render()` emits a Deployment, a Service and a PDB.
+    Without a plugin the reconcile succeeds, the Deployment exists, and
+    every pod sits `Pending` for ever, with the reason only in
+    `kubectl describe pod`. This is the check that names it instead.
+
+    One result per distinct vendor, not per class: a device plugin is
+    installed once per cluster and serves every class of that vendor.
+    """
+    vendors: dict[str, list[str]] = {}
+    for gpu_class in spec.document.gpu_classes:
+        vendors.setdefault(gpu_class.vendor, []).append(gpu_class.name)
+
+    if not vendors:
+        return []
+
+    if kube is None:
+        return [
+            CheckResult(
+                name=f"GPU device plugin for {vendor}",
+                status=CheckStatus.SKIPPED,
+                detail="no Kubernetes client is configured",
+                remedy="Set KUBECONFIG, or run the engine in-cluster with a service account.",
+            )
+            for vendor in sorted(vendors)
+        ]
+
+    try:
+        nodes = kube.list("Node", "")
+    except Exception as failure:
+        # The plugin may be perfectly fine. Calling it missing on the
+        # strength of an unreachable API server would send an operator
+        # to install something they already have — the same reasoning
+        # as `_card_check` on an unreachable CloudStack.
+        return [
+            CheckResult(
+                name=f"GPU device plugin for {vendor}",
+                status=CheckStatus.WARN,
+                detail=f"could not list the cluster's nodes: {failure}",
+                remedy=(
+                    "Check the engine can reach the Kubernetes API server. The "
+                    "device plugin has not been checked either way."
+                ),
+            )
+            for vendor in sorted(vendors)
+        ]
+
+    return [
+        _device_plugin_check(vendor, sorted(classes), nodes)
+        for vendor, classes in sorted(vendors.items())
+    ]
+
+
+def _device_plugin_check(
+    vendor: str, classes: Sequence[str], nodes: Sequence[Mapping[str, Any]]
+) -> CheckResult:
+    resource = gpu_resource_name(vendor)
+    name = f"GPU device plugin for {vendor}"
+
+    ours = [n for n in nodes if _gpu_class_of(n) in set(classes)]
+    advertising = [n for n in ours if resource in _allocatable(n)]
+
+    if advertising:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.PASS,
+            detail=f"{len(advertising)} node(s) advertise {resource}",
+        )
+
+    if not ours:
+        # A fresh install has no GPU nodes yet, which is not a fault.
+        # Failing here would make the first run of every new zone red,
+        # and a preflight that cries wolf is one nobody reads.
+        return CheckResult(
+            name=name,
+            status=CheckStatus.WARN,
+            detail=(
+                f"no GPU node has joined for {', '.join(classes)}, so nothing can "
+                f"say yet whether {resource} is advertised"
+            ),
+            remedy=(
+                f"Provision a node first. Then install a device plugin that "
+                f"advertises {resource} if one is not already running."
+            ),
+        )
+
+    return CheckResult(
+        name=name,
+        status=CheckStatus.FAIL,
+        detail=(
+            f"{len(ours)} GPU node(s) for {', '.join(classes)} advertise no "
+            f"{resource}, so every pod placed on them will stay Pending"
+        ),
+        remedy=(
+            f"Install a GPU device plugin that advertises {resource} — NVIDIA's or "
+            f"ROCm's k8s-device-plugin, or the matching Operator. A node running "
+            f"the other vendor's plugin looks exactly like one running none."
+        ),
+    )
+
+
+def _gpu_class_of(node: Mapping[str, Any]) -> str:
+    labels = node.get("metadata", {}).get("labels") or {}
+    return str(labels.get("aisvc.io/gpu-class", ""))
+
+
+def _allocatable(node: Mapping[str, Any]) -> Mapping[str, Any]:
+    allocatable = node.get("status", {}).get("allocatable") or {}
+    return dict(allocatable)
+
+
 def preflight(
     spec: PlatformSpec,
     *,
@@ -597,5 +714,6 @@ def preflight(
     checks.extend(check_clusters(spec, clusters))
     checks.append(check_cluster_reachable(kube, namespace=namespace))
     checks.extend(check_gpu_cards(spec, gpu_cards))
+    checks.extend(check_gpu_device_plugin(spec, kube))
     checks.extend(check_capacity(spec, snapshot))
     return PreflightReport(checks=tuple(checks))

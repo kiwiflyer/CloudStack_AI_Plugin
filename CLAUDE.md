@@ -167,7 +167,18 @@ NVIDIA's or ROCm's `k8s-device-plugin` the cluster never advertises the resource
 container asks for and every inference pod sits `Pending` for ever, with the reason
 visible only in `kubectl describe pod`. That gap is older than AMD and applies to
 NVIDIA identically; it is a prerequisite in `docs/installation.md` now rather than an
-assumption.
+assumption, and `check_gpu_device_plugin` turns it into a named preflight failure
+rather than a pod that never schedules. **It is not a failure when no GPU node has
+joined yet** — that is the normal state of a fresh zone, and a preflight that goes red
+on every new install is one an operator stops reading. It is a failure only when nodes
+carrying `aisvc.io/gpu-class` exist and none of them advertises the resource, which is
+also what the *wrong* vendor's plugin looks like. That check adds one per declared
+vendor, so the eight a live `listAiSetupChecks` once returned is now nine.
+**Listing nodes needed the client widened:** `ClusterKubernetes.list` only knew
+`list_namespaced_<kind>`, and a Node is cluster-scoped, so `CLUSTER_SCOPED` now picks
+`list_<kind>` instead. And `FakeKubernetes.list` used to stamp `readyReplicas` onto
+every listed object's `status`, which would have wiped the `allocatable` this check
+reads — a double that agrees with a bug, the same shape as `refusal()`.
 
 **The harness container is run by supervisord, so never restart anything in
 it by hand.** `supervisorctl status` lists `cloudstack`, `cloudstack-ui` and
@@ -794,7 +805,7 @@ fix but a screen with no source. Recorded rather than patched; it needs an
 engine route before it can show anything.
 
 **The setup wizard had never shown a check, and the fix names the rule.**
-A live `listAiSetupChecks` answers with all eight — three failures, each
+A live `listAiSetupChecks` answered with all eight — three failures, each
 carrying the remedy that names the setting to change — and the screen drew
 *"No setup checks have been run yet."* It read
 `listaisetupchecksresponse.checks`; CloudStack serialises the list as

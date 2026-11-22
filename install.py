@@ -579,6 +579,15 @@ def cloudstack_todo() -> list[str]:
         "Copy the UI section into CloudStack's ui/ tree and register it in "
         "src/config/router.js, then rebuild the UI.",
         "Mount gateway-hooks/ into the LiteLLM proxy and point the gateway at it.",
+        "Build the GPU golden image with Packer (templates/packer/). The GPU "
+        "driver is baked in there, not installed by this script and not "
+        "installed at boot: a node that had to fetch a driver first could not "
+        "meet the cold-start budget. Use gpu-golden-rocm.pkr.hcl for an AMD "
+        "class.",
+        "Install a GPU device plugin in the Kubernetes cluster — NVIDIA's or "
+        "ROCm's k8s-device-plugin, or the matching Operator. Nothing here "
+        "installs one, and without it no node advertises nvidia.com/gpu or "
+        "amd.com/gpu and every inference pod stays Pending for ever.",
         "Then: docs/installation.md has the whole sequence, including what "
         "to run for the first zone.",
     ]
