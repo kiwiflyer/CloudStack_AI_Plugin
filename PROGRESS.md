@@ -6291,3 +6291,38 @@ server; the arithmetic is from the code.
 
 `make check` is green: 2,131 unit, 47 contract, 36 integration and 29
 security tests, with `mypy --strict` clean over 176 files.
+
+## Saying AMD out loud, and one licence finding
+
+The README's opening sentence still read "deploy them on NVIDIA GPU
+capacity". It says "NVIDIA or AMD" now, with a status paragraph that
+keeps the claim honest: the vendor field reaches the Kubernetes
+resource, the toleration, the engine image, the node's driver check and
+the golden image; CloudStack's own discovery was verified at the
+`4.23.0.0` tag; every ROCm path, package name and image tag was checked
+against the real registries — and no ROCm image has been baked and no
+AMD node has booted, so that path stands exactly where the NVIDIA one
+does.
+
+Updating `docs/third-party-licenses.md` turned up something worth
+recording, because the two vendors' obligations are not the same kind
+of thing and the section had only ever described one.
+
+NVIDIA's driver is proprietary, under an EULA that governs whether a
+prebuilt golden template may be passed on at all. AMD's `amdgpu-dkms`
+is AMD's packaging of the `amdgpu` kernel driver that is in mainline
+Linux under **GPL-2.0**. That inverts the problem rather than repeating
+it: GPL-2.0 does not restrict redistribution the way an EULA does, but
+it attaches source-availability obligations to shipping a prebuilt
+image, which a proprietary driver does not. A provider who distributes
+a prebuilt ROCm image needs an answer to the source offer, and that
+question has not been asked.
+
+The section now says explicitly what was previously only implied, which
+matters more with a GPL licence in it: this is **not** a hole in the
+Category X rule. That rule governs the dependency tree of what the ASF
+distributes — Python imports and Maven artifacts — not a kernel driver
+on a VM image the operator builds. `pg8000` is still the Postgres
+driver for exactly the reason given earlier in that document. The
+conservative path is unchanged and sidesteps both problems at once:
+ship the `.pkr.hcl` files, let each provider build.

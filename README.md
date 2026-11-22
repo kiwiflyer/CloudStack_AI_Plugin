@@ -2,8 +2,8 @@
 
 A native [Apache CloudStack](https://cloudstack.apache.org/) plugin,
 backed by a Python engine, that lets a cloud provider source open-weight
-LLMs from Hugging Face, deploy them on NVIDIA GPU capacity, tune them
-through profiles, and sell them to tenants as OpenAI-compatible
+LLMs from Hugging Face, deploy them on NVIDIA or AMD GPU capacity, tune
+them through profiles, and sell them to tenants as OpenAI-compatible
 endpoints.
 
 The tenant sees a familiar API. The operator sees GPUs, quotas, budgets
@@ -25,6 +25,16 @@ and usage records in the same console they already run their cloud from.
 > been mirrored from Hugging Face, and the simulator's GPUs are
 > simulated — though `deployVirtualMachine` itself has now been shown to
 > work there, so that gap is reachable rather than blocked.
+>
+> **AMD is supported but unexercised.** A GPU class declares
+> `vendor: nvidia | amd`, and the Kubernetes resource and toleration,
+> the engine image, the node's driver check and the Packer golden image
+> all follow it. CloudStack's own discovery was verified at the
+> `4.23.0.0` tag — it filters GPUs by PCI class, not by vendor — and
+> every ROCm repository path, package name and image tag was checked
+> against the real registries. But no ROCm image has been baked and no
+> AMD node has booted, so that path stands exactly where the NVIDIA one
+> does: unit-tested, unproven on hardware.
 >
 > **One of the fifty-eight commands points at an engine route that does
 > not exist**: `approveAiModel`, and it is not waiting on a route —
@@ -149,6 +159,8 @@ X dependency, any licence it cannot classify, and any new Category B
 package not already listed.
 
 [docs/third-party-licenses.md](docs/third-party-licenses.md) covers
-what the scan cannot see — the NVIDIA driver EULA on the golden image,
-the use restrictions in open-weight model licences, and LiteLLM's
-commercially licensed directory, which this project does not use.
+what the scan cannot see — the GPU driver licences on the golden
+images, NVIDIA's proprietary EULA and AMD's rather different GPL-2.0
+kernel driver, the use restrictions in open-weight model licences, and
+LiteLLM's commercially licensed directory, which this project does not
+use.

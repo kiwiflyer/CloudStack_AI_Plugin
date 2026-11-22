@@ -27,8 +27,9 @@ tree is held to the ASF's third-party licensing policy from the start:
   Python imports.
 
 See docs/third-party-licenses.md for the current inventory and the
-non-code obligations (GPU driver EULA, model licences) this does not
-cover.
+non-code obligations this does not cover: the GPU driver licences on
+the golden images (NVIDIA's EULA, AMD's GPL-2.0 kernel driver) and the
+model licences.
 """
 
 from __future__ import annotations

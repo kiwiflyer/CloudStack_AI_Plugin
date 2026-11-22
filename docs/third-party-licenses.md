@@ -57,20 +57,42 @@ that no psycopg variant comes back.
 The scan reads Python distribution metadata. Three obligations sit outside it and need a
 human — and before any of this is shipped to customers, a lawyer.
 
-### 1. NVIDIA GPU driver and container toolkit — proprietary EULA
+### 1. GPU drivers on the golden images — two licences, two different problems
 
-`templates/packer/gpu-golden.pkr.hcl` installs the NVIDIA driver and container toolkit into a
-golden image. These are proprietary, under NVIDIA's own licence, not Apache-2.0.
+Both golden images install a GPU driver, and the two vendors' terms are not the same kind of
+obligation. Neither is a **code-licence conflict**: nothing in this repository links against
+either, they are installed on a node image the way they would be on any GPU host, and the
+Category X rule above governs the *dependency tree of what the ASF distributes* — Python
+imports and Maven artifacts — not a kernel driver on a VM an operator builds. Both are
+**redistribution** questions about an artifact we hand to providers.
 
-This is **not a code-licence conflict** — nothing links against them, and they are installed
-on the node image the way they would be on any GPU host. It is a **redistribution** question:
-the golden template is an artifact we build and hand to providers, and NVIDIA's driver licence
-governs whether and how that may be passed on. Two practical consequences:
+**NVIDIA — proprietary EULA.** `templates/packer/gpu-golden.pkr.hcl` installs the NVIDIA
+driver and container toolkit. These are proprietary, under NVIDIA's own licence, not
+Apache-2.0, and that licence governs whether a prebuilt template may be passed on at all.
 
-- Review NVIDIA's current driver and container-toolkit terms before distributing prebuilt
-  templates, as opposed to shipping the Packer file and having each provider build their own.
-- Shipping the `.pkr.hcl` and letting the operator build is the conservative path, and is what
-  the repository does today.
+**AMD — GPL-2.0, which restricts less and obliges more.**
+`templates/packer/gpu-golden-rocm.pkr.hcl` installs `amdgpu-dkms` from repo.radeon.com, AMD's
+packaging of the `amdgpu` kernel driver that is in mainline Linux under **GPL-2.0**, plus
+`amd-smi-lib`, `rocm-smi-lib` and `rocminfo` for the node's boot check. The SMI tooling is
+permissively licensed; ROCm userspace proper is not on the host at all, since it lives in the
+engine container. Note the inversion: GPL-2.0 does not restrict redistribution the way an EULA
+does, but it attaches **source-availability obligations** to shipping a prebuilt image, which a
+proprietary driver does not. The repository also pulls GPU firmware, which is separately
+licensed and not GPL.
+
+**Do not read the GPL here as licence to relax the rule above.** It applies to a driver on a
+node image, not to anything this project imports or ships as code, and `pg8000` is still the
+Postgres driver for exactly the reason stated earlier.
+
+Three practical consequences:
+
+- Review NVIDIA's current driver and container-toolkit terms, and AMD's GPL-2.0 source
+  obligations and firmware licence, before distributing prebuilt templates, as opposed to
+  shipping the Packer files and having each provider build their own.
+- Shipping the `.pkr.hcl` files and letting the operator build is the conservative path, and is
+  what the repository does today. It sidesteps both problems at once.
+- A provider who does distribute a prebuilt ROCm image needs an answer to the source offer.
+  That is a lawyer's question, and it has not been asked.
 
 ### 2. Model weights — "open weights" is not "open source"
 
